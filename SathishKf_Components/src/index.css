@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* RESET */
+* {
+  box-sizing: border-box;
+  text-rendering: optimizeLegibility !important;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* VERY IMPORTANT — FULL HEIGHT CHAIN */
+html, body {
+  height: 100%;
+  min-height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+#root, .rootDiv {
+  height: 100%;
+  min-height: 0; /* allow flex shrink when embedded in Kissflow iframe */
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* Single scroll context when embedded in Kissflow — no double scrollbar */
+html {
+  /* overflow: hidden; */
+}
+
+/* DO NOT use flex on body in Kissflow */
+body {
+  /* overflow: hidden;   */
+   /* page should not scroll */
+  background: #f5f7fb; /* use light bg (kissflow style) */
+  color: #111827;
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+}
+
+/* main app wrapper */
+.app-container {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* content scroll only inside app */
+.app-scroll {
+  flex: 1;
+  overflow: auto;
+}

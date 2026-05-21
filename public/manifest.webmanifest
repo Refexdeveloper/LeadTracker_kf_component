@@ -1,0 +1,12 @@
+{
+  "name": "Lead Intelligence Dashboard",
+  "short_name": "Lead Dashboard",
+  "description": "Real-time lead analytics and insights",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f1f5f9",
+  "theme_color": "#2879B6",
+  "scope": "/",
+  "icons": []
+}

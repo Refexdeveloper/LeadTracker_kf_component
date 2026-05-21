@@ -1,0 +1,46 @@
+Create a pixel-perfect React + Tailwind "Lead Management Hub" dashboard (mock data only, no APIs). Enterprise SaaS: soft glassmorphism, rounded-2xl, blue accents. Desktop-first max-w-[1500px], responsive to 375px.
+
+TECH: React 18, Tailwind utilities, Plus Jakarta Sans (400–700), Remix Icon 4.2 (ri-*). No MUI/shadcn.
+COLORS: page bg #f6f8fb; brand-blue #2879b6; brand-green #7dc244; theme #2879B6.
+
+── 1) HUB HEADER (always) ──
+Container max-w-[1500px] mx-auto p-2–4, space-y-5–6.
+Left: 40×40 rounded-xl avatar gradient indigo-500 → #2879b6 → #7dc244, white initial "R", shadow-sm.
+Title: "Good afternoon, Raghul" — text-base/lg font-semibold tracking-tight gray-900 truncate.
+Subtitle: "Logged in as Sales Manager Refex Mobility" — text-xs/sm gray-600 truncate.
+Right: Me | My Team toggle — grid 2 cols, sm:w-[220px], gap-1 p-1 rounded-xl border slate-300/70 bg white/80 shadow-sm. Active: white bg, #2879b6 text, shadow-md ring-1 ring-blue-25%. Inactive: slate-600 hover slate-900. Default: Me active.
+
+── 2) ME SCOPE (main) ──
+
+A) KPI ROW — grid 2 / md:3 / xl:6, gap 2–3. Six cards rounded-2xl min-h-[72px] px-3 py-3, per-card pastel gradient + border white/70 + shine overlay + icon box 28–32px rounded-lg gradient icon:
+• Total Leads 248 — "248 matching filters" — sky — ri-group-line
+• Leads Today 12 — "Today" — emerald — ri-user-add-line
+• Leads This Week 47 — "This week" — violet — ri-calendar-event-line
+• Lead Sources 8 — "8 Websites" — amber — ri-node-tree
+• Open Leads 156 — pipeline subtitle — rose — ri-notification-3-line
+• Closed Leads 92 — "Completed status" — teal — ri-checkbox-circle-line
+Label 10–11px uppercase semibold slate-600; value lg–xl font-black; subtitle 10–11px slate-500. Total card: ring-2 ring-blue-500/40 selected.
+
+B) TOOLBAR — rounded-2xl border white/60 bg white/50 backdrop-blur shadow-sm. Inner row border-b slate-200/60 gradient slate-50→white px-3 py-3 flex-col sm:flex-row justify-between.
+Tabs: 2-col rounded-2xl border slate-300/70 bg white/70 — "My Tasks" active + pill badge "24" (h-5 rounded-full bg #2879b6 white 11px bold); "My Items" inactive.
+Actions: "New item" btn gradient #2879b6→indigo-600 white rounded-xl min-h-44px ri-add-line; search pl-10 rounded-2xl border slate-300/80 "Search"; 44×44 filter + eye icon btns rounded-2xl.
+
+C) STATUS CHIPS — My Items, Draft selected. Mobile 2-col grid; sm+ horizontal scroll. Draft(8) In progress(142) Completed(92) Withdrawn(3) Rejected(2). Active: border-2 brand-blue bg blue/10 text blue + count badge blue/15. Inactive: slate border white/80 slate-700. (My Tasks variant: step chips "Assign Sales Person (12)" same style.)
+
+D) TABLE — glass wrap md:rounded-3xl border slate-300/70 gradient white/80→indigo-50/30 shadow-xl. Header gradient slate-200→indigo-100, 12px bold uppercase slate-700. Cols: checkbox(Draft) | expand | Full Name | Status | Product | Phone | Email | Created Date | SLA.
+Mock rows:
+1 Raghul JE | In progress | Airport Transfers | 919790738549 | raghul.je@refex.co.in | 5/19/2026 | On track
+2 Testing MyTeam | In progress | Airport Transfers | 9790738549 | raghul.je@refex.co.in | 5/19/2026 | amber SLA
+3 Pravin Kumar | Draft | FPD C-ARM | 9876543210 | pravinkumar@refex.co.in | 5/18/2026 | —
+4 Umesh Banerjee | Completed | Refex Mobility | 9988776655 | umesh@refex.co.in | 5/17/2026 | done
+5 Indrajit | Rejected | Anamaya | 9123456789 | indrajit@refex.co.in | 5/16/2026 | red
+Badges rounded-lg px-2.5 py-1 text-xs: in-progress blue; draft slate; completed emerald; rejected rose; withdrawn orange. Expand chevron ri-arrow-down-s-line rotates 180°. One row expanded: indigo-50/60 + accordion (contact grid + optional Status Tracker timeline). Footer pagination Page 1 of 3.
+
+── 3) MY TEAM SCOPE (toggle) ──
+Hide KPI/toolbar. Section rounded-2xl border white/50 bg white/45 backdrop-blur p-4. Title: blue-100 48px icon ri-table-line + "My Team's Leads" bold. Search "Search full name". Same table style; 3 Refex Mobility rows; expand = Contact Us read-only fields + Status Tracker.
+
+MOBILE: KPI 2-col; chips 2-col; table→stacked white cards (name, status pill, phone, email, created). Min touch 44px.
+
+MOCK: firstName Raghul; greeting Good afternoon; role Sales Manager Refex Mobility; showMyTeamToggle true; scope Me; tab My Tasks; tasksCount 24.
+
+Deliver one React page, visual fidelity over logic, section comments: Hub Header, KPI, Toolbar, Chips, Table, My Team.

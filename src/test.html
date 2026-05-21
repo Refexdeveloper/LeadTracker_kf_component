@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VCMS Pro – Vendor Performance & Contract Monitoring</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+
+/* ── THEME TOKENS ── */
+:root{
+  --bg-page:#f1f5f9;
+  --bg-surface:#fff;
+  --bg-raised:#f8fafc;
+  --bg-hover:#f1f5f9;
+  --bg-active:#dbeafe;
+  --border:#e2e8f0;
+  --border-light:#f1f5f9;
+  --text-primary:#0f172a;
+  --text-body:#1e293b;
+  --text-muted:#64748b;
+  --text-faint:#94a3b8;
+  --nav-text:#64748b;
+  --nav-active-bg:#dbeafe;
+  --nav-active-text:#1d4ed8;
+  --input-bg:#fff;
+  --input-border:#e2e8f0;
+  --mc-bg:#fff;
+  --tbl-header-bg:#f8fafc;
+  --tbl-row-hover:#f8fafc;
+  --tbl-divider:#f1f5f9;
+  --p2p-note-bg:#fef9c3;
+  --p2p-note-border:#fde047;
+  --p2p-note-text:#854d0e;
+  --sync-bg:#eff6ff;
+  --sync-border:#bfdbfe;
+  --drop-bg:#f8fafc;
+  --drop-border:#cbd5e1;
+  --pb-track:#f1f5f9;
+  --cal-day-hover:#f1f5f9;
+  --score-track:#e2e8f0;
+}
+
+[data-theme="dark"]{
+  --bg-page:#0f1117;
+  --bg-surface:#161b22;
+  --bg-raised:#1e2530;
+  --bg-hover:#1e293b;
+  --bg-active:#1e3a5f;
+  --border:#1e293b;
+  --border-light:#0f1117;
+  --text-primary:#f1f5f9;
+  --text-body:#e2e8f0;
+  --text-muted:#94a3b8;
+  --text-faint:#64748b;
+  --nav-text:#94a3b8;
+  --nav-active-bg:#1e3a5f;
+  --nav-active-text:#93c5fd;
+  --input-bg:#0d1117;
+  --input-border:#1e293b;
+  --mc-bg:#161b22;
+  --tbl-header-bg:#0d1117;
+  --tbl-row-hover:#1a2235;
+  --tbl-divider:#0f1117;
+  --p2p-note-bg:#2c1f00;
+  --p2p-note-border:#78350f;
+  --p2p-note-text:#fde68a;
+  --sync-bg:#0c1a2e;
+  --sync-border:#1e3a5f;
+  --drop-bg:#1a2235;
+  --drop-border:#334155;
+  --pb-track:#1e293b;
+  --cal-day-hover:#1e293b;
+  --score-track:#1e293b;
+}
+
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg-page);color:var(--text-body);height:100vh;display:flex;flex-direction:column;overflow:hidden;transition:background .25s,color .25s}
+.app{display:flex;flex:1;overflow:hidden}
+
+/* ── THEME TOGGLE BUTTON ── */
+.theme-toggle{display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:20px;border:1px solid var(--border);background:var(--bg-raised);cursor:pointer;user-select:none;transition:all .2s;flex-shrink:0}
+.theme-toggle:hover{border-color:#1d4ed8}
+.toggle-track{width:34px;height:18px;border-radius:9px;background:#e2e8f0;position:relative;transition:background .25s;flex-shrink:0}
+[data-theme="dark"] .toggle-track{background:#1d4ed8}
+.toggle-thumb{width:14px;height:14px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .22s;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+[data-theme="dark"] .toggle-thumb{left:18px}
+.toggle-label{font-size:11px;font-weight:600;color:var(--text-muted);transition:color .2s}
+[data-theme="dark"] .toggle-label{color:#93c5fd}
+
+/* SIDEBAR */
+.sidebar{width:230px;min-width:230px;background:var(--bg-surface);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto;transition:background .25s,border-color .25s}
+.logo-wrap{padding:18px 16px 14px;border-bottom:1px solid var(--border)}
+.logo-name{font-size:15px;font-weight:700;color:#1d4ed8;display:flex;align-items:center;gap:7px}
+.logo-badge{font-size:9px;background:#dbeafe;color:#1d4ed8;padding:2px 6px;border-radius:10px;font-weight:700;letter-spacing:.3px}
+.logo-sub{font-size:10px;color:var(--text-faint);margin-top:3px}
+.role-box{margin:10px 8px;padding:10px;background:var(--bg-raised);border-radius:8px;border:1px solid var(--border)}
+.role-lbl{font-size:10px;color:var(--text-faint);font-weight:600;letter-spacing:.5px;margin-bottom:5px}
+.role-sel{width:100%;background:var(--input-bg);border:1px solid var(--input-border);color:var(--text-body);font-size:12px;padding:6px 8px;border-radius:5px;cursor:pointer;outline:none}
+.nav-sec{padding:12px 14px 3px;font-size:10px;color:var(--text-faint);font-weight:700;letter-spacing:1px;text-transform:uppercase}
+.nav-item{display:flex;align-items:center;gap:9px;padding:9px 12px;margin:1px 6px;border-radius:7px;cursor:pointer;font-size:13px;color:var(--nav-text);transition:background .12s,color .12s;user-select:none}
+.nav-item:hover{background:var(--bg-hover);color:var(--text-body)}
+.nav-item.active{background:var(--nav-active-bg);color:var(--nav-active-text);font-weight:600}
+.nav-item .ni{font-size:15px;width:20px;text-align:center}
+.p2p-note{margin:10px 8px;padding:9px 10px;background:var(--p2p-note-bg);border:1px solid var(--p2p-note-border);border-radius:7px;font-size:10px;color:var(--p2p-note-text);line-height:1.5}
+.sidebar-foot{padding:10px 14px;border-top:1px solid var(--border);font-size:10px;color:var(--text-faint);margin-top:auto}
+
+/* MAIN */
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.topbar{padding:13px 22px;background:var(--bg-surface);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;transition:background .25s,border-color .25s}
+.topbar-title{font-size:16px;font-weight:700;color:var(--text-primary)}
+.topbar-sub{font-size:11px;color:var(--text-faint);margin-top:1px}
+.topbar-right{display:flex;align-items:center;gap:10px}
+.content{flex:1;overflow-y:auto;padding:20px 22px;background:var(--bg-page);transition:background .25s}
+.page{display:none}
+.page.active{display:block}
+
+/* BUTTONS */
+.btn{display:inline-flex;align-items:center;gap:5px;padding:7px 13px;border-radius:7px;font-size:12px;font-weight:500;cursor:pointer;border:none;transition:all .12s;user-select:none;white-space:nowrap;font-family:inherit}
+.btn-primary{background:#1d4ed8;color:#fff}.btn-primary:hover{background:#1e40af}
+.btn-sec{background:var(--bg-surface);color:var(--text-muted);border:1px solid var(--border)}.btn-sec:hover{background:var(--bg-raised);color:var(--text-body)}
+.btn-success{background:#15803d;color:#fff}.btn-success:hover{background:#166534}
+.btn-danger{background:#dc2626;color:#fff}.btn-danger:hover{background:#b91c1c}
+.btn-warn{background:#d97706;color:#fff}.btn-warn:hover{background:#b45309}
+.btn-ghost{background:var(--bg-raised);color:var(--text-muted);border:1px solid var(--border)}.btn-ghost:hover{background:var(--bg-hover);color:var(--text-body)}
+.btn-sm{padding:5px 9px;font-size:11px}
+.btn-p2p{background:#7c3aed;color:#fff;font-size:11px}.btn-p2p:hover{background:#6d28d9}
+
+/* CARDS */
+.card{background:var(--bg-surface);border:1px solid var(--border);border-radius:10px;padding:16px;transition:background .25s,border-color .25s}
+.card-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:13px}
+.card-ttl{font-size:11px;font-weight:700;color:var(--text-faint);text-transform:uppercase;letter-spacing:.8px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.mc{background:var(--bg-surface);border:1px solid var(--border);border-radius:10px;padding:15px;transition:background .25s,border-color .25s}
+.mc-lbl{font-size:11px;color:var(--text-faint);margin-bottom:4px}
+.mc-val{font-size:24px;font-weight:700;color:var(--text-primary)}
+.mc-sub{font-size:11px;color:var(--text-faint);margin-top:3px}
+.mc-up{color:#16a34a}.mc-dn{color:#dc2626}
+
+/* STATUS PILLS */
+.pill{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap}
+.p-active{background:#dcfce7;color:#166534}
+.p-synced{background:#dbeafe;color:#1d4ed8}
+.p-legacy{background:#f3e8ff;color:#7c3aed}
+.p-pending{background:#fef9c3;color:#854d0e}
+.p-delayed{background:#fee2e2;color:#b91c1c}
+.p-paid{background:#dcfce7;color:#166534}
+.p-processed{background:#dbeafe;color:#1d4ed8}
+.p-overdue{background:#fee2e2;color:#b91c1c}
+.p-draft{background:#f1f5f9;color:#64748b}
+.p-low{background:#dcfce7;color:#166534}
+.p-medium{background:#fef9c3;color:#854d0e}
+.p-high{background:#fee2e2;color:#b91c1c}
+.p-good{background:#dcfce7;color:#166534}
+.p-warning{background:#fef9c3;color:#854d0e}
+.p-critical{background:#fee2e2;color:#b91c1c}
+
+/* TAGS */
+.tag{display:inline-flex;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700}
+.t-blue{background:#dbeafe;color:#1d4ed8}
+.t-purple{background:#f3e8ff;color:#7c3aed}
+.t-green{background:#dcfce7;color:#15803d}
+.t-amber{background:#fef9c3;color:#92400e}
+.t-red{background:#fee2e2;color:#b91c1c}
+.t-gray{background:#f1f5f9;color:#475569}
+
+/* TABLE */
+.tbl{width:100%;border-collapse:collapse}
+.tbl th{text-align:left;padding:9px 12px;font-size:11px;font-weight:700;color:var(--text-faint);border-bottom:1px solid var(--border);background:var(--tbl-header-bg);white-space:nowrap}
+.tbl td{padding:10px 12px;font-size:12px;color:var(--text-muted);border-bottom:1px solid var(--tbl-divider);vertical-align:middle}
+.tbl tr:hover td{background:var(--tbl-row-hover)}
+
+/* PROGRESS */
+.pb{height:6px;background:var(--pb-track);border-radius:3px;overflow:hidden;margin-top:5px}
+.pbf{height:100%;border-radius:3px;transition:width .5s}
+
+/* TIMELINE */
+.tl-item{display:flex;gap:10px;margin-bottom:12px}
+.tl-dot{width:26px;height:26px;min-width:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
+.tl-done{background:#dcfce7;color:#166534}
+.tl-act{background:#dbeafe;color:#1d4ed8}
+.tl-warn{background:#fee2e2;color:#b91c1c}
+.tl-pend{background:var(--bg-raised);color:var(--text-faint)}
+
+/* ALERTS */
+.al{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;margin-bottom:8px}
+.al-info{background:#eff6ff;border:1px solid #bfdbfe}
+.al-warn{background:#fffbeb;border:1px solid #fde68a}
+.al-crit{background:#fef2f2;border:1px solid #fecaca}
+.al-success{background:#f0fdf4;border:1px solid #bbf7d0}
+[data-theme="dark"] .al-info{background:#0c1a2e;border-color:#1e3a5f}
+[data-theme="dark"] .al-warn{background:#1f1206;border-color:#78350f}
+[data-theme="dark"] .al-crit{background:#1f0505;border-color:#7f1d1d}
+[data-theme="dark"] .al-success{background:#071a0b;border-color:#14532d}
+.al-icon{font-size:15px;line-height:1.5;flex-shrink:0}
+
+/* MODAL */
+.overlay{display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:300;align-items:center;justify-content:center;padding:20px}
+.overlay.open{display:flex}
+.modal{background:var(--bg-surface);border:1px solid var(--border);border-radius:14px;width:100%;max-width:700px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.modal-hdr{padding:18px 22px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:var(--bg-surface);z-index:1;transition:background .25s}
+.modal-body{padding:22px}
+.modal-hdr-title{font-size:15px;font-weight:700;color:var(--text-primary)}
+.modal-hdr-sub{font-size:11px;color:var(--text-faint);margin-top:2px}
+
+/* FORMS */
+.frow{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.frow3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px}
+.fg{margin-bottom:12px}
+.flbl{font-size:11px;color:var(--text-muted);font-weight:600;letter-spacing:.3px;display:block;margin-bottom:5px}
+.finput{width:100%;background:var(--input-bg);border:1px solid var(--input-border);color:var(--text-body);font-size:13px;padding:8px 10px;border-radius:7px;outline:none;font-family:inherit;transition:border .12s}
+.finput:focus{border-color:#1d4ed8;box-shadow:0 0 0 3px rgba(29,78,216,.15)}
+.fsel{width:100%;background:var(--input-bg);border:1px solid var(--input-border);color:var(--text-body);font-size:13px;padding:8px 10px;border-radius:7px;outline:none;cursor:pointer;font-family:inherit}
+.ftextarea{width:100%;background:var(--input-bg);border:1px solid var(--input-border);color:var(--text-body);font-size:13px;padding:8px 10px;border-radius:7px;outline:none;font-family:inherit;resize:vertical;min-height:70px}
+
+/* STEPPER */
+.step-wrap{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:18px}
+.step{display:inline-flex;align-items:center;padding:6px 12px;border-radius:6px;font-size:11px;font-weight:600}
+.s-done{background:#dcfce7;color:#166534}
+.s-act{background:#1d4ed8;color:#fff}
+.s-pend{background:var(--bg-raised);color:var(--text-faint)}
+
+/* CALENDAR */
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.cal-hd{padding:6px;text-align:center;font-size:10px;font-weight:700;color:var(--text-faint)}
+.cal-day{padding:5px 3px;text-align:center;border-radius:5px;min-height:42px;cursor:default}
+.cal-day:hover{background:var(--cal-day-hover)}
+.cal-num{font-size:12px;font-weight:500;color:var(--text-muted)}
+.cal-today .cal-num{background:#1d4ed8;color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;margin:0 auto}
+.cal-evt{font-size:9px;background:#dbeafe;color:#1d4ed8;border-radius:2px;padding:1px 3px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cal-g{background:#dcfce7;color:#166534}
+.cal-a{background:#fef9c3;color:#854d0e}
+.cal-r{background:#fee2e2;color:#b91c1c}
+[data-theme="dark"] .cal-evt{background:#1e3a5f;color:#93c5fd}
+[data-theme="dark"] .cal-g{background:#14532d;color:#86efac}
+[data-theme="dark"] .cal-a{background:#78350f;color:#fde68a}
+
+/* DROP ZONE */
+.drop{background:var(--drop-bg);border:2px dashed var(--drop-border);border-radius:10px;padding:30px;text-align:center;cursor:pointer;transition:all .15s}
+.drop:hover{border-color:#1d4ed8;background:var(--sync-bg)}
+
+/* AI CHIP */
+.ai{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;background:linear-gradient(135deg,#1d4ed8,#7c3aed);border-radius:12px;font-size:10px;color:#fff;font-weight:700}
+
+/* BADGE */
+.badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 4px;border-radius:9px;font-size:10px;font-weight:700;background:#dc2626;color:#fff;margin-left:4px}
+
+/* SYNC BANNER */
+.sync-banner{background:var(--sync-bg);border:1px solid var(--sync-border);border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:10px;margin-bottom:14px;font-size:12px;color:#1d4ed8}
+[data-theme="dark"] .sync-banner{color:#93c5fd}
+
+/* SOURCE TAG */
+.src-p2p{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700;background:#f3e8ff;color:#7c3aed}
+.src-legacy{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700;background:#fef9c3;color:#854d0e}
+[data-theme="dark"] .src-p2p{background:#2e1065;color:#c4b5fd}
+[data-theme="dark"] .src-legacy{background:#2c1810;color:#fde68a}
+
+/* SECTION DIVIDER */
+.sec-divider{display:flex;align-items:center;gap:10px;margin:16px 0 12px}
+.sec-divider-line{flex:1;height:1px;background:var(--border)}
+.sec-divider-label{font-size:11px;color:var(--text-faint);font-weight:600;white-space:nowrap}
+
+/* NOTIF ROW */
+.notif-row{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--tbl-divider)}
+.ndot{width:8px;height:8px;min-width:8px;border-radius:50%;margin-top:5px;flex-shrink:0}
+
+/* KPI ROW */
+.kpi-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+</style>
+
+</head>
+<body>
+
+<!-- ═══ MODALS ═══ -->
+
+<!-- View Contract Detail -->
+<div class="overlay" id="ov-contract">
+  <div class="modal" style="max-width:740px">
+    <div class="modal-hdr">
+      <div><div class="modal-hdr-title" id="cd-title">Contract Detail</div><div class="modal-hdr-sub" id="cd-sub"></div></div>
+      <button class="btn btn-sec btn-sm" onclick="closeModal('ov-contract')">✕ Close</button>
+    </div>
+    <div class="modal-body" id="cd-body"></div>
+  </div>
+</div>
+
+<!-- Log Activity -->
+<div class="overlay" id="ov-activity">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-hdr">
+      <div><div class="modal-hdr-title">Log Vendor Activity</div><div class="modal-hdr-sub" id="act-sub">Record a service event or issue</div></div>
+      <button class="btn btn-sec btn-sm" onclick="closeModal('ov-activity')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="frow">
+        <div class="fg"><label class="flbl">Contract</label><select class="fsel" id="act-contract"><option>CNT-001 · HVAC Maintenance</option><option>CNT-002 · Office Space</option><option>CNT-003 · Elevator AMC</option><option>CNT-004 · Security Systems</option><option>CNT-LGC-001 · Legacy Warehouse</option></select></div>
+        <div class="fg"><label class="flbl">Activity Type</label><select class="fsel" id="act-type"><option>Service Completion</option><option>SLA Breach</option><option>Issue Raised</option><option>Issue Resolved</option><option>PM Completed</option><option>Inspection</option></select></div>
+      </div>
+      <div class="frow">
+        <div class="fg"><label class="flbl">Date</label><input class="finput" type="date" value="2025-03-17"/></div>
+        <div class="fg"><label class="flbl">Severity</label><select class="fsel"><option>Low</option><option>Medium</option><option>High</option><option>Critical</option></select></div>
+      </div>
+      <div class="fg"><label class="flbl">Description</label><textarea class="ftextarea" placeholder="Describe the activity or issue…"></textarea></div>
+      <div class="fg"><label class="flbl">Resolution / Notes</label><textarea class="ftextarea" placeholder="Resolution steps taken or notes…" style="min-height:55px"></textarea></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
+        <button class="btn btn-sec" onclick="closeModal('ov-activity')">Cancel</button>
+        <button class="btn btn-primary" onclick="closeModal('ov-activity');alert('✅ Activity logged successfully!')">Save Activity</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Legacy Single Contract Form -->
+<div class="overlay" id="ov-legacy">
+  <div class="modal" style="max-width:680px">
+    <div class="modal-hdr">
+      <div><div class="modal-hdr-title">Onboard Legacy Contract</div><div class="modal-hdr-sub" id="lgc-step-info">Step 1 of 3 · Contract not created in P2P</div></div>
+      <button class="btn btn-sec btn-sm" onclick="closeModal('ov-legacy')">✕</button>
+    </div>
+    <div class="modal-body" id="lgc-body"></div>
+  </div>
+</div>
+
+<!-- Bulk Upload -->
+<div class="overlay" id="ov-bulk">
+  <div class="modal" style="max-width:600px">
+    <div class="modal-hdr">
+      <div><div class="modal-hdr-title">Bulk Legacy Contract Upload</div><div class="modal-hdr-sub">Import contracts not originating from P2P</div></div>
+      <button class="btn btn-sec btn-sm" onclick="closeModal('ov-bulk')">✕</button>
+    </div>
+    <div class="modal-body" id="bulk-body">
+      <div class="al al-info" style="margin-bottom:14px"><span class="al-icon">ℹ</span><div style="font-size:12px;color:#1d4ed8"><strong>Instructions:</strong> Download the template, fill in contract metadata, then upload the completed file. Supported: .xlsx, .csv</div></div>
+      <div style="display:flex;gap:8px;margin-bottom:14px">
+        <button class="btn btn-ghost" onclick="alert('📥 Template downloaded: legacy_contracts_template.xlsx')">📥 Download Template</button>
+        <button class="btn btn-sec">📋 View Field Guide</button>
+      </div>
+      <div class="drop" id="drop-zone" ondragover="event.preventDefault()" onclick="simulateUpload()">
+        <div style="font-size:32px;margin-bottom:10px">📂</div>
+        <div style="font-size:14px;font-weight:600;color:#1e293b;margin-bottom:4px">Drag & drop your file here</div>
+        <div style="font-size:12px;color:#94a3b8">or click to browse · .xlsx or .csv · max 10MB</div>
+      </div>
+      <div id="upload-result" style="margin-top:12px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Alerts Modal -->
+<div class="overlay" id="ov-al">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-hdr">
+      <div class="modal-hdr-title">Alerts &amp; Notifications</div>
+      <button class="btn btn-sec btn-sm" onclick="closeModal('ov-al')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="al al-crit"><span class="al-icon">🔴</span><div><div style="font-size:12px;font-weight:700;color:#b91c1c">SLA Breach – LiftTech India</div><div style="font-size:11px;color:#64748b;margin-top:2px">Elevator AMC (CNT-003): Response SLA exceeded by 2 days. Escalation triggered.</div></div></div>
+      <div class="al al-warn"><span class="al-icon">⚠</span><div><div style="font-size:12px;font-weight:700;color:#92400e">Contract Expiring in 28 Days</div><div style="font-size:11px;color:#64748b;margin-top:2px">Office Space – Anna Nagar (CNT-002): Expiry Apr 15. Notify P2P team for renewal.</div></div></div>
+      <div class="al al-warn"><span class="al-icon">⚠</span><div><div style="font-size:12px;font-weight:700;color:#92400e">Payment Delayed – Feb 2025</div><div style="font-size:11px;color:#64748b;margin-top:2px">₹1,92,000 payment overdue. Check P2P for processing status.</div></div></div>
+      <div class="al al-info"><span class="al-icon">ℹ</span><div><div style="font-size:12px;font-weight:700;color:#1d4ed8">PM Confirmation Pending</div><div style="font-size:11px;color:#64748b;margin-top:2px">LiftTech India PM scheduled Mar 25 – vendor confirmation awaited.</div></div></div>
+      <div class="al al-info"><span class="al-icon">ℹ</span><div><div style="font-size:12px;font-weight:700;color:#1d4ed8">3 Legacy Contracts Pending Review</div><div style="font-size:11px;color:#64748b;margin-top:2px">Bulk upload completed. 3 contracts require metadata verification.</div></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="app">
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="logo-wrap">
+      <div class="logo-name">VCMS Pro <span class="logo-badge">MONITORING</span></div>
+      <div class="logo-sub">Vendor Performance &amp; Contract Tracking</div>
+    </div>
+    <div class="role-box">
+      <div class="role-lbl">LOGGED IN AS</div>
+      <select class="role-sel" id="role-sel" onchange="onRoleChange(this.value)">
+        <option>Operations Manager</option>
+        <option>Vendor Manager</option>
+        <option selected>Admin</option>
+        <option>Finance Analyst</option>
+        <option>Viewer</option>
+      </select>
+    </div>
+    <div class="nav-sec">Main</div>
+    <div class="nav-item active" id="nav-dashboard"   onclick="goto('dashboard')"><span class="ni">📊</span> Dashboard</div>
+    <div class="nav-item"        id="nav-contracts"   onclick="goto('contracts')"><span class="ni">📋</span> Contracts</div>
+    <div class="nav-item"        id="nav-vendors"     onclick="goto('vendors')"><span class="ni">🏢</span> Vendor Performance</div>
+    <div class="nav-sec">Tracking</div>
+    <div class="nav-item"        id="nav-activities"  onclick="goto('activities')"><span class="ni">🔧</span> Activity Log</div>
+    <div class="nav-item"        id="nav-payments"    onclick="goto('payments')"><span class="ni">💳</span> Payment Tracking</div>
+    <div class="nav-item"        id="nav-calendar"    onclick="goto('calendar')"><span class="ni">📅</span> PM Schedule</div>
+    <div class="nav-sec">Legacy</div>
+    <div class="nav-item"        id="nav-legacy"      onclick="goto('legacy')"><span class="ni">📂</span> Legacy Contracts</div>
+    <div class="nav-sec">Analytics</div>
+    <div class="nav-item"        id="nav-reports"     onclick="goto('reports')"><span class="ni">📈</span> Reports</div>
+    <div class="p2p-note">⚡ Contract creation &amp; approval handled in <strong>P2P System</strong>. VCMS monitors active contracts only.</div>
+    <div class="sidebar-foot">VCMS v3.0 · Monitoring Edition</div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <div class="topbar-title" id="pg-title">Dashboard</div>
+        <div class="topbar-sub" id="pg-sub">Admin · Monitoring Mode · March 17, 2025</div>
+      </div>
+      <div class="topbar-right">
+        <button class="btn btn-p2p btn-sm" onclick="alert('🔗 Opening P2P System in new tab...')">⚡ Open P2P System</button>
+        <button class="btn btn-sec btn-sm" onclick="openModal('ov-al')">🔔 Alerts <span class="badge">5</span></button>
+        <div class="theme-toggle" onclick="toggleTheme()" title="Toggle Dark / Light mode">
+          <span style="font-size:13px" id="theme-icon">☀️</span>
+          <div class="toggle-track"><div class="toggle-thumb"></div></div>
+          <span class="toggle-label" id="theme-label">Light</span>
+        </div>
+        <div id="avatar" style="width:33px;height:33px;border-radius:50%;background:#1d4ed8;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0">A</div>
+      </div>
+    </div>
+    <div class="content">
+      <div class="page active" id="page-dashboard"></div>
+      <div class="page"        id="page-contracts"></div>
+      <div class="page"        id="page-vendors"></div>
+      <div class="page"        id="page-activities"></div>
+      <div class="page"        id="page-payments"></div>
+      <div class="page"        id="page-calendar"></div>
+      <div class="page"        id="page-legacy"></div>
+      <div class="page"        id="page-reports"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ═══ DATA ═══ */
+var CONTRACTS=[
+  {id:'CNT-001',name:'HVAC Maintenance – Building A',vendor:'TechCool Services',type:'AMC',cat:'Comprehensive',status:'active',value:450000,start:'2024-01-01',end:'2024-12-31',nextPM:'2025-03-20',dlp:10,pay:'Monthly',score:88,loc:'Chennai',source:'p2p',slaAdh:92,delivAdh:95,quality:88,issues:1},
+  {id:'CNT-002',name:'Office Space – Anna Nagar',vendor:'Prime Properties Ltd',type:'Rental',cat:'Property Rental',status:'expiring',value:1200000,start:'2023-04-01',end:'2025-04-15',nextPM:null,dlp:0,pay:'Monthly',score:72,loc:'Anna Nagar',source:'p2p',slaAdh:78,delivAdh:82,quality:80,issues:0},
+  {id:'CNT-003',name:'Elevator AMC – Tower B',vendor:'LiftTech India',type:'AMC',cat:'Non-Comprehensive',status:'active',value:180000,start:'2025-01-15',end:'2025-12-31',nextPM:'2025-03-25',dlp:5,pay:'Quarterly',score:65,loc:'Chennai',source:'p2p',slaAdh:61,delivAdh:70,quality:68,issues:3},
+  {id:'CNT-004',name:'Security Systems Maintenance',vendor:'SecureNet Pvt Ltd',type:'AMC',cat:'Semi-Comprehensive',status:'active',value:320000,start:'2024-06-01',end:'2025-05-31',nextPM:'2025-03-22',dlp:10,pay:'Quarterly',score:91,loc:'OMR',source:'p2p',slaAdh:96,delivAdh:98,quality:94,issues:0},
+  {id:'CNT-005',name:'Fire Safety Systems AMC',vendor:'FireGuard Solutions',type:'AMC',cat:'Comprehensive',status:'active',value:260000,start:'2025-02-01',end:'2026-01-31',nextPM:'2025-04-01',dlp:15,pay:'Quarterly',score:79,loc:'Chennai',source:'p2p',slaAdh:85,delivAdh:88,quality:82,issues:1},
+  {id:'CNT-LGC-001',name:'Warehouse AMC – Sriperumbudur',vendor:'Logistics Park Corp',type:'AMC',cat:'Comprehensive',status:'active',value:840000,start:'2022-04-01',end:'2025-03-31',nextPM:'2025-03-28',dlp:0,pay:'Monthly',score:74,loc:'Sriperumbudur',source:'legacy',slaAdh:74,delivAdh:80,quality:72,issues:2},
+];
+var VENDORS=[
+  {id:'V-001',name:'TechCool Services',cat:'HVAC',contracts:1,tat:92,pm:88,svc:95,resp:100,score:94,risk:'low',trend:'up'},
+  {id:'V-002',name:'Prime Properties Ltd',cat:'Real Estate',contracts:1,tat:78,pm:100,svc:85,resp:88,score:88,risk:'low',trend:'stable'},
+  {id:'V-003',name:'LiftTech India',cat:'Elevator',contracts:1,tat:61,pm:72,svc:78,resp:75,score:65,risk:'high',trend:'down'},
+  {id:'V-004',name:'SecureNet Pvt Ltd',cat:'Security',contracts:1,tat:96,pm:100,svc:98,resp:100,score:98,risk:'low',trend:'up'},
+  {id:'V-005',name:'FireGuard Solutions',cat:'Fire Safety',contracts:1,tat:85,pm:90,svc:88,resp:92,score:89,risk:'low',trend:'stable'},
+  {id:'V-006',name:'Logistics Park Corp',cat:'Logistics',contracts:1,tat:74,pm:80,svc:72,resp:82,score:74,risk:'medium',trend:'stable'},
+];
+var ACTIVITIES=[
+  {id:'ACT-001',contract:'CNT-003',vendor:'LiftTech India',type:'SLA Breach',date:'2025-03-15',severity:'high',desc:'Response SLA exceeded by 2 days for emergency call',resolution:'Escalated to vendor management. Penalty clause invoked.',status:'open'},
+  {id:'ACT-002',contract:'CNT-001',vendor:'TechCool Services',type:'PM Completed',date:'2025-03-12',severity:'low',desc:'Quarterly preventive maintenance completed successfully',resolution:'All checklist items cleared. Report attached.',status:'closed'},
+  {id:'ACT-003',contract:'CNT-LGC-001',vendor:'Logistics Park Corp',type:'Issue Raised',date:'2025-03-10',severity:'medium',desc:'Water leakage reported in warehouse section B2',resolution:'Vendor acknowledged. Site visit scheduled Mar 18.',status:'in-progress'},
+  {id:'ACT-004',contract:'CNT-004',vendor:'SecureNet Pvt Ltd',type:'Service Completion',date:'2025-03-08',severity:'low',desc:'CCTV system upgrade completed ahead of schedule',resolution:'All cameras operational. Documentation submitted.',status:'closed'},
+  {id:'ACT-005',contract:'CNT-005',vendor:'FireGuard Solutions',type:'Inspection',date:'2025-03-05',severity:'medium',desc:'Annual fire safety inspection conducted',resolution:'2 minor findings raised. Rectification due Mar 25.',status:'in-progress'},
+  {id:'ACT-006',contract:'CNT-002',vendor:'Prime Properties Ltd',type:'Issue Resolved',date:'2025-03-01',severity:'low',desc:'AC breakdown in floor 3 resolved',resolution:'Repair completed within SLA. Invoice submitted.',status:'closed'},
+];
+var PAYMENTS=[
+  {id:'PAY-001',contract:'CNT-001',vendor:'TechCool Services',month:'Feb 2025',due:37500,status:'processed',p2pRef:'P2P-INV-2890',invoiceDate:'2025-02-28',payDate:'2025-03-05'},
+  {id:'PAY-002',contract:'CNT-002',vendor:'Prime Properties Ltd',month:'Feb 2025',due:100000,status:'delayed',p2pRef:'P2P-INV-2891',invoiceDate:'2025-02-28',payDate:null},
+  {id:'PAY-003',contract:'CNT-003',vendor:'LiftTech India',month:'Q1 2025',due:45000,status:'processed',p2pRef:'P2P-INV-2875',invoiceDate:'2025-01-31',payDate:'2025-02-10'},
+  {id:'PAY-004',contract:'CNT-004',vendor:'SecureNet Pvt Ltd',month:'Q1 2025',due:80000,status:'processed',p2pRef:'P2P-INV-2876',invoiceDate:'2025-01-31',payDate:'2025-02-08'},
+  {id:'PAY-005',contract:'CNT-005',vendor:'FireGuard Solutions',month:'Q1 2025',due:65000,status:'pending',p2pRef:'P2P-INV-2905',invoiceDate:'2025-03-01',payDate:null},
+  {id:'PAY-006',contract:'CNT-LGC-001',vendor:'Logistics Park Corp',month:'Feb 2025',due:70000,status:'processed',p2pRef:'LEGACY-INV-112',invoiceDate:'2025-02-28',payDate:'2025-03-10'},
+];
+var PM_LIST=[
+  {id:'PM-01',contract:'CNT-001',vendor:'TechCool Services',date:'2025-03-20',type:'Quarterly PM',st:'confirmed'},
+  {id:'PM-02',contract:'CNT-003',vendor:'LiftTech India',date:'2025-03-25',type:'Monthly PM',st:'pending'},
+  {id:'PM-03',contract:'CNT-004',vendor:'SecureNet Pvt Ltd',date:'2025-03-22',type:'Semi-Annual PM',st:'confirmed'},
+  {id:'PM-04',contract:'CNT-005',vendor:'FireGuard Solutions',date:'2025-04-01',type:'Annual PM',st:'pending'},
+  {id:'PM-05',contract:'CNT-LGC-001',vendor:'Logistics Park Corp',date:'2025-03-28',type:'Monthly PM',st:'pending'},
+];
+var AUDIT=[
+  {time:'2025-03-17 09:42',user:'System (P2P Sync)',action:'CNT-005 synced from P2P – metadata updated',type:'sync'},
+  {time:'2025-03-16 15:30',user:'Rajan Kumar',action:'ACT-003 activity logged for Logistics Park Corp',type:'activity'},
+  {time:'2025-03-15 11:10',user:'System',action:'SLA breach alert raised – LiftTech India (CNT-003)',type:'alert'},
+  {time:'2025-03-14 14:20',user:'Priya M',action:'Bulk upload: 3 legacy contracts onboarded',type:'upload'},
+  {time:'2025-03-13 09:00',user:'System (P2P Sync)',action:'Payment PAY-006 status synced from P2P',type:'sync'},
+  {time:'2025-03-12 16:45',user:'Anand S',action:'ACT-002 PM completion logged – TechCool Services',type:'activity'},
+];
+var PAGE_TITLES={dashboard:'Dashboard',contracts:'Contract Repository',vendors:'Vendor Performance',activities:'Activity Log',payments:'Payment Tracking',calendar:'PM Schedule',legacy:'Legacy Contract Onboarding',reports:'Reports & Analytics'};
+var currentRole='Admin';
+var currentPage='dashboard';
+var selectedVendorId='V-001';
+var actFilter='all';
+var contractFilter='all';
+var lgcStep=1;
+var pmData=PM_LIST.map(function(p){return {id:p.id,contract:p.contract,vendor:p.vendor,date:p.date,type:p.type,st:p.st};});
+var activeCharts={};
+
+/* ─── UTILS ─── */
+function fmtV(n){return '₹'+Number(n).toLocaleString('en-IN');}
+function pill(s){
+  var m={active:['p-active','● Active'],expiring:['p-pending','● Expiring'],synced:['p-synced','⚡ P2P Synced'],legacy:['p-legacy','📂 Legacy'],
+    pending:['p-pending','● Pending'],delayed:['p-delayed','● Delayed'],processed:['p-processed','● Processed'],paid:['p-paid','● Paid'],overdue:['p-overdue','● Overdue'],
+    open:['p-delayed','● Open'],closed:['p-active','● Closed'],'in-progress':['p-pending','● In Progress'],
+    low:['p-low','Low'],medium:['p-medium','Medium'],high:['p-high','High'],critical:['p-high','Critical'],
+    good:['p-good','Good'],warning:['p-warning','Warning']};
+  var r=m[s]||['p-draft',s];
+  return '<span class="pill '+r[0]+'">'+r[1]+'</span>';
+}
+function scoreBar(val,label){
+  var c=val>=85?'#16a34a':val>=70?'#d97706':'#dc2626';
+  return '<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px"><span style="color:#64748b">'+label+'</span><span style="color:'+c+';font-weight:700">'+val+'%</span></div><div class="pb"><div class="pbf" style="width:'+val+'%;background:'+c+'"></div></div></div>';
+}
+function scoreRing(score,size){
+  size=size||44;
+  if(!score&&score!==0) return '<span style="font-size:11px;color:#94a3b8">—</span>';
+  var c=score>=85?'#16a34a':score>=70?'#d97706':'#dc2626';
+  var r=18,ci=2*Math.PI*r,d=(score/100)*ci;
+  return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 48 48"><circle cx="24" cy="24" r="'+r+'" fill="none" stroke="#e2e8f0" stroke-width="4"/><circle cx="24" cy="24" r="'+r+'" fill="none" stroke="'+c+'" stroke-width="4" stroke-dasharray="'+d+' '+ci+'" stroke-linecap="round" transform="rotate(-90 24 24)"/><text x="24" y="29" text-anchor="middle" fill="'+c+'" font-size="10" font-weight="700">'+score+'</text></svg>';
+}
+function srcTag(s){return s==='p2p'?'<span class="src-p2p">⚡ P2P</span>':'<span class="src-legacy">📂 Legacy</span>';}
+function destroyCharts(){Object.keys(activeCharts).forEach(function(k){try{activeCharts[k].destroy();}catch(e){}});activeCharts={};}
+function makeChart(id,cfg){
+  var tries=0;
+  var gridCol=isDark?'#1e293b':'#f1f5f9';
+  var tickCol=isDark?'#64748b':'#94a3b8';
+  // Apply theme colours to all scale grids/ticks automatically
+  if(cfg.options && cfg.options.scales){
+    Object.values(cfg.options.scales).forEach(function(sc){
+      if(sc.ticks) sc.ticks.color=tickCol;
+      if(sc.grid && sc.grid.color===undefined) sc.grid.color=gridCol;
+      else if(sc.grid) sc.grid.color=gridCol;
+      if(sc.pointLabels) sc.pointLabels.color=tickCol;
+      if(sc.angleLines) sc.angleLines.color=gridCol;
+    });
+  }
+  function go(){var el=document.getElementById(id);if(!el){if(++tries<15)setTimeout(go,80);return;}var ctx=el.getContext('2d');if(activeCharts[id]){try{activeCharts[id].destroy();}catch(e){}}activeCharts[id]=new Chart(ctx,cfg);}
+  setTimeout(go,60);
+}
+function openModal(id){document.getElementById(id).classList.add('open');}
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+document.querySelectorAll('.overlay').forEach(function(ov){ov.addEventListener('click',function(e){if(e.target===this)this.classList.remove('open');});});
+
+/* ─── NAV ─── */
+function goto(p){
+  currentPage=p;
+  document.querySelectorAll('.page').forEach(function(el){el.classList.remove('active');});
+  document.querySelectorAll('.nav-item').forEach(function(el){el.classList.remove('active');});
+  document.getElementById('page-'+p).classList.add('active');
+  var nav=document.getElementById('nav-'+p);if(nav)nav.classList.add('active');
+  document.getElementById('pg-title').textContent=PAGE_TITLES[p]||p;
+  destroyCharts();
+  var fn={dashboard:renderDashboard,contracts:renderContracts,vendors:renderVendors,activities:renderActivities,payments:renderPayments,calendar:renderCalendar,legacy:renderLegacy,reports:renderReports};
+  if(fn[p])fn[p]();
+}
+function onRoleChange(r){
+  currentRole=r;
+  document.getElementById('pg-sub').textContent=r+' · Monitoring Mode · March 17, 2025';
+  document.getElementById('avatar').textContent=r[0];
+}
+
+/* ─── DASHBOARD ─── */
+function renderDashboard(){
+  var el=document.getElementById('page-dashboard');
+  var active=CONTRACTS.filter(function(c){return c.status==='active';}).length;
+  var expiring=CONTRACTS.filter(function(c){return c.status==='expiring';}).length;
+  var openIssues=ACTIVITIES.filter(function(a){return a.status==='open'||a.status==='in-progress';}).length;
+  var avgScore=Math.round(CONTRACTS.reduce(function(a,c){return a+c.score;},0)/CONTRACTS.length);
+  var dotColors={sync:'#1d4ed8',activity:'#16a34a',alert:'#dc2626',upload:'#7c3aed',payment:'#d97706'};
+  var auditRows=AUDIT.map(function(log){
+    var ic={sync:'⚡',activity:'🔧',alert:'🔴',upload:'📂',payment:'💳'}[log.type]||'•';
+    return '<div class="notif-row"><div class="ndot" style="background:'+(dotColors[log.type]||'#94a3b8')+'"></div><div style="flex:1"><div style="font-size:12px;color:#1e293b">'+ic+' '+log.action+'</div><div style="font-size:10px;color:#94a3b8;margin-top:1px">'+log.user+' · '+log.time+'</div></div></div>';
+  }).join('');
+  var pmRows=PM_LIST.slice(0,4).map(function(pm){
+    return '<div class="tl-item"><div class="tl-dot '+(pm.st==='confirmed'?'tl-done':'tl-act')+'">'+(pm.st==='confirmed'?'✓':'!')+'</div><div style="flex:1"><div style="font-size:12px;color:#1e293b;font-weight:500">'+pm.type+'</div><div style="font-size:11px;color:#94a3b8">'+pm.vendor+' · '+pm.date+'</div></div><span class="pill '+(pm.st==='confirmed'?'p-active':'p-pending')+'">'+pm.st+'</span></div>';
+  }).join('');
+  el.innerHTML='<div class="sync-banner"><span>⚡</span><div><strong>P2P Sync Active</strong> · Last synced 12 mins ago · 5 active contracts monitored · <a href="#" onclick="alert(\'Sync triggered!\');return false" style="color:#1d4ed8;font-weight:600">Sync Now</a></div></div>'
+  +'<div class="g4" style="margin-bottom:14px">'
+  +'<div class="mc"><div class="mc-lbl">Active Contracts</div><div class="mc-val">'+active+'</div><div class="mc-sub">'+expiring+' expiring soon</div></div>'
+  +'<div class="mc"><div class="mc-lbl">Avg Vendor Score</div><div class="mc-val" style="color:'+(avgScore>=85?'#16a34a':avgScore>=70?'#d97706':'#dc2626')+'">'+avgScore+'</div><div class="mc-sub"><span class="mc-up">↑ 3pts</span> vs last month</div></div>'
+  +'<div class="mc"><div class="mc-lbl">Open Issues</div><div class="mc-val" style="color:#dc2626">'+openIssues+'</div><div class="mc-sub"><span class="mc-dn">↑ 1</span> new this week</div></div>'
+  +'<div class="mc"><div class="mc-lbl">Legacy Contracts</div><div class="mc-val" style="color:#7c3aed">1</div><div class="mc-sub">Onboarded in VCMS</div></div>'
+  +'</div>'
+  +(expiring?'<div class="al al-warn" style="margin-bottom:14px"><span class="al-icon">⚠</span><div style="flex:1"><div style="font-size:12px;font-weight:700;color:#92400e">'+expiring+' contract expiring – Notify P2P team for renewal action</div><div style="font-size:11px;color:#64748b">Office Space – Anna Nagar (CNT-002) expires Apr 15, 2025. Contract renewal is handled in P2P.</div></div><button class="btn btn-p2p btn-sm" onclick="alert(\'Opening P2P renewal workflow...\')">Open P2P ↗</button></div>':'')
+  +'<div class="g2" style="margin-bottom:14px">'
+  +'<div class="card"><div class="card-hdr"><span class="card-ttl">Vendor Performance Snapshot</span><span class="ai">✦ AI</span></div><div style="height:170px"><canvas id="ch-perf"></canvas></div></div>'
+  +'<div class="card"><div class="card-hdr"><span class="card-ttl">Upcoming PM Tasks</span></div>'+pmRows+'</div>'
+  +'</div>'
+  +'<div class="g2">'
+  +'<div class="card"><div class="card-hdr"><span class="card-ttl">Recent Activity</span><button class="btn btn-sec btn-sm" onclick="goto(\'activities\')">View All</button></div>'+auditRows+'</div>'
+  +'<div class="card"><div class="card-hdr"><span class="card-ttl">Issue Summary</span></div>'
+  +ACTIVITIES.filter(function(a){return a.status!=='closed';}).slice(0,4).map(function(a){
+    return '<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9"><div class="tl-dot '+(a.severity==='high'||a.severity==='critical'?'tl-warn':a.severity==='medium'?'tl-act':'tl-pend')+'" style="font-size:10px">'+a.severity[0].toUpperCase()+'</div><div style="flex:1"><div style="font-size:12px;font-weight:500;color:#1e293b">'+a.type+'</div><div style="font-size:11px;color:#94a3b8">'+a.vendor+' · '+a.date+'</div></div>'+pill(a.status)+'</div>';
+  }).join('')
+  +'</div></div>';
+  makeChart('ch-perf',{type:'bar',data:{labels:VENDORS.map(function(v){return v.name.split(' ')[0];}),datasets:[{label:'Score',data:VENDORS.map(function(v){return v.score;}),backgroundColor:VENDORS.map(function(v){return v.score>=85?'#86efac':v.score>=70?'#fde68a':'#fca5a5';}),borderColor:VENDORS.map(function(v){return v.score>=85?'#16a34a':v.score>=70?'#d97706':'#dc2626';}),borderWidth:1.5,borderRadius:5}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return 'Score: '+c.raw;}}}},scales:{x:{ticks:{color:'#94a3b8',font:{size:10}},grid:{display:false}},y:{ticks:{color:'#94a3b8',font:{size:10}},grid:{color:'#f1f5f9'},min:50,max:100}}}});
+}
+
+/* ─── CONTRACTS ─── */
+function renderContracts(){
+  var el=document.getElementById('page-contracts');
+  var filtered=CONTRACTS.filter(function(c){if(contractFilter!=='all'&&c.source!==contractFilter)return false;return true;});
+  var rows=filtered.map(function(c){
+    return '<tr onclick="openContractDetail(\''+c.id+'\')" style="cursor:pointer">'
+    +'<td><div style="font-weight:600;color:#1e293b;font-size:13px">'+c.name+'</div><div style="font-size:10px;color:#94a3b8;margin-top:1px">'+c.id+' · '+c.loc+'</div></td>'
+    +'<td>'+c.vendor+'</td>'
+    +'<td><span class="tag '+(c.type==='AMC'?'t-blue':'t-purple')+'">'+c.type+'</span></td>'
+    +'<td>'+fmtV(c.value)+'</td>'
+    +'<td style="font-size:12px">'+c.end+(c.status==='expiring'?'<div style="font-size:10px;color:#dc2626;font-weight:600">⚠ 28 days</div>':'')+'</td>'
+    +'<td>'+pill(c.status)+'</td>'
+    +'<td>'+srcTag(c.source)+'</td>'
+    +'<td>'+scoreRing(c.score)+'</td>'
+    +'<td><button class="btn btn-sec btn-sm" onclick="event.stopPropagation();openContractDetail(\''+c.id+'\')">View</button></td>'
+    +'</tr>';
+  }).join('');
+  el.innerHTML='<div class="al al-info" style="margin-bottom:14px"><span class="al-icon">⚡</span><div style="font-size:12px;color:#1d4ed8">VCMS displays <strong>active contracts synced from P2P</strong> and manually onboarded legacy contracts. Contract creation and approval happen in the P2P system.</div></div>'
+  +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
+  +'<div style="display:flex;gap:6px;flex-wrap:wrap">'
+  +'<select class="fsel" style="width:160px" onchange="contractFilter=this.value;renderContracts()">'
+  +'<option value="all">All Sources</option><option value="p2p">P2P Contracts</option><option value="legacy">Legacy Contracts</option>'
+  +'</select></div>'
+  +'<div style="display:flex;gap:6px">'
+  +'<button class="btn btn-ghost btn-sm" onclick="goto(\'legacy\')">📂 Onboard Legacy</button>'
+  +'<button class="btn btn-primary btn-sm" onclick="alert(\'🔗 Opening P2P to view contract source...\')">⚡ View in P2P</button>'
+  +'</div></div>'
+  +'<div class="card" style="padding:0;overflow:hidden"><table class="tbl"><thead><tr><th>Contract</th><th>Vendor</th><th>Type</th><th>Value</th><th>Expiry</th><th>Status</th><th>Source</th><th>Score</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+function openContractDetail(id){
+  var c=null;for(var i=0;i<CONTRACTS.length;i++){if(CONTRACTS[i].id===id){c=CONTRACTS[i];break;}}
+  if(!c)return;
+  document.getElementById('cd-title').textContent=c.name;
+  document.getElementById('cd-sub').textContent=c.id+' · '+c.vendor+' · '+srcTag(c.source);
+  var acts=ACTIVITIES.filter(function(a){return a.contract===c.id;});
+  var pays=PAYMENTS.filter(function(p){return p.contract===c.id;});
+  document.getElementById('cd-body').innerHTML=
+  '<div class="g4" style="margin-bottom:14px">'
+  +'<div class="mc" style="padding:10px 12px"><div class="mc-lbl">Contract Value</div><div class="mc-val" style="font-size:18px">'+fmtV(c.value)+'</div></div>'
+  +'<div class="mc" style="padding:10px 12px"><div class="mc-lbl">Vendor Score</div><div class="mc-val" style="font-size:18px;color:'+(c.score>=85?'#16a34a':c.score>=70?'#d97706':'#dc2626')+'">'+c.score+'</div></div>'
+  +'<div class="mc" style="padding:10px 12px"><div class="mc-lbl">Open Issues</div><div class="mc-val" style="font-size:18px;color:#dc2626">'+acts.filter(function(a){return a.status!=='closed';}).length+'</div></div>'
+  +'<div class="mc" style="padding:10px 12px"><div class="mc-lbl">DLP Retention</div><div class="mc-val" style="font-size:18px">'+(c.dlp?c.dlp+'%':'None')+'</div></div>'
+  +'</div>'
+  +'<div class="g2" style="margin-bottom:14px">'
+  +'<div><div style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.7px;margin-bottom:10px">Contract Info</div>'
+  +[['Start Date',c.start],['End Date',c.end],['Type',c.type+' · '+c.cat],['Payment',c.pay],['Location',c.loc],['Source',c.source==='p2p'?'P2P System':'Legacy Upload']].map(function(r){return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:12px"><span style="color:#94a3b8">'+r[0]+'</span><span style="color:#1e293b;font-weight:500">'+r[1]+'</span></div>';}).join('')+'</div>'
+  +'<div><div style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.7px;margin-bottom:10px">Performance Metrics</div>'
+  +scoreBar(c.slaAdh,'SLA Adherence')+scoreBar(c.delivAdh,'Delivery Adherence')+scoreBar(c.quality,'Quality / Compliance')+'</div>'
+  +'</div>'
+  +(acts.length?'<div style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">Recent Activities</div>'
+  +acts.slice(0,3).map(function(a){return '<div class="al '+(a.severity==='high'?'al-crit':a.severity==='medium'?'al-warn':'al-success')+'"><span class="al-icon">'+(a.severity==='high'?'🔴':a.severity==='medium'?'⚠':'✓')+'</span><div style="flex:1"><div style="font-size:12px;font-weight:600;color:#1e293b">'+a.type+'</div><div style="font-size:11px;color:#64748b;margin-top:1px">'+a.desc+'</div><div style="font-size:10px;color:#94a3b8;margin-top:2px">'+a.date+'</div></div>'+pill(a.status)+'</div>';}).join(''):''  )
+  +(pays.length?'<div style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.7px;margin:14px 0 8px">Payment History (Read-Only · Synced from P2P)</div>'
+  +'<div class="al al-info" style="margin-bottom:8px"><span class="al-icon">ℹ</span><div style="font-size:11px;color:#1d4ed8">Payment processing is managed in P2P. VCMS shows status tracking only.</div></div>'
+  +pays.map(function(p){return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:#f8fafc;border-radius:7px;margin-bottom:5px"><div><div style="font-size:12px;font-weight:500;color:#1e293b">'+p.month+'</div><div style="font-size:10px;color:#94a3b8">'+p.p2pRef+'</div></div><div style="font-size:13px;font-weight:700;color:#1e293b">'+fmtV(p.due)+'</div>'+pill(p.status)+'</div>';}).join(''):''  )
+  +'<div style="margin-top:16px;display:flex;gap:8px"><button class="btn btn-primary btn-sm" onclick="openModal(\'ov-activity\')">+ Log Activity</button><button class="btn btn-ghost btn-sm" onclick="closeModal(\'ov-contract\')">Close</button></div>';
+  openModal('ov-contract');
+}
+
+/* ─── VENDORS ─── */
+function renderVendors(){
+  var el=document.getElementById('page-vendors');
+  var v=VENDORS.find(function(x){return x.id===selectedVendorId;})||VENDORS[0];
+  var rows=VENDORS.map(function(vv){
+    var tc=vv.score>=85?'#16a34a':vv.score>=70?'#d97706':'#dc2626';
+    return '<tr style="cursor:pointer;background:'+(selectedVendorId===vv.id?'#eff6ff':'transparent')+'" onclick="selectVendor(\''+vv.id+'\')">'
+    +'<td><div style="font-weight:600;color:#1e293b">'+vv.name+'</div><div style="font-size:10px;color:#94a3b8">'+vv.contracts+' contract(s)</div></td>'
+    +'<td><span class="tag t-blue">'+vv.cat+'</span></td>'
+    +'<td>'+scoreRing(vv.score)+'</td>'
+    +'<td><span style="font-size:11px;color:'+(vv.trend==='up'?'#16a34a':vv.trend==='down'?'#dc2626':'#94a3b8')+';font-weight:600">'+(vv.trend==='up'?'↑ Improving':vv.trend==='down'?'↓ Declining':'→ Stable')+'</span></td>'
+    +'<td>'+pill(vv.risk==='low'?'low':vv.risk==='medium'?'medium':'high')+'</td>'
+    +'</tr>';
+  }).join('');
+  var aiMsg=v.risk==='high'?'⚠ High risk vendor. Immediate performance review recommended. Consider activating penalty clauses.':v.risk==='medium'?v.name+' shows inconsistent performance. Schedule a performance review meeting.':v.name+' is a top performer. Consider preferential terms at next contract renewal.';
+  el.innerHTML='<div class="g2">'
+  +'<div><div class="card" style="padding:0;overflow:hidden;margin-bottom:14px"><table class="tbl"><thead><tr><th>Vendor</th><th>Category</th><th>Score</th><th>Trend</th><th>Risk</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>'
+  +'<div class="card">'
+  +'<div class="card-hdr"><span class="card-ttl">'+v.name+'</span><div style="display:flex;gap:6px;align-items:center"><span class="ai">✦ AI Risk</span>'+pill(v.risk)+'</div></div>'
+  +'<div style="height:185px"><canvas id="ch-radar"></canvas></div>'
+  +'<div class="g2" style="gap:8px;margin-top:14px">'
+  +[['TAT Adherence',v.tat],['PM Adherence',v.pm],['Service Rate',v.svc],['Response Rate',v.resp]].map(function(m){
+    var c=m[1]>=85?'#16a34a':m[1]>=70?'#d97706':'#dc2626';
+    return '<div style="background:#f8fafc;border-radius:7px;padding:10px 12px;border:1px solid #e2e8f0"><div style="font-size:10px;color:#94a3b8;margin-bottom:2px">'+m[0]+'</div><div style="font-size:18px;font-weight:700;color:#0f172a">'+m[1]+'%</div><div class="pb"><div class="pbf" style="width:'+m[1]+'%;background:'+c+'"></div></div></div>';
+  }).join('')
+  +'</div>'
+  +'<div class="al al-'+(v.risk==='high'?'crit':v.risk==='medium'?'warn':'success')+'" style="margin-top:14px"><span>🤖</span><div style="font-size:11px;color:'+(v.risk==='high'?'#b91c1c':v.risk==='medium'?'#92400e':'#166534')+'"><strong>AI Insight:</strong> '+aiMsg+'</div></div>'
+  +'<div style="margin-top:12px"><button class="btn btn-primary btn-sm" onclick="openModal(\'ov-activity\')">+ Log Activity</button></div>'
+  +'</div></div>';
+  makeChart('ch-radar',{type:'radar',data:{labels:['TAT','PM Adh','Service','Response'],datasets:[{data:[v.tat,v.pm,v.svc,v.resp],backgroundColor:'rgba(29,78,216,0.1)',borderColor:'#1d4ed8',pointBackgroundColor:'#1d4ed8',pointRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{r:{ticks:{color:'#94a3b8',font:{size:9},backdropColor:'transparent',stepSize:25},grid:{color:'#e2e8f0'},angleLines:{color:'#e2e8f0'},pointLabels:{color:'#64748b',font:{size:10}},min:0,max:100}}}});
+}
+function selectVendor(id){selectedVendorId=id;destroyCharts();renderVendors();}
+
+/* ─── ACTIVITIES ─── */
+function renderActivities(){
+  var el=document.getElementById('page-activities');
+  var filtered=ACTIVITIES.filter(function(a){if(actFilter!=='all'&&a.status!==actFilter)return false;return true;});
+  var sevColor={low:'#16a34a',medium:'#d97706',high:'#dc2626',critical:'#9333ea'};
+  var rows=filtered.map(function(a){
+    var sc=sevColor[a.severity]||'#94a3b8';
+    return '<tr><td><div style="font-weight:600;color:#1e293b;font-size:12px">'+a.id+'</div><div style="font-size:10px;color:#94a3b8">'+a.date+'</div></td>'
+    +'<td style="font-size:12px;color:#64748b">'+a.contract+'</td>'
+    +'<td style="font-size:12px;font-weight:500;color:#1e293b">'+a.vendor+'</td>'
+    +'<td><span class="tag '+(a.type==='SLA Breach'?'t-red':a.type==='PM Completed'||a.type==='Service Completion'?'t-green':a.type==='Issue Raised'?'t-amber':'t-blue')+'">'+a.type+'</span></td>'
+    +'<td><span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:600;color:'+sc+'"><span style="width:7px;height:7px;border-radius:50%;background:'+sc+'"></span>'+a.severity+'</span></td>'
+    +'<td style="font-size:11px;color:#64748b;max-width:200px">'+a.desc+'</td>'
+    +'<td>'+pill(a.status)+'</td>'
+    +'</tr>';
+  }).join('');
+  el.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">'
+  +'<div style="display:flex;gap:6px;flex-wrap:wrap">'
+  +'<select class="fsel" style="width:150px" onchange="actFilter=this.value;renderActivities()">'
+  +'<option value="all">All Status</option><option value="open">Open</option><option value="in-progress">In Progress</option><option value="closed">Closed</option>'
+  +'</select></div>'
+  +'<button class="btn btn-primary" onclick="openModal(\'ov-activity\')">+ Log Activity</button>'
+  +'</div>'
+  +'<div class="g3" style="margin-bottom:14px">'
+  +'<div class="mc"><div class="mc-lbl">Open Issues</div><div class="mc-val" style="color:#dc2626">'+ACTIVITIES.filter(function(a){return a.status==='open';}).length+'</div><div class="mc-sub">Require action</div></div>'
+  +'<div class="mc"><div class="mc-lbl">In Progress</div><div class="mc-val" style="color:#d97706">'+ACTIVITIES.filter(function(a){return a.status==='in-progress';}).length+'</div><div class="mc-sub">Being resolved</div></div>'
+  +'<div class="mc"><div class="mc-lbl">Closed This Month</div><div class="mc-val" style="color:#16a34a">'+ACTIVITIES.filter(function(a){return a.status==='closed';}).length+'</div><div class="mc-sub">Resolved</div></div>'
+  +'</div>'
+  +'<div class="card" style="padding:0;overflow:hidden"><table class="tbl"><thead><tr><th>ID / Date</th><th>Contract</th><th>Vendor</th><th>Activity Type</th><th>Severity</th><th>Description</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+
+/* ─── PAYMENTS ─── */
+function renderPayments(){
+  var el=document.getElementById('page-payments');
+  var paid=PAYMENTS.filter(function(p){return p.status==='processed';}).length;
+  var pending=PAYMENTS.filter(function(p){return p.status==='pending';}).length;
+  var delayed=PAYMENTS.filter(function(p){return p.status==='delayed';}).length;
+  var rows=PAYMENTS.map(function(p){
+    var sColor={processed:'#dcfce7',pending:'#fef9c3',delayed:'#fee2e2'};
+    return '<tr style="background:'+(sColor[p.status]||'transparent')+'10">'
+    +'<td><div style="font-size:12px;font-weight:600;color:#1e293b">'+p.id+'</div><div style="font-size:10px;color:#94a3b8">'+p.p2pRef+'</div></td>'
+    +'<td style="font-size:12px;color:#64748b">'+p.contract+'</td>'
+    +'<td style="font-size:12px;font-weight:500;color:#1e293b">'+p.vendor+'</td>'
+    +'<td style="font-size:12px">'+p.month+'</td>'
+    +'<td style="font-size:13px;font-weight:700;color:#0f172a">'+fmtV(p.due)+'</td>'
+    +'<td style="font-size:11px;color:#64748b">'+p.invoiceDate+'</td>'
+    +'<td style="font-size:11px;color:#64748b">'+(p.payDate||'—')+'</td>'
+    +'<td>'+pill(p.status)+'</td>'
+    +'<td>'+(p.status==='delayed'?'<button class="btn btn-warn btn-sm" onclick="alert(\'Escalation sent to P2P Finance team!\')">Escalate in P2P</button>':'<span style="font-size:10px;color:#94a3b8">—</span>')+'</td>'
+    +'</tr>';
+  }).join('');
+  el.innerHTML='<div class="al al-info" style="margin-bottom:14px"><span class="al-icon">⚡</span><div style="font-size:12px;color:#1d4ed8"><strong>Payment tracking is read-only in VCMS.</strong> All payment processing, invoice approval, and disbursement happens in the P2P system. VCMS syncs payment status for monitoring and audit purposes only.</div></div>'
+  +'<div class="g4" style="margin-bottom:14px">'
+  +'<div class="mc"><div class="mc-lbl">Processed</div><div class="mc-val" style="color:#16a34a">'+paid+'</div><div class="mc-sub">Payments confirmed</div></div>'
+  +'<div class="mc"><div class="mc-lbl">Pending</div><div class="mc-val" style="color:#d97706">'+pending+'</div><div class="mc-sub">Awaiting P2P</div></div>'
+  +'<div class="mc"><div class="mc-lbl">Delayed</div><div class="mc-val" style="color:#dc2626">'+delayed+'</div><div class="mc-sub">Escalation needed</div></div>'
+  +'<div class="mc"><div class="mc-lbl">Total Tracked</div><div class="mc-val">'+PAYMENTS.reduce(function(a,p){return a+p.due;},0).toLocaleString('en-IN')+'</div><div class="mc-sub">₹ this cycle</div></div>'
+  +'</div>'
+  +'<div class="card" style="padding:0;overflow:hidden"><div style="padding:12px 16px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between"><span class="card-ttl">Invoice vs Payment Reconciliation (Read-Only · Synced from P2P)</span><button class="btn btn-ghost btn-sm">Export</button></div>'
+  +'<table class="tbl"><thead><tr><th>Payment ID</th><th>Contract</th><th>Vendor</th><th>Period</th><th>Amount</th><th>Invoice Date</th><th>Pay Date</th><th>Status</th><th>Action</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+
+/* ─── CALENDAR ─── */
+function renderCalendar(){
+  var el=document.getElementById('page-calendar');
+  var pmDates={20:{l:'HVAC',c:'cal-g'},22:{l:'Security',c:'cal-g'},25:{l:'Elevator',c:'cal-a'},28:{l:'Warehouse',c:'cal-a'}};
+  var blanks=Array(6).fill('<div></div>').join('');
+  var calDays='';
+  for(var d=1;d<=31;d++){
+    var evt=pmDates[d]?'<div class="cal-evt '+pmDates[d].c+'">'+pmDates[d].l+'</div>':'';
+    calDays+='<div class="cal-day'+(d===17?' cal-today':'')+'"><div class="cal-num">'+d+'</div>'+evt+'</div>';
+  }
+  var wk52=Array.from({length:52},function(_,i){
+    var has=[12,13,16,20,24,28,32,36,40,44,48,52].indexOf(i+1)>=0;
+    var now=i+1===12||i+1===13;
+    return '<div title="Week '+(i+1)+'" style="width:12px;height:12px;border-radius:2px;background:'+(now?'#1d4ed8':has?'#86efac':'#e2e8f0')+';cursor:default"></div>';
+  }).join('');
+  el.innerHTML='<div class="g2">'
+  +'<div class="card"><div class="card-hdr"><span class="card-ttl">March 2025</span><div style="display:flex;gap:4px"><button class="btn btn-sec btn-sm">‹</button><button class="btn btn-sec btn-sm">›</button></div></div>'
+  +'<div class="cal-grid">'+['Su','Mo','Tu','We','Th','Fr','Sa'].map(function(d){return '<div class="cal-hd">'+d+'</div>';}).join('')+blanks+calDays+'</div></div>'
+  +'<div>'
+  +'<div class="card" style="margin-bottom:12px"><div class="card-hdr"><span class="card-ttl">PM Tasks – March 2025</span><button class="btn btn-primary btn-sm" onclick="openModal(\'ov-activity\')">+ Log PM</button></div><div id="pm-tasks">'+buildPMTasks()+'</div></div>'
+  +'<div class="card"><div class="card-hdr"><span class="card-ttl">52-Week Coverage</span></div><div style="display:flex;flex-wrap:wrap;gap:3px">'+wk52+'</div>'
+  +'<div style="display:flex;gap:14px;margin-top:10px;font-size:10px;color:#94a3b8"><span>🟦 Current week</span><span>🟩 PM Scheduled</span><span>⬜ No PM</span></div></div>'
+  +'</div></div>';
+}
+function buildPMTasks(){
+  return pmData.map(function(pm,i){
+    var dCls=pm.st==='confirmed'?'tl-done':pm.st==='declined'?'tl-warn':'tl-act';
+    var dTxt=pm.st==='confirmed'?'✓':pm.st==='declined'?'✗':'!';
+    var acts=pm.st==='pending'?'<button class="btn btn-success btn-sm" onclick="confirmPM('+i+',true)">✓ Confirm</button> <button class="btn btn-danger btn-sm" onclick="confirmPM('+i+',false)">✗ Decline</button>':pm.st==='confirmed'?'<span class="pill p-active">Confirmed</span>':pm.st==='declined'?'<span class="pill p-delayed">Declined</span>':'<span class="pill p-draft">Upcoming</span>';
+    return '<div style="display:flex;align-items:center;gap:10px;padding:9px 11px;background:#f8fafc;border-radius:8px;margin-bottom:6px;border:1px solid #e2e8f0"><div class="tl-dot '+dCls+'">'+dTxt+'</div><div style="flex:1"><div style="font-size:12px;font-weight:500;color:#1e293b">'+pm.type+'</div><div style="font-size:10px;color:#94a3b8">'+pm.vendor+' · '+pm.date+'</div></div><div>'+acts+'</div></div>';
+  }).join('');
+}
+function confirmPM(i,yes){pmData[i].st=yes?'confirmed':'declined';var t=document.getElementById('pm-tasks');if(t)t.innerHTML=buildPMTasks();}
+
+/* ─── LEGACY ONBOARDING ─── */
+function renderLegacy(){
+  var el=document.getElementById('page-legacy');
+  var legacyContracts=CONTRACTS.filter(function(c){return c.source==='legacy';});
+  var rows=legacyContracts.map(function(c){
+    return '<tr onclick="openContractDetail(\''+c.id+'\')" style="cursor:pointer">'
+    +'<td><div style="font-weight:600;color:#1e293b;font-size:13px">'+c.name+'</div><div style="font-size:10px;color:#94a3b8">'+c.id+' · '+c.loc+'</div></td>'
+    +'<td>'+c.vendor+'</td><td>'+fmtV(c.value)+'</td>'
+    +'<td style="font-size:12px">'+c.start+' → '+c.end+'</td>'
+    +'<td>'+pill(c.status)+'</td>'
+    +'<td>'+scoreRing(c.score)+'</td>'
+    +'<td><button class="btn btn-sec btn-sm" onclick="event.stopPropagation();openContractDetail(\''+c.id+'\')">View</button></td>'
+    +'</tr>';
+  }).join('');
+  el.innerHTML='<div class="al al-warn" style="margin-bottom:14px"><span class="al-icon">📂</span><div style="font-size:12px;color:#92400e"><strong>Legacy Contract Onboarding:</strong> These contracts were not created in P2P. Once onboarded, they are treated identically to P2P contracts for performance tracking, activity logging, and payment status monitoring.</div></div>'
+  +'<div class="g2" style="margin-bottom:14px">'
+  +'<div class="card" style="border:2px dashed #cbd5e1;background:#f8fafc;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;gap:6px" onclick="openLegacyForm()">'
+  +'<div style="font-size:32px">📝</div>'
+  +'<div style="font-size:14px;font-weight:700;color:#1e293b;margin-top:4px">Create Single Legacy Contract</div>'
+  +'<div style="font-size:12px;color:#94a3b8;text-align:center">Manually onboard one contract not in P2P using a guided form</div>'
+  +'<button class="btn btn-primary" style="margin-top:8px" onclick="openLegacyForm()">+ Create Legacy Contract</button>'
+  +'</div>'
+  +'<div class="card" style="border:2px dashed #cbd5e1;background:#f8fafc;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;gap:6px" onclick="openModal(\'ov-bulk\')">'
+  +'<div style="font-size:32px">📂</div>'
+  +'<div style="font-size:14px;font-weight:700;color:#1e293b;margin-top:4px">Bulk Upload Legacy Contracts</div>'
+  +'<div style="font-size:12px;color:#94a3b8;text-align:center">Upload multiple contracts via Excel/CSV template</div>'
+  +'<button class="btn btn-ghost" style="margin-top:8px" onclick="openModal(\'ov-bulk\')">📥 Upload File</button>'
+  +'</div>'
+  +'</div>'
+  +(legacyContracts.length?'<div class="card" style="padding:0;overflow:hidden"><div style="padding:12px 16px;border-bottom:1px solid #e2e8f0"><span class="card-ttl">Onboarded Legacy Contracts ('+legacyContracts.length+')</span></div><table class="tbl"><thead><tr><th>Contract</th><th>Vendor</th><th>Value</th><th>Duration</th><th>Status</th><th>Score</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<div class="al al-info"><span class="al-icon">ℹ</span><div style="font-size:12px;color:#1d4ed8">No legacy contracts onboarded yet. Use the options above to add contracts not originating from P2P.</div></div>');
+}
+
+/* LEGACY FORM */
+var lgcStep=1;
+var lgcData={name:'',vendor:'',type:'AMC',cat:'Comprehensive',value:'',start:'',end:'',pay:'Monthly',sla:'',scope:'',loc:'',dlp:'0'};
+function openLegacyForm(){lgcStep=1;renderLgcStep();openModal('ov-legacy');}
+function renderLgcStep(){
+  var labels=['Contract Info','SLA & Terms','Upload & Activate'];
+  document.getElementById('lgc-step-info').textContent='Step '+lgcStep+' of 3 · Contract not created in P2P';
+  var stepper=labels.map(function(s,i){return '<div class="step '+(i+1<lgcStep?'s-done':i+1===lgcStep?'s-act':'s-pend')+'">'+(i+1<lgcStep?'✓ ':'')+(i+1)+'. '+s+'</div>'+(i<2?'<span style="color:#e2e8f0;font-size:16px;align-self:center;margin:0 2px">›</span>':'');}).join('');
+  var body='';
+  if(lgcStep===1){
+    body='<div class="frow"><div class="fg"><label class="flbl">Contract Name *</label><input class="finput" placeholder="e.g. Warehouse AMC – Chennai" value="'+lgcData.name+'" oninput="lgcData.name=this.value"/></div>'
+    +'<div class="fg"><label class="flbl">Vendor Name *</label><input class="finput" placeholder="Vendor company name" value="'+lgcData.vendor+'" oninput="lgcData.vendor=this.value"/></div></div>'
+    +'<div class="frow"><div class="fg"><label class="flbl">Contract Type *</label><select class="fsel" onchange="lgcData.type=this.value"><option>AMC</option><option>Rental</option><option>Service Agreement</option></select></div>'
+    +'<div class="fg"><label class="flbl">Category</label><select class="fsel" onchange="lgcData.cat=this.value"><option>Comprehensive</option><option>Non-Comprehensive</option><option>Semi-Comprehensive</option></select></div></div>'
+    +'<div class="frow3"><div class="fg"><label class="flbl">Start Date *</label><input class="finput" type="date" value="'+lgcData.start+'" oninput="lgcData.start=this.value"/></div>'
+    +'<div class="fg"><label class="flbl">End Date *</label><input class="finput" type="date" value="'+lgcData.end+'" oninput="lgcData.end=this.value"/></div>'
+    +'<div class="fg"><label class="flbl">Location</label><input class="finput" placeholder="Chennai, OMR…" value="'+lgcData.loc+'" oninput="lgcData.loc=this.value"/></div></div>'
+    +'<div class="fg"><label class="flbl">Contract Value (₹) *</label><input class="finput" type="number" placeholder="e.g. 450000" value="'+lgcData.value+'" oninput="lgcData.value=this.value"/></div>';
+  } else if(lgcStep===2){
+    body='<div class="frow"><div class="fg"><label class="flbl">Payment Terms</label><select class="fsel" onchange="lgcData.pay=this.value"><option>Monthly</option><option>Quarterly</option><option>Annual</option><option>Milestone</option></select></div>'
+    +'<div class="fg"><label class="flbl">DLP Retention %</label><input class="finput" type="number" value="'+lgcData.dlp+'" min="0" max="30" oninput="lgcData.dlp=this.value"/></div></div>'
+    +'<div class="fg"><label class="flbl">SLA Terms / Response Time</label><input class="finput" placeholder="e.g. 4-hour response, 24-hour resolution for critical issues" value="'+lgcData.sla+'" oninput="lgcData.sla=this.value"/></div>'
+    +'<div class="fg"><label class="flbl">Scope of Work</label><textarea class="ftextarea" placeholder="Describe the scope of services, deliverables, and coverage…" oninput="lgcData.scope=this.value">'+lgcData.scope+'</textarea></div>'
+    +'<div class="al al-info" style="margin-top:4px"><span>ℹ</span><div style="font-size:11px;color:#1d4ed8">SLA terms entered here will be used for performance monitoring and breach alerts within VCMS.</div></div>';
+  } else {
+    body='<div class="drop" style="margin-bottom:14px" onclick="alert(\'File browser opened\')"><div style="font-size:32px;margin-bottom:10px">📎</div><div style="font-size:14px;font-weight:600;color:#1e293b;margin-bottom:4px">Attach Contract Document</div><div style="font-size:12px;color:#94a3b8">PDF, DOC supported · Optional but recommended</div></div>'
+    +'<div class="al al-success" style="margin-bottom:10px"><span>✅</span><div style="font-size:12px;color:#166534">Once activated, this contract will be treated identically to P2P-originated contracts in VCMS — enabling performance tracking, activity logging, PM scheduling, and payment status monitoring.</div></div>'
+    +'<div class="al al-warn"><span>📂</span><div style="font-size:11px;color:#92400e">This is a legacy onboarding. No P2P reference will be linked. All tracking data stays within VCMS.</div></div>';
+  }
+  var nav='<div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">'+(lgcStep>1?'<button class="btn btn-sec" onclick="lgcStep--;renderLgcStep()">← Back</button>':'')+(lgcStep<3?'<button class="btn btn-primary" onclick="lgcStep++;renderLgcStep()">Continue →</button>':'')+(lgcStep===3?'<button class="btn btn-success" onclick="submitLegacy()">Activate Contract ✓</button>':'')+'</div>';
+  document.getElementById('lgc-body').innerHTML='<div class="step-wrap">'+stepper+'</div>'+body+nav;
+}
+function submitLegacy(){closeModal('ov-legacy');alert('✅ Legacy contract activated!\n\nThe contract is now:\n→ Active in VCMS\n→ Enabled for vendor activity tracking\n→ Enabled for PM scheduling\n→ Payment tracking (read-only reference)');}
+
+/* BULK UPLOAD */
+function simulateUpload(){
+  var r=document.getElementById('upload-result');
+  if(!r)return;
+  r.innerHTML='<div class="al al-info"><span>⏳</span><div style="font-size:12px;color:#1d4ed8">Uploading file… processing 5 rows…</div></div>';
+  setTimeout(function(){
+    r.innerHTML='<div class="al al-success"><span>✅</span><div style="font-size:12px;color:#166534"><strong>Upload successful!</strong> 5 contracts processed: 3 activated, 1 duplicate skipped, 1 pending metadata review.</div></div>'
+    +'<div style="font-size:11px;color:#94a3b8;margin-top:8px">Contracts are now active in VCMS and ready for performance tracking.</div>';
+  },1800);
+}
+
+/* ─── REPORTS ─── */
+function renderReports(){
+  var el=document.getElementById('page-reports');
+  var trend=[{l:'Oct',v:74},{l:'Nov',v:76},{l:'Dec',v:79},{l:'Jan',v:80},{l:'Feb',v:83},{l:'Mar',v:81}];
+  var statRows=[['≥85 Excellent',VENDORS.filter(function(v){return v.score>=85;}).length,'#16a34a'],['70–84 Good',VENDORS.filter(function(v){return v.score>=70&&v.score<85;}).length,'#d97706'],['<70 At Risk',VENDORS.filter(function(v){return v.score<70;}).length,'#dc2626']].map(function(s){return '<div style="margin-bottom:9px"><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px"><span style="color:#64748b">'+s[0]+'</span><span style="color:'+s[2]+';font-weight:700">'+s[1]+' vendors</span></div><div class="pb"><div class="pbf" style="width:'+Math.round(s[1]/VENDORS.length*100)+'%;background:'+s[2]+'"></div></div></div>';}).join('');
+  var actRows=[['SLA Breach',ACTIVITIES.filter(function(a){return a.type==='SLA Breach';}).length,'t-red'],['PM Completed',ACTIVITIES.filter(function(a){return a.type==='PM Completed';}).length,'t-green'],['Issue Raised',ACTIVITIES.filter(function(a){return a.type==='Issue Raised';}).length,'t-amber'],['Issue Resolved',ACTIVITIES.filter(function(a){return a.type==='Issue Resolved';}).length,'t-blue']].map(function(a){return '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f1f5f9"><span class="tag '+a[2]+'">'+a[0]+'</span><span style="font-size:14px;font-weight:700;color:#0f172a">'+a[1]+'</span></div>';}).join('');
+  el.innerHTML='<div class="g3" style="margin-bottom:14px">'
+  +'<div class="card"><div class="card-hdr"><span class="card-ttl">Vendor Score Distribution</span></div>'+statRows+'<div style="margin-top:12px"><div style="height:120px"><canvas id="ch-dist"></canvas></div></div></div>'
+  +'<div class="card"><div class="card-hdr"><span class="card-ttl">Avg Score Trend</span></div><div style="height:160px"><canvas id="ch-trend"></canvas></div></div>'
+  +'<div class="card"><div class="card-hdr"><span class="card-ttl">Activity Summary</span></div>'+actRows+'</div>'
+  +'</div>'
+  +'<div class="card" style="margin-bottom:14px"><div class="card-hdr"><span class="card-ttl">SLA Performance by Vendor</span><span class="ai">✦ AI</span></div>'
+  +'<table class="tbl"><thead><tr><th>Vendor</th><th>Contract</th><th>SLA Adherence</th><th>Delivery</th><th>Quality</th><th>Open Issues</th><th>Risk</th><th>AI Recommendation</th></tr></thead><tbody>'
+  +CONTRACTS.map(function(c){
+    var vendor=VENDORS.find(function(v){return v.name===c.vendor;})||{risk:'low'};
+    var rec=vendor.risk==='high'?'Immediate review required':vendor.risk==='medium'?'Schedule performance review':'Performing well – maintain';
+    return '<tr><td style="font-size:12px;font-weight:500;color:#1e293b">'+c.vendor+'</td><td style="font-size:11px;color:#94a3b8">'+c.id+'</td>'
+    +'<td><span style="font-weight:700;font-size:12px;color:'+(c.slaAdh>=85?'#16a34a':c.slaAdh>=70?'#d97706':'#dc2626')+'">'+c.slaAdh+'%</span></td>'
+    +'<td><span style="font-weight:700;font-size:12px;color:'+(c.delivAdh>=85?'#16a34a':c.delivAdh>=70?'#d97706':'#dc2626')+'">'+c.delivAdh+'%</span></td>'
+    +'<td><span style="font-weight:700;font-size:12px;color:'+(c.quality>=85?'#16a34a':c.quality>=70?'#d97706':'#dc2626')+'">'+c.quality+'%</span></td>'
+    +'<td style="font-size:12px;color:'+(c.issues>0?'#dc2626':'#16a34a')+';font-weight:700">'+c.issues+'</td>'
+    +'<td>'+pill(vendor.risk)+'</td>'
+    +'<td style="font-size:11px;color:#7c3aed">'+rec+'</td>'
+    +'</tr>';
+  }).join('')+'</tbody></table></div>'
+  +'<div class="card"><div class="card-hdr"><span class="card-ttl">P2P vs Legacy Contract Coverage</span></div>'
+  +'<div class="g2"><div><div style="font-size:12px;color:#64748b;margin-bottom:10px">Source breakdown of '+CONTRACTS.length+' active contracts</div>'
+  +[['P2P Contracts',CONTRACTS.filter(function(c){return c.source==='p2p';}).length,'#1d4ed8'],['Legacy Contracts',CONTRACTS.filter(function(c){return c.source==='legacy';}).length,'#7c3aed']].map(function(s){
+    return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#f8fafc;border-radius:8px;margin-bottom:8px;border:1px solid #e2e8f0"><span style="font-size:13px;font-weight:600;color:#1e293b">'+s[0]+'</span><span style="font-size:20px;font-weight:700;color:'+s[2]+'">'+s[1]+'</span></div>';
+  }).join('')+'</div><div style="height:150px"><canvas id="ch-src"></canvas></div></div></div>';
+  makeChart('ch-trend',{type:'line',data:{labels:trend.map(function(p){return p.l;}),datasets:[{data:trend.map(function(p){return p.v;}),borderColor:'#1d4ed8',backgroundColor:'rgba(29,78,216,0.05)',fill:true,tension:0.4,pointRadius:4,pointBackgroundColor:'#1d4ed8'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#94a3b8',font:{size:10}},grid:{color:'#f1f5f9'}},y:{ticks:{color:'#94a3b8',font:{size:10}},grid:{color:'#f1f5f9'},min:60,max:100}}}});
+  makeChart('ch-dist',{type:'doughnut',data:{labels:['Excellent','Good','At Risk'],datasets:[{data:[VENDORS.filter(function(v){return v.score>=85;}).length,VENDORS.filter(function(v){return v.score>=70&&v.score<85;}).length,VENDORS.filter(function(v){return v.score<70;}).length],backgroundColor:['#86efac','#fde68a','#fca5a5'],borderColor:['#16a34a','#d97706','#dc2626'],borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}}});
+  makeChart('ch-src',{type:'doughnut',data:{labels:['P2P','Legacy'],datasets:[{data:[CONTRACTS.filter(function(c){return c.source==='p2p';}).length,CONTRACTS.filter(function(c){return c.source==='legacy';}).length],backgroundColor:['#bfdbfe','#e9d5ff'],borderColor:['#1d4ed8','#7c3aed'],borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{color:'#64748b',font:{size:11}}}}}});
+}
+
+/* ─── THEME TOGGLE ─── */
+var isDark=false;
+function toggleTheme(){
+  isDark=!isDark;
+  document.documentElement.setAttribute('data-theme', isDark ? 'dark' : '');
+  document.getElementById('theme-icon').textContent = isDark ? '🌙' : '☀️';
+  document.getElementById('theme-label').textContent = isDark ? 'Dark' : 'Light';
+  // Refresh charts so their grid/tick colours match new theme
+  var p = currentPage;
+  destroyCharts();
+  var fn={dashboard:renderDashboard,contracts:renderContracts,vendors:renderVendors,
+    activities:renderActivities,payments:renderPayments,calendar:renderCalendar,
+    legacy:renderLegacy,reports:renderReports};
+  if(fn[p]) fn[p]();
+}
+
+/* ─── BOOT ─── */
+goto('dashboard');
+</script>
+</body>
+</html>

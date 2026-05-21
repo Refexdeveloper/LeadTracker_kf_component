@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Refex Eyes</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .refex-mascot-wrap {
+      --refex-blue: #2879B6;
+      --refex-green: #7DC244;
+      width: 100%;
+      height: 100%;
+      max-width: 120px;
+      max-height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .refex-eyes {
+      display: flex;
+      gap: 18px;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    .refex-eye {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, #fff 0%, #f0f4f8 100%);
+      border-radius: 50%;
+      border: 2px solid rgba(40, 121, 182, 0.25);
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.15s ease;
+      box-shadow: inset 0 2px 6px rgba(255,255,255,0.9), 0 2px 8px rgba(0,0,0,0.06);
+    }
+    .refex-eye.blink { transform: scaleY(0.08); transition-duration: 0.12s; }
+    .refex-pupil {
+      width: 14px;
+      height: 14px;
+      background: linear-gradient(90deg, var(--refex-blue), var(--refex-green));
+      border-radius: 50%;
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      transition: left 0.12s ease-out, top 0.12s ease-out;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="refex-mascot-root" class="refex-mascot-wrap" aria-label="Refex mascot eyes">
+    <div class="refex-eyes" id="refex-eyes">
+      <div class="refex-eye" id="refex-eye-l"><div class="refex-pupil" id="refex-pupil-l"></div></div>
+      <div class="refex-eye" id="refex-eye-r"><div class="refex-pupil" id="refex-pupil-r"></div></div>
+    </div>
+  </div>
+  <script>
+(function() {
+  var eyes = [document.getElementById('refex-eye-l'), document.getElementById('refex-eye-r')];
+  var pupils = [document.getElementById('refex-pupil-l'), document.getElementById('refex-pupil-r')];
+  var mouseX = 0, mouseY = 0;
+  var eyesRect = null;
+
+  function updateEyesRect() {
+    var eyesEl = document.getElementById('refex-eyes');
+    if (eyesEl) eyesRect = eyesEl.getBoundingClientRect();
+  }
+
+  function onMouseMove(e) {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+  }
+  window.addEventListener('mousemove', onMouseMove);
+
+  function animateEyes() {
+    updateEyesRect();
+    if (!eyesRect) { requestAnimationFrame(animateEyes); return; }
+    var cx = eyesRect.left + eyesRect.width / 2;
+    var cy = eyesRect.top + eyesRect.height / 2;
+    var dx = mouseX - cx;
+    var dy = mouseY - cy;
+    var dist = Math.min(Math.hypot(dx, dy), 45);
+    var angle = Math.atan2(dy, dx);
+    var px = Math.cos(angle) * Math.min(dist * 0.32, 8);
+    var py = Math.sin(angle) * Math.min(dist * 0.32, 8);
+    pupils.forEach(function(p) {
+      p.style.left = (50 + px) + '%';
+      p.style.top = (50 + py) + '%';
+      p.style.transform = 'translate(-50%, -50%)';
+    });
+    requestAnimationFrame(animateEyes);
+  }
+  requestAnimationFrame(animateEyes);
+
+  var lastBlink = 0;
+  var blinkSchedule = 3000 + Math.random() * 2000;
+
+  function blink() {
+    eyes.forEach(function(eye) { eye.classList.add('blink'); });
+    setTimeout(function() {
+      eyes.forEach(function(eye) { eye.classList.remove('blink'); });
+    }, 150);
+  }
+
+  function tickBlink(t) {
+    if (t - lastBlink >= blinkSchedule) {
+      lastBlink = t;
+      blinkSchedule = 3000 + Math.random() * 2000;
+      blink();
+    }
+    requestAnimationFrame(tickBlink);
+  }
+  requestAnimationFrame(tickBlink);
+})();
+  </script>
+</body>
+</html>
