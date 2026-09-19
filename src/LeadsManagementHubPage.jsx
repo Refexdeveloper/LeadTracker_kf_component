@@ -73,7 +73,7 @@ function ScopeToggle({ scope, setScope }) {
 }
 
 /**
- * Leads hub: “Me” (My Tasks / My Items) and “My Team” (process-report table).
+ * Leads hub: “Me” (My Tasks / My Leads) and “My Team” (process-report table).
  * Me / My Team toggle sits on the right of the greeting row.
  */
 export default function LeadsManagementHubPage() {
@@ -90,6 +90,18 @@ export default function LeadsManagementHubPage() {
     const t = setInterval(() => setGreeting(getTimeGreeting()), 60000)
     return () => clearInterval(t)
   }, [])
+
+  useEffect(function hydrateUserEmailFromSdk() {
+    const u = kfInstance?.user
+    if (!u?.Email && !u?.email) return
+    setUser((prev) => ({
+      ...(prev || {}),
+      _id: prev?._id || u._id,
+      Name: prev?.Name || u.Name,
+      FirstName: prev?.FirstName || u.FirstName || (u.Name && u.Name.split(' ')[0]) || 'User',
+      Email: u.Email || u.email || prev?.Email || '',
+    }))
+  }, [kfInstance])
 
   useEffect(function setupRoleNameOnLoad() {
     const sdk = kfInstance
@@ -111,6 +123,7 @@ export default function LeadsManagementHubPage() {
           _id: u._id,
           Name: u.Name,
           FirstName: u.FirstName || (u.Name && u.Name.split(' ')[0]) || 'User',
+          Email: u.Email || u.email || '',
         })
       }
       return
@@ -142,12 +155,25 @@ export default function LeadsManagementHubPage() {
           _id: u._id,
           Name: u.Name,
           FirstName: u.FirstName || (u.Name && u.Name.split(' ')[0]) || 'User',
+          Email: u.Email || u.email || '',
         })
       }
     }
     run()
     return () => { cancelled = true }
   }, [sdkReady, leadPaths, kfInstance])
+
+  const loggedInUserEmail = useMemo(() => {
+    const e =
+      user?.Email ||
+      user?.email ||
+      kfInstance?.user?.Email ||
+      kfInstance?.user?.email ||
+      kfInstance?.context?.user?.Email ||
+      kfInstance?.context?.user?.email ||
+      ''
+    return String(e || '').trim()
+  }, [user, kfInstance])
 
   const firstName = user?.FirstName || user?.Name?.split(' ')[0] || kfInstance?.user?.FirstName || 'User'
   const displayRole =
@@ -179,7 +205,7 @@ export default function LeadsManagementHubPage() {
   }, [canViewMyTeam, scope])
 
   return (
-    <div className="bg-[#f6f8fb] min-h-screen">
+    <div className="bg-[#f6f8fb] min-h-screen overflow-hidden">
       <div className="mx-auto max-w-[1500px] min-w-0">
         <div className="p-2 sm:p-3 md:p-4 space-y-5 sm:space-y-6">
           <section className="mb-1 sm:mb-2" data-aos="fade-down">
@@ -202,7 +228,10 @@ export default function LeadsManagementHubPage() {
           {scope === 'me' ? (
             <LeadsManagementPage hideGreeting />
           ) : (
-            <MyTeamLeadsView leadPaths={leadPaths} />
+            <MyTeamLeadsView
+              leadPaths={leadPaths}
+              loggedInUserEmail={loggedInUserEmail}
+            />
           )}
         </div>
       </div>

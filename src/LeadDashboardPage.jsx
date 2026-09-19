@@ -5,13 +5,30 @@ import LeadSourceCharts from './LeadSourceCharts.jsx'
 import LeadTrends from './LeadTrends.jsx'
 import LeadByDayOfWeek from './LeadByDayOfWeek.jsx'
 import LeadInsightCards from './LeadInsightCards.jsx'
+import { filterLeadsByInsightCard, LEAD_TABLE_PULSE_CLASS, useLeadTableHighlight } from './leadTableHighlight.js'
 import RecentLeadsCard from './RecentLeadsCard.jsx'
 import LeadsTable from './LeadsTable.jsx'
-import DatePicker from './DatePicker.jsx'
+import OpportunityFilterSheet, {
+  FilterField,
+  MobileFiltersButton,
+  OpportunityPortalSelect,
+} from './salesOpportunity/OpportunityFilterSheet.jsx'
+import LeadDashboardPeriodPicker from './LeadDashboardPeriodPicker.jsx'
 // import RefexFloatingMascot from './RefexFloatingMascot.jsx'
-import AOS from 'aos'
 import { getApiBase } from './apiBase.js'
 import { buildLeadAdminApiPaths, resolveKfApplicationId } from './kfLeadPaths.js'
+import { resolveWebsiteFromItem, leadWebsiteMatches } from './leadWebsiteResolve.js'
+
+function emptyLeadDashboardFilters(lockedWebsite = '') {
+  return {
+    entityFilter: lockedWebsite || 'All',
+    dateRange: 'Last 30 Days',
+    customDateStart: '',
+    customDateEnd: '',
+    searchQuery: '',
+    periodLabel: 'Last 30 Days',
+  }
+}
 
 function onParamsChange(data) {
   console.info('LeadDashboardPage mapped data changes', data)
@@ -22,13 +39,6 @@ function getTimeGreeting() {
   if (h < 12) return 'Good morning'
   if (h < 17) return 'Good afternoon'
   return 'Good evening'
-}
-
-function formatCompactDate(iso) {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
 function normalizeText(value) {
@@ -47,6 +57,8 @@ const ROLE_TO_WEBSITE = {
   'salesmanagersparzan': 'Sparzana',
   'salesmanagersparzana': 'Sparzana',
   'venwindsalesmanager': 'Venwind Refex',
+  'Modepro Manager': 'Modepro',
+  modepromanager: 'Modepro',
 }
 
 function resolveWebsiteFromOptions(targetWebsite, websiteOptions) {
@@ -328,8 +340,18 @@ function mapKfItemToLead(item) {
       item.recording_url ||
       '',
     conversationId: item.conversation_id || item.Conversation_ID || item.ConversationId || '',
-    website: item.Website_and_form || item.Website || item.website || '',
+    website: resolveWebsiteFromItem(item),
     createdDate: item.Created_at || item._created_at || '',
+    modifiedAt: item._modified_at || item.Modified_at || item.modified_at || '',
+    completedAt:
+      item._completed_at ||
+      item.Completed_at ||
+      item.Completed_At ||
+      item.completed_at ||
+      item.completedAt ||
+      item._modified_at ||
+      item.Modified_at ||
+      '',
     product:
       stringifyProducts(item.Products) ||
       item.Product ||
@@ -453,6 +475,9 @@ export default function LeadDashboardPage() {
   const [customDateStart, setCustomDateStart] = useState('')
   const [customDateEnd, setCustomDateEnd] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
+  const [periodLabel, setPeriodLabel] = useState('Last 30 Days')
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [draftFilters, setDraftFilters] = useState(() => emptyLeadDashboardFilters())
   const [latestLeadsQuery, setLatestLeadsQuery] = useState('')
   const [apiLeads, setApiLeads] = useState(null)
   const [apiLeadsLoading, setApiLeadsLoading] = useState(false)
@@ -462,8 +487,8 @@ export default function LeadDashboardPage() {
   const [roleName, setRoleName] = useState('')
   const [watchParamsTick, setWatchParamsTick] = useState(0)
   const [activeKpiCardId, setActiveKpiCardId] = useState('total')
+  const { pageRootRef, tableSectionRef, insightPulse, handleCardClick } = useLeadTableHighlight(setActiveKpiCardId)
   const [greeting, setGreeting] = useState(getTimeGreeting())
-  const [customDatePanelOpen, setCustomDatePanelOpen] = useState(false)
 
   useEffect(function hydrateUserFromKfSdk() {
     const sdk = kfInstance
@@ -603,7 +628,7 @@ export default function LeadDashboardPage() {
     setApiLeadsLoading(true)
 
     async function fetchOnePage(pageNumber) {
-      const path = adminPaths.getLeadItemsPath(pageNumber, 100000)
+      const path = adminPaths.getLeadItemsPath(pageNumber, 1000)
       if (kf?.api) {
         const resp = await kf.api(path, {
           method: 'GET',
@@ -622,17 +647,24 @@ export default function LeadDashboardPage() {
 
     async function run() {
       try {
-        const response = await fetchOnePage(1)
-        if (cancelled) return
-        const data = response?.Data ?? response?.data ?? (Array.isArray(response) ? response : null)
-        const list = Array.isArray(data) ? data : []
         const merge = []
-        for (let i = 0; i < list.length; i += 1) {
-          const row = mapKfItemToLead(list[i])
-          if (row) merge.push(row)
+        let pageNumber = 1
+        let capReached = false
+        while (pageNumber <= 50) {
+          const response = await fetchOnePage(pageNumber)
+          if (cancelled) return
+          const data = response?.Data ?? response?.data ?? (Array.isArray(response) ? response : null)
+          const list = Array.isArray(data) ? data : []
+          for (let i = 0; i < list.length; i += 1) {
+            const row = mapKfItemToLead(list[i])
+            if (row) merge.push(row)
+          }
+          if (list.length < 1000) break
+          pageNumber += 1
+          if (pageNumber > 50) capReached = true
         }
         if (!cancelled) {
-          setApiLeadsCapReached(false)
+          setApiLeadsCapReached(capReached)
           setApiLeads(merge)
         }
       } catch (e) {
@@ -666,18 +698,10 @@ export default function LeadDashboardPage() {
     }
   }, [kfInstance])
 
-  useEffect(function initAOS() {
-    AOS.init({ duration: 800, once: true })
-  }, [])
-
   useEffect(function syncGreetingClock() {
     const t = setInterval(() => setGreeting(getTimeGreeting()), 60000)
     return () => clearInterval(t)
   }, [])
-
-  useEffect(function closeCustomPanelWhenRangeChanges() {
-    if (dateRange !== 'Custom') setCustomDatePanelOpen(false)
-  }, [dateRange])
 
   const openLeadPopup = (lead) => {
     const sdk = kfInstance ?? window.kf
@@ -799,7 +823,7 @@ export default function LeadDashboardPage() {
       return leadInDateRange(lead, dateRange, customDateStart, customDateEnd)
     })
     if (entityFilter !== 'All') {
-      list = list.filter(function (lead) { return lead.website === entityFilter })
+      list = list.filter(function (lead) { return leadWebsiteMatches(lead, entityFilter) })
     }
     if (searchQuery) {
       const query = searchQuery.toLowerCase()
@@ -832,8 +856,7 @@ export default function LeadDashboardPage() {
       return list.filter((l) => String(l?.website || '').trim() === topWebsite)
     }
 
-    // 'total' (or unknown) => no extra filtering for the table
-    return list
+    return filterLeadsByInsightCard(list, activeKpiCardId)
   }, [displayLeads, activeKpiCardId])
 
   const latestTableLeadsFiltered = useMemo(function filterLatestTableLeadsOnly() {
@@ -856,7 +879,7 @@ export default function LeadDashboardPage() {
 
   const websiteOptions = useMemo(function getWebsiteOptions() {
     const base = apiLeads !== null ? apiLeads : demoLeads
-    const set = new Set()
+    const set = new Set(Object.values(ROLE_TO_WEBSITE))
     base.forEach(function (lead) {
       const w = lead?.website != null && String(lead.website).trim() !== '' ? String(lead.website).trim() : null
       if (w) set.add(w)
@@ -876,16 +899,21 @@ export default function LeadDashboardPage() {
       .map((v) => String(v).trim())
       .filter(Boolean)
 
-    if (roleCandidates.length === 0 || websiteOptions.length === 0) return null
+    if (roleCandidates.length === 0) return null
 
     const normalizedRoles = roleCandidates.map(normalizeText).filter(Boolean)
 
-    for (let i = 0; i < normalizedRoles.length; i += 1) {
-      const mappedWebsite = ROLE_TO_WEBSITE[normalizedRoles[i]]
+    for (let i = 0; i < roleCandidates.length; i += 1) {
+      const rawRole = roleCandidates[i]
+      const mappedWebsite = ROLE_TO_WEBSITE[rawRole] || ROLE_TO_WEBSITE[normalizeText(rawRole)]
       if (mappedWebsite) {
-        return resolveWebsiteFromOptions(mappedWebsite, websiteOptions)
+        return websiteOptions.length
+          ? resolveWebsiteFromOptions(mappedWebsite, websiteOptions)
+          : mappedWebsite
       }
     }
+
+    if (websiteOptions.length === 0) return null
 
     for (let i = 0; i < websiteOptions.length; i += 1) {
       const website = websiteOptions[i]
@@ -916,32 +944,80 @@ export default function LeadDashboardPage() {
     user?.Groups?.[0]?.Name ||
     user?.Roles?.[0]?.Name ||
     'User'
-  const customRangeLabel =
-    customDateStart && customDateEnd
-      ? `${formatCompactDate(customDateStart)} - ${formatCompactDate(customDateEnd)}`
-      : customDateStart
-        ? `From ${formatCompactDate(customDateStart)}`
-        : customDateEnd
-          ? `Until ${formatCompactDate(customDateEnd)}`
-          : 'Pick custom dates'
+  const applyPeriodChange = (next) => {
+    setDateRange(next.dateRange)
+    setCustomDateStart(next.customDateStart || '')
+    setCustomDateEnd(next.customDateEnd || '')
+    setPeriodLabel(next.summaryLabel || next.dateRange)
+  }
+
+  const activeFilterCount =
+    (!lockedWebsite && entityFilter !== 'All' ? 1 : 0) +
+    (dateRange !== 'Last 30 Days' ? 1 : 0) +
+    (searchQuery ? 1 : 0)
+
+  const openFilterSheet = () => {
+    setDraftFilters({
+      entityFilter,
+      dateRange,
+      customDateStart,
+      customDateEnd,
+      searchQuery,
+      periodLabel,
+    })
+    setFiltersOpen(true)
+  }
+
+  const applyDraftFilters = () => {
+    setEntityFilter(lockedWebsite || draftFilters.entityFilter)
+    setDateRange(draftFilters.dateRange)
+    setCustomDateStart(draftFilters.customDateStart)
+    setCustomDateEnd(draftFilters.customDateEnd)
+    setSearchQuery(draftFilters.searchQuery)
+    setPeriodLabel(draftFilters.periodLabel || draftFilters.dateRange)
+    setFiltersOpen(false)
+  }
+
+  const clearAndApplyFilters = () => {
+    const empty = emptyLeadDashboardFilters(lockedWebsite)
+    setDraftFilters(empty)
+    setEntityFilter(empty.entityFilter)
+    setDateRange(empty.dateRange)
+    setCustomDateStart('')
+    setCustomDateEnd('')
+    setSearchQuery('')
+    setPeriodLabel(empty.periodLabel)
+    setFiltersOpen(false)
+  }
+
+  const closeFilterSheet = () => setFiltersOpen(false)
+
+  const setDraftField = (key) => (value) => {
+    setDraftFilters((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const websiteSheetOptions = [
+    { value: 'All', label: 'All Websites' },
+    ...websiteOptions.map((opt) => ({ value: opt, label: opt })),
+  ]
 
   return (
-    <div className="min-h-screen overflow-hidden bg-gradient-to-br from-slate-100 via-slate-50 to-slate-100 px-3 pb-4 pt-1 md:px-4 md:pb-6 md:pt-2">
-      <div className="mx-auto max-w-[1500px] min-w-0">
-          <div className="p-1 sm:p-2 md:p-3 max-md:space-y-4 space-y-5 sm:space-y-6 transition-smooth">
-            <section className="mb-3 sm:mb-4 relative z-[120]" data-aos="fade-down">
-              <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4 md:overflow-visible [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden md:whitespace-nowrap">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-indigo-500 via-brand-blue to-brand-green flex items-center justify-center text-white text-sm font-bold shadow-sm">
+    <div ref={pageRootRef} className="h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain bg-gradient-to-br from-slate-100 via-slate-50 to-slate-100 px-3 pb-8 pt-1 md:px-4 md:pb-10 md:pt-2">
+      <div className="mx-auto w-full min-w-0 max-w-[1500px]">
+          <div className="p-1 sm:p-2 md:p-3 flex min-w-0 w-full max-w-full flex-col gap-5 sm:gap-6 transition-smooth">
+            <section className="mb-1 sm:mb-2 relative z-[120] min-w-0 w-full max-w-full">
+              <div className="flex min-w-0 w-full max-w-full flex-col md:flex-row md:items-center gap-3 md:gap-4">
+                  <div className="flex min-w-0 w-full items-center gap-3">
+                    <div className="h-10 w-10 shrink-0 rounded-xl bg-gradient-to-br from-indigo-500 via-brand-blue to-brand-green flex items-center justify-center text-white text-sm font-bold shadow-sm">
                       {(firstName || 'U').charAt(0)}
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-base sm:text-lg font-semibold tracking-tight text-gray-900 truncate">{greeting}, {firstName}</p>
-                      <p className="text-xs sm:text-sm text-gray-600 truncate">Logged in as {displayRole}</p>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-base sm:text-lg font-semibold tracking-tight text-gray-900 break-words">{greeting}, {firstName}</p>
+                      <p className="text-xs sm:text-sm text-gray-600 break-words">Logged in as {displayRole}</p>
                     </div>
                   </div>
 
-                  <div className="w-full md:w-auto md:ml-auto flex flex-col sm:flex-row sm:flex-wrap md:flex-nowrap items-stretch sm:items-center gap-2">
+                  <div className="w-full md:w-auto md:ml-auto hidden min-[992px]:flex flex-col sm:flex-row sm:flex-wrap md:flex-nowrap items-stretch sm:items-center gap-2">
                     {!lockedWebsite && (
                       <div className="relative w-full sm:w-auto">
                         <select
@@ -958,76 +1034,22 @@ export default function LeadDashboardPage() {
                       </div>
                     )}
 
-                    <div className="relative w-full sm:w-auto">
-                      <select
-                        value={dateRange}
-                        onChange={(e) => {
-                          setDateRange(e.target.value)
-                          if (e.target.value !== 'Custom') setCustomDatePanelOpen(false)
-                        }}
-                        className="h-9 w-full sm:w-auto rounded-lg border border-gray-200 bg-white px-3 pr-8 text-sm text-gray-700 transition-all duration-200 hover:bg-gray-50 focus:outline-none focus:ring-1 focus:ring-blue-200 appearance-none"
-                      >
-                        <option value="Today">Today</option>
-                        <option value="Last 7 Days">Last 7 Days</option>
-                        <option value="Last 30 Days">Last 30 Days</option>
-                        <option value="Custom">Custom</option>
-                      </select>
-                      <i className="ri-arrow-down-s-line absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none text-base" />
-                    </div>
-
-                    {dateRange === 'Custom' && (
-                      <div className="relative">
-                        <button
-                          type="button"
-                          onClick={() => setCustomDatePanelOpen((v) => !v)}
-                          className="h-9 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1 text-sm text-gray-700 transition-all duration-200 hover:bg-gray-50 focus:outline-none focus:ring-1 focus:ring-blue-200"
-                        >
-                          <i className="ri-calendar-line text-gray-500" />
-                          {customRangeLabel}
-                          <i className={`ri-arrow-${customDatePanelOpen ? 'up' : 'down'}-s-line text-gray-400`} />
-                        </button>
-
-                        {customDatePanelOpen && (
-                          <div className="absolute right-0 top-[calc(100%+8px)] z-[9999] w-[min(92vw,720px)] rounded-2xl border border-gray-200 bg-white p-3 shadow-xl">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                              <DatePicker
-                                label="Start Date"
-                                placeholder="Select start date"
-                                value={customDateStart}
-                                onChange={setCustomDateStart}
-                                id="topbar-custom-start-date"
-                              />
-                              <DatePicker
-                                label="End Date"
-                                placeholder="Select end date"
-                                value={customDateEnd}
-                                onChange={setCustomDateEnd}
-                                id="topbar-custom-end-date"
-                              />
-                            </div>
-                            <div className="mt-3 flex items-center justify-end gap-2">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setCustomDateStart('')
-                                  setCustomDateEnd('')
-                                }}
-                                className="h-8 rounded-lg border border-gray-200 bg-white px-3 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-all duration-200"
-                              >
-                                Clear
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setCustomDatePanelOpen(false)}
-                                className="h-8 rounded-lg border border-gray-100 bg-gray-900 px-3 text-xs font-medium text-white hover:bg-gray-800 transition-all duration-200"
-                              >
-                                Done
-                              </button>
-                            </div>
-                          </div>
-                        )}
+                    {lockedWebsite && (
+                      <div className="h-9 inline-flex items-center rounded-lg border border-violet-200 bg-violet-50 px-3 text-sm font-medium text-violet-800">
+                        {lockedWebsite}
                       </div>
                     )}
+
+                    <div className="relative w-full sm:w-auto sm:min-w-[11.5rem]">
+                      <LeadDashboardPeriodPicker
+                        dateRange={dateRange}
+                        customDateStart={customDateStart}
+                        customDateEnd={customDateEnd}
+                        summaryLabel={periodLabel}
+                        onChange={applyPeriodChange}
+                        className="w-full sm:w-auto sm:min-w-[11.5rem]"
+                      />
+                    </div>
 
                     <div className="relative w-full sm:w-[190px]">
                       <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base" />
@@ -1041,21 +1063,29 @@ export default function LeadDashboardPage() {
                     </div>
                   </div>
               </div>
+              <div className="mt-3 min-[992px]:hidden">
+                <MobileFiltersButton count={activeFilterCount} onClick={openFilterSheet} />
+              </div>
             </section>
 
-            <div key={filterKey} className="relative z-0 animate-filter-in space-y-6 sm:space-y-8">
-              <div className="pb-3 sm:pb-4">
+            <div key={filterKey} className="relative z-0 min-w-0 w-full max-w-full animate-filter-in flex flex-col gap-6 sm:gap-8">
+              <div className="min-w-0 w-full max-w-full">
                 <KPICards
                   leads={displayLeads}
                   allLeads={displayLeads}
                   datasetCapReached={apiLeads !== null && apiLeadsCapReached}
                   dateRange={dateRange}
-                  onCardClick={(cardId) => setActiveKpiCardId(cardId)}
+                  onCardClick={handleCardClick}
                   activeCardId={activeKpiCardId}
                 />
               </div>
 
-              <section className="rounded-2xl sm:rounded-2xl border-0 sm:border sm:border-white/50 bg-transparent sm:bg-white/45 backdrop-blur-0 sm:backdrop-blur-sm shadow-none sm:shadow-sm p-0 sm:p-4 md:p-5">
+              <section
+                ref={tableSectionRef}
+                className={`scroll-mt-24 min-w-0 w-full max-w-full rounded-2xl sm:rounded-2xl border-0 sm:border sm:border-white/50 bg-transparent sm:bg-white/45 backdrop-blur-0 sm:backdrop-blur-sm shadow-none sm:shadow-sm p-0 sm:p-4 md:p-5 overflow-x-auto transition-[box-shadow,ring] duration-500 ${
+                  insightPulse ? LEAD_TABLE_PULSE_CLASS : ''
+                }`}
+              >
                 <LeadsTable
                   leads={latestTableLeadsFiltered}
                   loading={apiLeadsLoading && apiLeads === null}
@@ -1066,7 +1096,7 @@ export default function LeadDashboardPage() {
                   showProductColumn
                   showSlaColumn
                   headerRight={
-                    <div className="w-full sm:w-[340px] flex items-center gap-2">
+                    <div className="w-full min-w-0 sm:w-[340px] flex items-center gap-2">
                       <div className="relative flex-1 min-w-0">
                         <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg pointer-events-none" />
                         <input
@@ -1103,25 +1133,78 @@ export default function LeadDashboardPage() {
               </section>
 
               {entityFilter === 'All' && (
-                <section className="rounded-2xl border border-white/50 bg-white/45 backdrop-blur-sm shadow-sm p-3 sm:p-4 md:p-5">
+                <section className="min-w-0 w-full max-w-full overflow-x-hidden rounded-2xl border border-white/50 bg-white/45 backdrop-blur-sm shadow-sm p-3 sm:p-4 md:p-5">
                   <LeadSourceCharts leads={displayLeads} />
                 </section>
               )}
 
-              <section className="rounded-2xl border border-white/50 bg-white/45 backdrop-blur-sm shadow-sm p-3 sm:p-4 md:p-5">
+              <section className="min-w-0 w-full max-w-full overflow-x-hidden rounded-2xl border border-white/50 bg-white/45 backdrop-blur-sm shadow-sm p-3 sm:p-4 md:p-5">
                 <LeadTrends leads={displayLeads} />
               </section>
 
-              <section className="rounded-2xl border border-white/50 bg-white/45 backdrop-blur-sm shadow-sm p-3 sm:p-4 md:p-5">
+              <section className="min-w-0 w-full max-w-full overflow-x-hidden rounded-2xl border border-white/50 bg-white/45 backdrop-blur-sm shadow-sm p-3 sm:p-4 md:p-5">
                 <LeadByDayOfWeek leads={displayLeads} />
               </section>
 
-              <LeadInsightCards leads={displayLeads} />
+              <LeadInsightCards leads={displayLeads} onCardClick={handleCardClick} activeCardId={activeKpiCardId} />
 
               {/* <RecentLeadsCard leads={displayLeads} onViewDetails={openLeadPopup} /> */}
             </div>
           </div>
       </div>
+      <OpportunityFilterSheet
+        open={filtersOpen}
+        onClose={closeFilterSheet}
+        onClear={clearAndApplyFilters}
+        onApply={applyDraftFilters}
+      >
+        {lockedWebsite ? (
+          <FilterField label="Website">
+            <div className="flex h-11 items-center rounded-xl border border-violet-200 bg-violet-50 px-3 text-sm font-medium text-violet-800">
+              {lockedWebsite}
+            </div>
+          </FilterField>
+        ) : (
+          <FilterField label="Website">
+            <OpportunityPortalSelect
+              ariaLabel="Website"
+              value={draftFilters.entityFilter}
+              onChange={setDraftField('entityFilter')}
+              options={websiteSheetOptions}
+            />
+          </FilterField>
+        )}
+        <FilterField label="Period">
+          <LeadDashboardPeriodPicker
+            dateRange={draftFilters.dateRange}
+            customDateStart={draftFilters.customDateStart}
+            customDateEnd={draftFilters.customDateEnd}
+            summaryLabel={draftFilters.periodLabel}
+            onChange={(next) => {
+              setDraftFilters((prev) => ({
+                ...prev,
+                dateRange: next.dateRange,
+                customDateStart: next.customDateStart || '',
+                customDateEnd: next.customDateEnd || '',
+                periodLabel: next.summaryLabel || next.dateRange,
+              }))
+            }}
+            triggerClassName="min-h-[44px] h-11 rounded-xl"
+          />
+        </FilterField>
+        <FilterField label="Search">
+          <div className="relative w-full min-w-0">
+            <i className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              value={draftFilters.searchQuery}
+              onChange={(e) => setDraftField('searchQuery')(e.target.value)}
+              placeholder="Search"
+              className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-brand-blue/30 focus:border-brand-blue touch-manipulation"
+            />
+          </div>
+        </FilterField>
+      </OpportunityFilterSheet>
       {/* <RefexFloatingMascot /> */}
     </div>
   )

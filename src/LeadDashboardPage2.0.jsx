@@ -5,13 +5,29 @@ import LeadSourceCharts from './LeadSourceCharts.jsx'
 import LeadTrends from './LeadTrends.jsx'
 import LeadByDayOfWeek from './LeadByDayOfWeek.jsx'
 import LeadInsightCards from './LeadInsightCards.jsx'
+import { filterLeadsByInsightCard, LEAD_TABLE_PULSE_CLASS, useLeadTableHighlight } from './leadTableHighlight.js'
 import RecentLeadsCard from './RecentLeadsCard.jsx'
 import LeadsTable from './LeadsTable.jsx'
 import DatePicker from './DatePicker.jsx'
+import OpportunityFilterSheet, {
+  FilterField,
+  MobileFiltersButton,
+  OpportunityPortalSelect,
+} from './salesOpportunity/OpportunityFilterSheet.jsx'
 // import RefexFloatingMascot from './RefexFloatingMascot.jsx'
 import AOS from 'aos'
 import { getApiBase } from './apiBase.js'
 import { buildLeadAdminApiPaths, resolveKfApplicationId } from './kfLeadPaths.js'
+
+function emptyLeadDashboardFilters(lockedWebsite = '') {
+  return {
+    entityFilter: lockedWebsite || 'All',
+    dateRange: 'Last 30 Days',
+    customDateStart: '',
+    customDateEnd: '',
+    searchQuery: '',
+  }
+}
 
 function onParamsChange(data) {
   console.info('LeadDashboardPage mapped data changes', data)
@@ -47,6 +63,7 @@ const ROLE_TO_WEBSITE = {
   'salesmanagersparzan': 'Sparzana',
   'salesmanagersparzana': 'Sparzana',
   'venwindsalesmanager': 'Venwind Refex',
+  'Modepro Manager': 'Modepro',
 }
 
 function resolveWebsiteFromOptions(targetWebsite, websiteOptions) {
@@ -398,8 +415,11 @@ export default function LeadDashboardPage() {
   const [roleName, setRoleName] = useState('')
   const [watchParamsTick, setWatchParamsTick] = useState(0)
   const [activeKpiCardId, setActiveKpiCardId] = useState('total')
+  const { pageRootRef, tableSectionRef, insightPulse, handleCardClick } = useLeadTableHighlight(setActiveKpiCardId)
   const [greeting, setGreeting] = useState(getTimeGreeting())
   const [customDatePanelOpen, setCustomDatePanelOpen] = useState(false)
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [draftFilters, setDraftFilters] = useState(() => emptyLeadDashboardFilters())
 
   useEffect(function hydrateUserFromKfSdk() {
     const sdk = kfInstance
@@ -539,7 +559,7 @@ export default function LeadDashboardPage() {
     setApiLeadsLoading(true)
 
     async function fetchOnePage(pageNumber) {
-      const path = adminPaths.getLeadItemsPath(pageNumber, 100000)
+      const path = adminPaths.getLeadItemsPath(pageNumber, 1000)
       if (kf?.api) {
         const resp = await kf.api(path, {
           method: 'GET',
@@ -768,8 +788,7 @@ export default function LeadDashboardPage() {
       return list.filter((l) => String(l?.website || '').trim() === topWebsite)
     }
 
-    // 'total' (or unknown) => no extra filtering for the table
-    return list
+    return filterLeadsByInsightCard(list, activeKpiCardId)
   }, [displayLeads, activeKpiCardId])
 
   const websiteOptions = useMemo(function getWebsiteOptions() {
@@ -798,8 +817,9 @@ export default function LeadDashboardPage() {
 
     const normalizedRoles = roleCandidates.map(normalizeText).filter(Boolean)
 
-    for (let i = 0; i < normalizedRoles.length; i += 1) {
-      const mappedWebsite = ROLE_TO_WEBSITE[normalizedRoles[i]]
+    for (let i = 0; i < roleCandidates.length; i += 1) {
+      const rawRole = roleCandidates[i]
+      const mappedWebsite = ROLE_TO_WEBSITE[rawRole] || ROLE_TO_WEBSITE[normalizeText(rawRole)]
       if (mappedWebsite) {
         return resolveWebsiteFromOptions(mappedWebsite, websiteOptions)
       }
@@ -843,23 +863,79 @@ export default function LeadDashboardPage() {
           ? `Until ${formatCompactDate(customDateEnd)}`
           : 'Pick custom dates'
 
+  const activeFilterCount =
+    (!lockedWebsite && entityFilter !== 'All' ? 1 : 0) +
+    (dateRange !== 'Last 30 Days' ? 1 : 0) +
+    (searchQuery ? 1 : 0)
+
+  const dateRangeSheetOptions = [
+    { value: 'Today', label: 'Today' },
+    { value: 'Last 7 Days', label: 'Last 7 Days' },
+    { value: 'Last 30 Days', label: 'Last 30 Days' },
+    { value: 'Custom', label: 'Custom' },
+  ]
+
+  const websiteSheetOptions = [
+    { value: 'All', label: 'All Websites' },
+    ...websiteOptions.map((opt) => ({ value: opt, label: opt })),
+  ]
+
+  const openFilterSheet = () => {
+    setDraftFilters({
+      entityFilter,
+      dateRange,
+      customDateStart,
+      customDateEnd,
+      searchQuery,
+    })
+    setFiltersOpen(true)
+  }
+
+  const applyDraftFilters = () => {
+    setEntityFilter(lockedWebsite || draftFilters.entityFilter)
+    setDateRange(draftFilters.dateRange)
+    setCustomDateStart(draftFilters.customDateStart)
+    setCustomDateEnd(draftFilters.customDateEnd)
+    setSearchQuery(draftFilters.searchQuery)
+    if (draftFilters.dateRange !== 'Custom') setCustomDatePanelOpen(false)
+    setFiltersOpen(false)
+  }
+
+  const clearAndApplyFilters = () => {
+    const empty = emptyLeadDashboardFilters(lockedWebsite)
+    setDraftFilters(empty)
+    setEntityFilter(empty.entityFilter)
+    setDateRange(empty.dateRange)
+    setCustomDateStart('')
+    setCustomDateEnd('')
+    setSearchQuery('')
+    setCustomDatePanelOpen(false)
+    setFiltersOpen(false)
+  }
+
+  const closeFilterSheet = () => setFiltersOpen(false)
+
+  const setDraftField = (key) => (value) => {
+    setDraftFilters((prev) => ({ ...prev, [key]: value }))
+  }
+
   return (
-    <div className="min-h-screen overflow-hidden bg-gradient-to-br from-slate-100 via-slate-50 to-slate-100 px-3 pb-4 pt-1 md:px-4 md:pb-6 md:pt-2">
+    <div ref={pageRootRef} className="min-h-screen overflow-y-auto overflow-x-hidden bg-gradient-to-br from-slate-100 via-slate-50 to-slate-100 px-3 pb-4 pt-1 md:px-4 md:pb-6 md:pt-2">
       <div className="mx-auto max-w-[1500px] min-w-0">
           <div className="p-1 sm:p-2 md:p-3 max-md:space-y-4 space-y-5 sm:space-y-6 transition-smooth">
             <section className="mb-3 sm:mb-4 relative z-[120]" data-aos="fade-down">
-              <div className="flex items-center gap-3 overflow-x-auto md:overflow-visible [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden whitespace-nowrap">
-                  <div className="flex items-center gap-3 min-w-0 shrink-0">
-                    <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-indigo-500 via-brand-blue to-brand-green flex items-center justify-center text-white text-sm font-bold shadow-sm">
+              <div className="flex min-w-0 w-full flex-col md:flex-row md:items-center gap-3 md:gap-4">
+                  <div className="flex min-w-0 w-full items-center gap-3">
+                    <div className="h-10 w-10 shrink-0 rounded-xl bg-gradient-to-br from-indigo-500 via-brand-blue to-brand-green flex items-center justify-center text-white text-sm font-bold shadow-sm">
                       {(firstName || 'U').charAt(0)}
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-base sm:text-lg font-semibold tracking-tight text-gray-900 truncate">{greeting}, {firstName}</p>
-                      <p className="text-xs sm:text-sm text-gray-600 truncate">Logged in as {displayRole}</p>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-base sm:text-lg font-semibold tracking-tight text-gray-900 break-words">{greeting}, {firstName}</p>
+                      <p className="text-xs sm:text-sm text-gray-600 break-words">Logged in as {displayRole}</p>
                     </div>
                   </div>
 
-                  <div className="ml-auto flex items-center gap-2 shrink-0">
+                  <div className="w-full md:w-auto md:ml-auto hidden min-[992px]:flex flex-col sm:flex-row sm:flex-wrap md:flex-nowrap items-stretch sm:items-center gap-2">
                     {!lockedWebsite && (
                       <div className="relative">
                         <select
@@ -959,6 +1035,9 @@ export default function LeadDashboardPage() {
                     </div>
                   </div>
               </div>
+              <div className="mt-3 min-[992px]:hidden">
+                <MobileFiltersButton count={activeFilterCount} onClick={openFilterSheet} />
+              </div>
             </section>
 
             <div key={filterKey} className="relative z-0 animate-filter-in space-y-6 sm:space-y-8">
@@ -968,13 +1047,18 @@ export default function LeadDashboardPage() {
                   allLeads={displayLeads}
                   datasetCapReached={apiLeads !== null && apiLeadsCapReached}
                   dateRange={dateRange}
-                  onCardClick={(cardId) => setActiveKpiCardId(cardId)}
+                  onCardClick={handleCardClick}
                   activeCardId={activeKpiCardId}
                   variant="pro"
                 />
               </div>
 
-              <section className="rounded-2xl border border-slate-200 bg-white shadow-xl p-3 sm:p-4 md:p-5">
+              <section
+                ref={tableSectionRef}
+                className={`scroll-mt-24 rounded-2xl border border-slate-200 bg-white shadow-xl p-3 sm:p-4 md:p-5 transition-[box-shadow,ring] duration-500 ${
+                  insightPulse ? LEAD_TABLE_PULSE_CLASS : ''
+                }`}
+              >
                 <LeadsTable
                   leads={latestTableLeads}
                   loading={apiLeadsLoading && apiLeads === null}
@@ -1000,12 +1084,75 @@ export default function LeadDashboardPage() {
                 <LeadByDayOfWeek leads={displayLeads} />
               </section>
 
-              <LeadInsightCards leads={displayLeads} />
+              <LeadInsightCards leads={displayLeads} onCardClick={handleCardClick} activeCardId={activeKpiCardId} />
 
               {/* <RecentLeadsCard leads={displayLeads} onViewDetails={openLeadPopup} /> */}
             </div>
           </div>
       </div>
+      <OpportunityFilterSheet
+        open={filtersOpen}
+        onClose={closeFilterSheet}
+        onClear={clearAndApplyFilters}
+        onApply={applyDraftFilters}
+      >
+        {lockedWebsite ? (
+          <FilterField label="Website">
+            <div className="flex h-11 items-center rounded-xl border border-violet-200 bg-violet-50 px-3 text-sm font-medium text-violet-800">
+              {lockedWebsite}
+            </div>
+          </FilterField>
+        ) : (
+          <FilterField label="Website">
+            <OpportunityPortalSelect
+              ariaLabel="Website"
+              value={draftFilters.entityFilter}
+              onChange={setDraftField('entityFilter')}
+              options={websiteSheetOptions}
+            />
+          </FilterField>
+        )}
+        <FilterField label="Period">
+          <OpportunityPortalSelect
+            ariaLabel="Period"
+            value={draftFilters.dateRange}
+            onChange={setDraftField('dateRange')}
+            options={dateRangeSheetOptions}
+          />
+        </FilterField>
+        {draftFilters.dateRange === 'Custom' ? (
+          <>
+            <FilterField label="Start date">
+              <DatePicker
+                placeholder="Select start date"
+                value={draftFilters.customDateStart}
+                onChange={setDraftField('customDateStart')}
+                id="sheet-custom-start-date"
+              />
+            </FilterField>
+            <FilterField label="End date">
+              <DatePicker
+                placeholder="Select end date"
+                value={draftFilters.customDateEnd}
+                onChange={setDraftField('customDateEnd')}
+                id="sheet-custom-end-date"
+              />
+            </FilterField>
+          </>
+        ) : null}
+        <FilterField label="Search">
+          <div className="relative w-full min-w-0">
+            <i className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              value={draftFilters.searchQuery}
+              onChange={(e) => setDraftField('searchQuery')(e.target.value)}
+              placeholder="Search"
+              className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-brand-blue/30 focus:border-brand-blue touch-manipulation"
+            />
+          </div>
+        </FilterField>
+      </OpportunityFilterSheet>
       {/* <RefexFloatingMascot /> */}
     </div>
   )

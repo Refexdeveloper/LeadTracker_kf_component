@@ -33,8 +33,10 @@ export default function RecentLeadsCard({ leads, onViewDetails }) {
 
   const websiteColors = {
     Venwind: 'bg-blue-50 text-blue-700 border-blue-200',
+    'Venwind Refex': 'bg-blue-50 text-blue-700 border-blue-200',
     RIL: 'bg-indigo-50 text-indigo-700 border-indigo-200',
     RRIL: 'bg-amber-50 text-amber-700 border-amber-200',
+    Modepro: 'bg-violet-50 text-violet-700 border-violet-200',
   }
 
   if (recent.length === 0) return null

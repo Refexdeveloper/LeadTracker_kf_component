@@ -1,6 +1,6 @@
 import React from 'react'
 import LeadStatusTracker from './LeadStatusTracker.jsx'
-import { followUpStatusPill, formatFollowUpDate } from './leadWorkflowUi.js'
+import MyTeamFollowUpDetails from './MyTeamFollowUpDetails.jsx'
 
 function InlineAudioPlayer({ url }) {
   const src = String(url || '').trim()
@@ -97,54 +97,7 @@ export default function MyTeamLeadAccordionPanel({ lead, progressData, progressL
         </div>
       </SectionCard>
 
-      <SectionCard title="Follow Up Details">
-        {followUps.length ? (
-          <div className="overflow-x-auto -mx-1">
-            <table className="w-full min-w-[640px] text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50/90">
-                  <th className="px-3 py-2.5 text-[11px] font-bold uppercase tracking-wide text-slate-600">
-                    Follow Up Date
-                  </th>
-                  <th className="px-3 py-2.5 text-[11px] font-bold uppercase tracking-wide text-slate-600">
-                    Description
-                  </th>
-                  <th className="px-3 py-2.5 text-[11px] font-bold uppercase tracking-wide text-slate-600">
-                    Follow Up Status
-                  </th>
-                  <th className="px-3 py-2.5 text-[11px] font-bold uppercase tracking-wide text-slate-600">
-                    Sales stage
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {followUps.map((row) => (
-                  <tr key={row.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="px-3 py-2.5 text-sm text-slate-900 whitespace-nowrap font-medium">
-                      {formatFollowUpDate(row.followUpDate)}
-                    </td>
-                    <td className="px-3 py-2.5 text-sm text-slate-700 break-words max-w-[220px]">
-                      {row.followUpDescription || '—'}
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <span
-                        className={`inline-flex px-2 py-0.5 text-[11px] font-semibold rounded-full ${followUpStatusPill(row.followUpStatus)}`}
-                      >
-                        {row.followUpStatus || '—'}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2.5 text-sm text-slate-700">{row.salesStage || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <p className="text-sm text-slate-500 py-6 text-center rounded-lg bg-slate-50 border border-dashed border-slate-200">
-            No follow-up entries for this lead.
-          </p>
-        )}
-      </SectionCard>
+      <MyTeamFollowUpDetails rows={followUps} layout="auto" />
     </div>
   )
 }

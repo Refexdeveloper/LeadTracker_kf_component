@@ -126,8 +126,8 @@ export default function LeadSourceCharts({ leads }) {
   }, [sourceData])
 
   return (
-    <section className="mb-0 w-full max-w-full overflow-visible min-w-0">
-      <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-5" data-aos="fade-right">
+    <section className="mb-0 w-full max-w-full overflow-x-hidden min-w-0">
+      <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-5">
         <div className="w-12 h-12 flex items-center justify-center bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-600 rounded-2xl shadow-xl shadow-indigo-500/25">
           <i className="ri-pie-chart-line text-white text-xl"></i>
         </div>
@@ -135,7 +135,7 @@ export default function LeadSourceCharts({ leads }) {
       </div>
 
       <div className="grid grid-cols-1 gap-4 w-full max-w-full overflow-visible min-w-0">
-        <div className="p-0 overflow-visible min-w-0 w-full max-w-full" data-aos="zoom-in" data-aos-delay="100">
+        <div className="p-0 overflow-x-hidden min-w-0 w-full max-w-full">
           <h3 className="text-base sm:text-lg font-bold text-slate-900 mb-4 sm:mb-6 flex items-center gap-2">
             <span className="w-2 h-2 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full"></span>
             Leads by Website

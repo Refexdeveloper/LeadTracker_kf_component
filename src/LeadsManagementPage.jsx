@@ -12,6 +12,7 @@ import { enrichLeadRowFromKpi, resolveLeadRowView } from './leadRowEnrich.js'
 import LeadAccordionPanel from './LeadAccordionPanel.jsx'
 import { hydrateAccordionLead } from './leadAccordionHydration.js'
 import { parseFollowUpDetailsFromItem } from './leadWorkflowUi.js'
+import { fetchParticipatedActivitySteps, fetchParticipatedLeadsForActivity } from './participatedLeads.js'
 
 const STATUS_TO_SEGMENT = {
   'Draft': 'draft',
@@ -126,14 +127,41 @@ function resolveWebsiteFromItem(item) {
   return ''
 }
 
-function formatStatusForDisplay(raw) {
+const CANONICAL_LEAD_STATUSES = new Set(['Draft', 'In progress', 'Completed', 'Withdrawn', 'Rejected'])
+
+function normalizeStatusRaw(raw) {
   if (raw == null || raw === '') return ''
-  const t = String(raw).trim()
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    return String(
+      raw.Name ??
+        raw.name ??
+        raw._name ??
+        raw.Value ??
+        raw.value ??
+        raw.Status ??
+        raw.status ??
+        '',
+    ).trim()
+  }
+  return String(raw).trim()
+}
+
+function formatStatusForDisplay(raw) {
+  const t = normalizeStatusRaw(raw)
+  if (!t) return ''
   const norm = t.replace(/\s+/g, '')
   const map = {
     InProgress: 'In progress',
+    'In Progress': 'In progress',
+    'In progress': 'In progress',
     inprogress: 'In progress',
     INPROGRESS: 'In progress',
+    Submitted: 'In progress',
+    submitted: 'In progress',
+    Active: 'In progress',
+    active: 'In progress',
+    Running: 'In progress',
+    running: 'In progress',
     Draft: 'Draft',
     draft: 'Draft',
     Completed: 'Completed',
@@ -161,26 +189,26 @@ function getStatusBadgeClass(status) {
  * (same record set as myitems/draft | inprogress | …).
  */
 function resolveStatusFromItem(item, listUrlSegment) {
-  let raw =
+  let raw = normalizeStatusRaw(
     item._status ??
-    item.Status ??
-    item.status ??
-    item._workflow_status ??
-    item.Workflow_status
-  if (raw == null || String(raw).trim() === '') {
+      item.Status ??
+      item.status ??
+      item._workflow_status ??
+      item.Workflow_status,
+  )
+  if (!raw) {
     const step = item._current_step ?? item.Current_step ?? item.current_step
-    if (step != null && typeof step === 'object') {
-      raw = step.Name ?? step._name ?? step.Title ?? step.Step_name
-    } else if (step != null) {
-      raw = step
-    }
+    raw = normalizeStatusRaw(step)
   }
-  if (raw != null && String(raw).trim() !== '') {
-    return formatStatusForDisplay(raw)
+  if (raw) {
+    const displayed = formatStatusForDisplay(raw)
+    if (CANONICAL_LEAD_STATUSES.has(displayed)) return displayed
   }
+  // Row came from myitems/{segment}; trust segment when API status is missing or non-canonical (e.g. step name).
   if (listUrlSegment && SEGMENT_TO_STATUS_LABEL[listUrlSegment]) {
     return SEGMENT_TO_STATUS_LABEL[listUrlSegment]
   }
+  if (raw) return formatStatusForDisplay(raw) || 'Draft'
   return 'Draft'
 }
 
@@ -270,7 +298,9 @@ function mapKfItemToLead(item, listUrlSegment) {
     website,
     createdDate: stringifyKfFieldValue(getVal(item, ['Created_at', '_created_at', '_modified_at', 'Modified_at'], '')),
     modifiedAt: stringifyKfFieldValue(getVal(item, ['_modified_at', 'Modified_at'], '')),
-    completedAt: stringifyKfFieldValue(getVal(item, ['_completed_at', 'Completed_at'], '')),
+    completedAt: stringifyKfFieldValue(
+      getVal(item, ['_completed_at', 'Completed_at', 'Completed_At', '_modified_at', 'Modified_at'], ''),
+    ),
     status: resolveStatusFromItem(item, listUrlSegment),
     progress: Number(getVal(item, ['_progress', 'Progress'], 0)) || 0,
     createdBy,
@@ -426,6 +456,8 @@ const ROLE_TO_WEBSITE_KPI = {
   'salesmanagersparzana': 'Sparzana',
   'venwindsalesmanager': 'Venwind Refex',
   'venwindsalesteam': 'Venwind Refex',
+  'Modepro Manager': 'Modepro',
+  modepromanager: 'Modepro',
 }
 
 function normalizeTextKpi(value) {
@@ -531,64 +563,32 @@ function formatDateTime(iso) {
   return d.toLocaleString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
-function getSlaMeta(deadlineLike) {
-  const rawStr = String(deadlineLike ?? '').trim()
-  const rawNum = typeof deadlineLike === 'number'
-    ? deadlineLike
-    : (rawStr && /^[0-9]+(\.[0-9]+)?$/.test(rawStr) ? Number(rawStr) : null)
+import {
+  computeCompletedSlaOutcomeMeta,
+  formatSlaDeadlineDisplay,
+  isLeadStatusCompleted,
+  resolveLeadCompletedAt,
+  useSlaDeadlineMeta,
+  slaDeadlineTitle,
+} from './slaMeta.js'
+import SlaCell from './SlaCell.jsx'
 
-  // Numeric values from API can represent seconds/ms remaining.
-  if (rawNum != null && Number.isFinite(rawNum)) {
-    const seconds = rawNum > 100000 ? Math.round(rawNum / 1000) : Math.round(rawNum)
-    if (seconds <= 0) return { label: 'Breached', pill: 'bg-red-100 text-red-700 border border-red-200', breached: true }
-    const diffMs = seconds * 1000
-    const urgent = diffMs < 2 * 60 * 60 * 1000
-    const totalSecs = Math.max(1, Math.ceil(diffMs / 1000))
-    const days = Math.floor(totalSecs / (60 * 60 * 24))
-    const hours = Math.floor((totalSecs - days * 60 * 60 * 24) / (60 * 60))
-    const mins = Math.floor((totalSecs - days * 60 * 60 * 24 - hours * 60 * 60) / 60)
-    const secs = totalSecs - days * 60 * 60 * 24 - hours * 60 * 60 - mins * 60
-    const short =
-      days > 0 ? `${days}d ${hours}h`
-        : hours > 0 ? `${hours}h ${mins}m`
-          : mins > 0 ? `${mins}m ${secs}s`
-            : `${secs}s`
+function getSlaChipForRow(row, getMeta) {
+  const deadlineLike = row?.deadline ?? row?.Deadline
+  if (isLeadStatusCompleted(row?.status)) {
+    const outcome = computeCompletedSlaOutcomeMeta(resolveLeadCompletedAt(row), deadlineLike) || {
+      label: 'Closed Within SLA',
+      icon: '🟢',
+      pill: 'bg-emerald-100 text-emerald-700 border border-emerald-200',
+    }
     return {
-      label: short,
-      pill: urgent
-        ? 'bg-amber-100 text-amber-800 border border-amber-200'
-        : 'bg-blue-100 text-blue-800 border border-blue-200',
-      breached: false,
+      ...outcome,
+      deadlineDisplay: formatSlaDeadlineDisplay(deadlineLike),
+      title: slaDeadlineTitle(deadlineLike),
     }
   }
-
-  // Datetime deadline.
-  if (!rawStr) return { label: '—', pill: 'bg-slate-100 text-slate-700 border border-slate-200', breached: false }
-  const d = new Date(rawStr)
-  if (Number.isNaN(d.getTime())) {
-    return { label: '—', pill: 'bg-slate-100 text-slate-700 border border-slate-200', breached: false }
-  }
-  const diffMs = d.getTime() - Date.now()
-  if (diffMs <= 0) return { label: 'Breached', pill: 'bg-red-100 text-red-700 border border-red-200', breached: true }
-
-  const urgent = diffMs < 2 * 60 * 60 * 1000
-  const totalSecs = Math.max(1, Math.ceil(diffMs / 1000))
-  const days = Math.floor(totalSecs / (60 * 60 * 24))
-  const hours = Math.floor((totalSecs - days * 60 * 60 * 24) / (60 * 60))
-  const mins = Math.floor((totalSecs - days * 60 * 60 * 24 - hours * 60 * 60) / 60)
-  const secs = totalSecs - days * 60 * 60 * 24 - hours * 60 * 60 - mins * 60
-  const short =
-    days > 0 ? `${days}d ${hours}h`
-      : hours > 0 ? `${hours}h ${mins}m`
-        : mins > 0 ? `${mins}m ${secs}s`
-          : `${secs}s`
-  return {
-    label: short,
-    pill: urgent
-      ? 'bg-amber-100 text-amber-800 border border-amber-200'
-      : 'bg-blue-100 text-blue-800 border border-blue-200',
-    breached: false,
-  }
+  const meta = getMeta(row?.id || row?._id || '', deadlineLike)
+  return { ...meta, title: slaDeadlineTitle(deadlineLike) }
 }
 
 export default function LeadsManagementPage({ hideGreeting = false } = {}) {
@@ -606,6 +606,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
   const [roleName, setRoleName] = useState('')
   const [itemsPage, setItemsPage] = useState(1)
   const [tasksPage, setTasksPage] = useState(1)
+  const [participatedPage, setParticipatedPage] = useState(1)
   const [rowsPerPage, setRowsPerPage] = useState(10)
   const [selectedItemIds, setSelectedItemIds] = useState(new Set())
   const [selectedLead, setSelectedLead] = useState(null)
@@ -616,6 +617,12 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
   const [totalTasksCount, setTotalTasksCount] = useState(0)
   const [tasksFromApi, setTasksFromApi] = useState(null)
   const [tasksLoading, setTasksLoading] = useState(false)
+  const [participatedActivities, setParticipatedActivities] = useState(null)
+  const [currentParticipatedId, setCurrentParticipatedId] = useState(null)
+  const [currentParticipatedStepName, setCurrentParticipatedStepName] = useState('Participated')
+  const [totalParticipatedCount, setTotalParticipatedCount] = useState(0)
+  const [participatedFromApi, setParticipatedFromApi] = useState(null)
+  const [participatedLoading, setParticipatedLoading] = useState(false)
   const [filterPopoverOpen, setFilterPopoverOpen] = useState(false)
   const [columnsPopoverOpen, setColumnsPopoverOpen] = useState(false)
   const [filterFromDate, setFilterFromDate] = useState('')
@@ -624,12 +631,16 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
   const [visibleColumnsTasks, setVisibleColumnsTasks] = useState(DEFAULT_VISIBLE_TASKS)
   const [expandedItemId, setExpandedItemId] = useState(null)
   const [expandedTaskId, setExpandedTaskId] = useState(null)
+  const [expandedParticipatedId, setExpandedParticipatedId] = useState(null)
   const [itemDetailsById, setItemDetailsById] = useState({})
   const [taskDetailsById, setTaskDetailsById] = useState({})
+  const [participatedDetailsById, setParticipatedDetailsById] = useState({})
   const [deletingDrafts, setDeletingDrafts] = useState(false)
   const [watchParamsTick, setWatchParamsTick] = useState(0)
   const [kpiLeads, setKpiLeads] = useState(null)
   const [kpiLeadsLoading, setKpiLeadsLoading] = useState(false)
+
+  const getSlaDeadlineMeta = useSlaDeadlineMeta()
   const [kpiLeadsCapReached, setKpiLeadsCapReached] = useState(false)
   const [activeKpiCardId, setActiveKpiCardId] = useState('total')
   const [greeting, setGreeting] = useState(getTimeGreeting())
@@ -822,11 +833,72 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
     return () => { cancelled = true }
   }, [sdkReady, leadPaths])
 
+  useEffect(function fetchParticipatedActivities() {
+    if (!leadPaths || !kfInstance) return
+    let cancelled = false
+    async function run() {
+      try {
+        const steps = await fetchParticipatedActivitySteps(kfInstance, leadPaths)
+        if (cancelled) return
+        setParticipatedActivities(steps)
+        const total = steps.reduce((sum, s) => sum + (Number(s?.Count) || 0), 0)
+        setTotalParticipatedCount(total)
+
+        const stillExists = steps.some((a) => a?._id === currentParticipatedId)
+        const first = steps.find((a) => a?._id) || null
+        if (!stillExists || !currentParticipatedId) {
+          if (first?._id) setCurrentParticipatedId(first._id)
+          setCurrentParticipatedStepName(first?.StepName || 'Participated')
+          setParticipatedPage(1)
+        }
+      } catch (e) {
+        if (!cancelled) {
+          console.warn('Participated steps fetch failed:', e?.message || e)
+          setParticipatedActivities([])
+          setParticipatedFromApi([])
+          setTotalParticipatedCount(0)
+        }
+      }
+    }
+    run()
+    return () => {
+      cancelled = true
+    }
+  }, [sdkReady, leadPaths, kfInstance, watchParamsTick, currentParticipatedId])
+
+  useEffect(function fetchParticipatedRows() {
+    if (!leadPaths || !kfInstance || !currentParticipatedId) return
+    let cancelled = false
+    setParticipatedLoading(true)
+    setParticipatedFromApi([])
+
+    async function run() {
+      try {
+        const { leads } = await fetchParticipatedLeadsForActivity(kfInstance, leadPaths, currentParticipatedId)
+        if (cancelled) return
+        setParticipatedFromApi(leads)
+      } catch (e) {
+        if (!cancelled) {
+          console.warn('Participated rows fetch failed:', e?.message || e)
+          setParticipatedFromApi([])
+        }
+      } finally {
+        if (!cancelled) setParticipatedLoading(false)
+      }
+    }
+
+    run()
+    return () => {
+      cancelled = true
+    }
+  }, [sdkReady, leadPaths, kfInstance, currentParticipatedId])
+
   useEffect(function fetchItemsByStatus() {
     if (!leadPaths) return
     const kf = kfInstance
     let cancelled = false
     setItemsLoading(true)
+    setItems([])
     const segment = STATUS_TO_SEGMENT[statusFilter] || 'draft'
     const expectedTotal = statusCountsFromApi?.[statusFilter] ?? null
 
@@ -1017,6 +1089,56 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
     return () => { cancelled = true }
   }, [expandedItemId, leadPaths, kfInstance, items, itemDetailsById, kpiLeads])
 
+  useEffect(function hydrateExpandedParticipatedAccordion() {
+    if (!expandedParticipatedId || !leadPaths) return
+    const cached = participatedDetailsById[expandedParticipatedId]
+    if (cached?._accordionHydrated) return
+    const baseRow = (participatedFromApi || []).find((t) => t?.id === expandedParticipatedId)
+    if (!baseRow) return
+
+    const instanceId = baseRow?._id || baseRow?.id
+    const flightKey = `participated:${instanceId}`
+    if (accordionHydrateInFlightRef.current.has(flightKey)) return
+
+    const seed = enrichLeadRowFromKpi(baseRow, kpiLeads)
+    setParticipatedDetailsById((prev) => ({
+      ...prev,
+      [expandedParticipatedId]: { ...seed, progressLoading: true, _accordionHydrated: false },
+    }))
+
+    let cancelled = false
+    accordionHydrateInFlightRef.current.add(flightKey)
+
+    async function run() {
+      try {
+        const merged = await hydrateAccordionLead({
+          kf: kfInstance,
+          leadPaths,
+          baseRow,
+          applicationId: leadPaths.applicationId,
+          mapRow: (raw) => mapKfItemToLead(raw, undefined),
+          kpiLeads,
+          enrichFromKpi: enrichLeadRowFromKpi,
+          detailCache: accordionDetailCacheRef.current,
+          progressCache: accordionProgressCacheRef.current,
+        })
+        if (cancelled || !merged) return
+        setParticipatedDetailsById((prev) => ({ ...prev, [expandedParticipatedId]: merged }))
+      } catch (e) {
+        if (!cancelled) console.warn('Participated accordion hydrate failed:', e?.message || e)
+        setParticipatedDetailsById((prev) => ({
+          ...prev,
+          [expandedParticipatedId]: { ...enrichLeadRowFromKpi(baseRow, kpiLeads), progressLoading: false, _accordionHydrated: true },
+        }))
+      } finally {
+        accordionHydrateInFlightRef.current.delete(flightKey)
+      }
+    }
+
+    run()
+    return () => { cancelled = true }
+  }, [expandedParticipatedId, leadPaths, kfInstance, participatedFromApi, participatedDetailsById, kpiLeads])
+
   useEffect(function initAOS() {
     AOS.init({ duration: 800, once: true })
   }, [])
@@ -1045,7 +1167,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
     setKpiLeadsLoading(true)
 
     async function fetchOnePage(pageNumber) {
-      const path = adminPaths.getLeadItemsPath(pageNumber, 100000)
+      const path = adminPaths.getLeadItemsPath(pageNumber, 1000)
       if (kf?.api) {
         const resp = await kf.api(path, {
           method: 'GET',
@@ -1122,7 +1244,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
 
   const websiteOptionsKpi = useMemo(() => {
     const base = Array.isArray(kpiLeads) ? kpiLeads : []
-    const set = new Set()
+    const set = new Set(Object.values(ROLE_TO_WEBSITE_KPI))
     base.forEach((lead) => {
       const w = lead?.website != null && String(lead.website).trim() !== '' ? String(lead.website).trim() : null
       if (w) set.add(w)
@@ -1142,16 +1264,21 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
       .map((v) => String(v).trim())
       .filter(Boolean)
 
-    if (roleCandidates.length === 0 || websiteOptionsKpi.length === 0) return null
+    if (roleCandidates.length === 0) return null
 
     const normalizedRoles = roleCandidates.map(normalizeTextKpi).filter(Boolean)
 
-    for (let i = 0; i < normalizedRoles.length; i += 1) {
-      const mappedWebsite = ROLE_TO_WEBSITE_KPI[normalizedRoles[i]]
+    for (let i = 0; i < roleCandidates.length; i += 1) {
+      const rawRole = roleCandidates[i]
+      const mappedWebsite = ROLE_TO_WEBSITE_KPI[rawRole] || ROLE_TO_WEBSITE_KPI[normalizeTextKpi(rawRole)]
       if (mappedWebsite) {
-        return resolveWebsiteFromOptionsKpi(mappedWebsite, websiteOptionsKpi)
+        return websiteOptionsKpi.length
+          ? resolveWebsiteFromOptionsKpi(mappedWebsite, websiteOptionsKpi)
+          : mappedWebsite
       }
     }
+
+    if (websiteOptionsKpi.length === 0) return null
 
     for (let i = 0; i < websiteOptionsKpi.length; i += 1) {
       const website = websiteOptionsKpi[i]
@@ -1210,10 +1337,8 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
   }, [kpiLeads, lockedWebsiteKpi, filterFromDate, filterToDate, search])
 
   const filteredItems = useMemo(() => {
+    // Rows are already loaded from myitems/{segment} for the active status tab — do not re-filter by row status.
     let list = itemList
-    if (statusFilter) {
-      list = list.filter((item) => (formatStatusForDisplay(item?.status) || 'Draft') === statusFilter)
-    }
     if (filterFromDate || filterToDate) {
       list = list.filter((item) => itemMatchesDateRange(item, filterFromDate, filterToDate))
     }
@@ -1226,7 +1351,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
         (item.emailId && item.emailId.toLowerCase().includes(q)) ||
         (item.message && item.message.toLowerCase().includes(q))
     )
-  }, [itemList, statusFilter, search, filterFromDate, filterToDate])
+  }, [itemList, search, filterFromDate, filterToDate])
 
   const filteredTasks = useMemo(() => {
     let list = taskList
@@ -1295,13 +1420,42 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
     return filteredTasks.length
   }, [hasTasksToolbarFilters, filteredTasks.length, totalTasksCount])
 
+  const participatedList = participatedFromApi !== null ? participatedFromApi : []
+
+  const filteredParticipated = useMemo(() => {
+    let list = participatedList
+    if (filterFromDate || filterToDate) {
+      list = list.filter((t) => itemMatchesDateRange(t, filterFromDate, filterToDate))
+    }
+    if (!search.trim()) return list
+    const q = search.toLowerCase()
+    return list.filter(
+      (t) =>
+        (t.name && t.name.toLowerCase().includes(q)) ||
+        (t.fullName && t.fullName.toLowerCase().includes(q)) ||
+        (t.emailId && t.emailId.toLowerCase().includes(q)) ||
+        (t.message && t.message.toLowerCase().includes(q)),
+    )
+  }, [participatedList, search, filterFromDate, filterToDate])
+
+  const hasParticipatedToolbarFilters = Boolean(search.trim() || filterFromDate || filterToDate)
+
+  const totalParticipatedForDisplay = useMemo(() => {
+    if (hasParticipatedToolbarFilters) return filteredParticipated.length
+    if (totalParticipatedCount != null && totalParticipatedCount > 0) return totalParticipatedCount
+    return filteredParticipated.length
+  }, [hasParticipatedToolbarFilters, filteredParticipated.length, totalParticipatedCount])
+
   const maxLoadedItemsPage = Math.max(1, Math.ceil(filteredItemsAfterKpi.length / rowsPerPage) || 1)
   const maxLoadedTasksPage = Math.max(1, Math.ceil(filteredTasks.length / rowsPerPage) || 1)
+  const maxLoadedParticipatedPage = Math.max(1, Math.ceil(filteredParticipated.length / rowsPerPage) || 1)
 
   const totalItemsPages = Math.max(1, Math.ceil(totalItemsForDisplay / rowsPerPage))
   const totalTasksPages = Math.max(1, Math.ceil(totalTasksForDisplay / rowsPerPage))
+  const totalParticipatedPages = Math.max(1, Math.ceil(totalParticipatedForDisplay / rowsPerPage))
   const safeItemsPage = Math.min(Math.max(1, itemsPage), totalItemsPages)
   const safeTasksPage = Math.min(Math.max(1, tasksPage), totalTasksPages)
+  const safeParticipatedPage = Math.min(Math.max(1, participatedPage), totalParticipatedPages)
   const itemPageNumbers = useMemo(
     () => getPaginationPageNumbers(safeItemsPage, totalItemsPages),
     [safeItemsPage, totalItemsPages]
@@ -1310,9 +1464,17 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
     () => getPaginationPageNumbers(safeTasksPage, totalTasksPages),
     [safeTasksPage, totalTasksPages]
   )
+  const participatedPageNumbers = useMemo(
+    () => getPaginationPageNumbers(safeParticipatedPage, totalParticipatedPages),
+    [safeParticipatedPage, totalParticipatedPages],
+  )
 
   const itemsPaginated = filteredItemsAfterKpi.slice((safeItemsPage - 1) * rowsPerPage, safeItemsPage * rowsPerPage)
   const tasksPaginated = filteredTasks.slice((safeTasksPage - 1) * rowsPerPage, safeTasksPage * rowsPerPage)
+  const participatedPaginated = filteredParticipated.slice(
+    (safeParticipatedPage - 1) * rowsPerPage,
+    safeParticipatedPage * rowsPerPage,
+  )
 
   // Bulk selection checkboxes: keep for Draft items, hide for other item statuses.
   const showItemBulkCheckboxes = statusFilter === 'Draft'
@@ -1529,7 +1691,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
             >
               <div className="relative z-[100] flex flex-col gap-3 border-b border-slate-200/60 bg-gradient-to-r from-slate-50/70 to-white/40 px-2.5 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-3 sm:py-3">
                 <div
-                  className="grid grid-cols-2 w-full gap-1 p-1 rounded-2xl border border-slate-300/70 bg-white/70 shadow-sm sm:w-auto"
+                  className="grid grid-cols-3 w-full gap-1 p-1 rounded-2xl border border-slate-300/70 bg-white/70 shadow-sm sm:w-auto sm:min-w-[420px]"
                   role="tablist"
                 >
                   <button
@@ -1569,7 +1731,33 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                         : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                     }`}
                   >
-                    <span className="leading-tight">My Items</span>
+                    <span className="leading-tight">My Leads</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === 'participated'}
+                    onClick={() => setActiveTab('participated')}
+                    className={`min-h-[44px] sm:min-h-[36px] rounded-xl text-sm sm:text-xs font-semibold transition-all duration-200 touch-manipulation inline-flex items-center justify-center gap-2 text-center px-2 sm:px-3 ${
+                      activeTab === 'participated'
+                        ? 'bg-white text-brand-blue shadow-md ring-1 ring-brand-blue/25'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-1.5 min-w-0">
+                      <span className="leading-tight">Participated Leads</span>
+                      {totalParticipatedCount > 0 && (
+                        <span
+                          className={`inline-flex items-center justify-center min-w-[1.375rem] h-5 px-1.5 rounded-full text-[11px] font-bold tabular-nums ${
+                            activeTab === 'participated'
+                              ? 'bg-brand-blue text-white shadow-sm'
+                              : 'bg-brand-blue/15 text-brand-blue border border-brand-blue/20'
+                          }`}
+                        >
+                          {totalParticipatedCount > 99 ? '99+' : totalParticipatedCount}
+                        </span>
+                      )}
+                    </span>
                   </button>
                 </div>
 
@@ -1870,7 +2058,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
             </div>
             </div>
 
-            {/* Status / step chips row (replicates ContractsMyItemsPro layout) */}
+            {/* Status / step chips row */}
             {activeTab === 'items' ? (
               <>
                 {/* Mobile: 2-col grid */}
@@ -1931,7 +2119,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                   ))}
                 </div>
               </>
-            ) : (
+            ) : activeTab === 'tasks' ? (
               <>
                 {/* Mobile: 2-col grid */}
                 <div className="grid grid-cols-2 gap-2.5 sm:hidden min-w-0">
@@ -2001,13 +2189,81 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                   })}
                 </div>
               </>
-            )}
+            ) : activeTab === 'participated' ? (
+              <>
+                {/* Mobile: 2-col grid */}
+                <div className="grid grid-cols-2 gap-2.5 sm:hidden min-w-0">
+                  {(Array.isArray(participatedActivities) ? participatedActivities : []).map((activity) => {
+                    const isActive = currentParticipatedId === activity._id
+                    const count = activity.Count ?? 0
+                    return (
+                      <button
+                        key={activity._id}
+                        type="button"
+                        onClick={() => {
+                          setCurrentParticipatedId(activity._id)
+                          setCurrentParticipatedStepName(activity.StepName || 'Participated')
+                          setParticipatedPage(1)
+                        }}
+                        className={`min-h-[44px] w-full px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-300 touch-manipulation border-2 text-left inline-flex flex-row items-center justify-between gap-2 ${
+                          isActive
+                            ? 'border-brand-blue bg-brand-blue/10 text-brand-blue'
+                            : 'border-slate-300/80 bg-white/80 text-slate-700 hover:bg-white'
+                        }`}
+                      >
+                        <span className="min-w-0 flex-1 truncate leading-snug">{activity.StepName || 'Step'}</span>
+                        <span
+                          className={`shrink-0 rounded-lg px-2 py-0.5 text-xs font-bold tabular-nums ${
+                            isActive ? 'bg-brand-blue/15 text-brand-blue' : 'bg-slate-100 text-slate-700'
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {/* Tablet/Desktop: single horizontal row */}
+                <div className="hidden sm:flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                  {(Array.isArray(participatedActivities) ? participatedActivities : []).map((activity) => {
+                    const isActive = currentParticipatedId === activity._id
+                    const count = activity.Count ?? 0
+                    return (
+                      <button
+                        key={activity._id}
+                        type="button"
+                        onClick={() => {
+                          setCurrentParticipatedId(activity._id)
+                          setCurrentParticipatedStepName(activity.StepName || 'Participated')
+                          setParticipatedPage(1)
+                        }}
+                        className={`min-h-[36px] shrink-0 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all duration-200 touch-manipulation border-2 inline-flex items-center gap-2 ${
+                          isActive
+                            ? 'border-brand-blue bg-brand-blue/10 text-brand-blue'
+                            : 'border-slate-300/80 bg-white/80 text-slate-700 hover:bg-white'
+                        }`}
+                      >
+                        <span className="truncate max-w-[16rem]">{activity.StepName || 'Step'}</span>
+                        <span
+                          className={`shrink-0 rounded-lg px-1.5 py-0 text-[11px] font-bold tabular-nums ${
+                            isActive ? 'bg-brand-blue/15 text-brand-blue' : 'bg-slate-100 text-slate-700'
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </>
+            ) : null}
 
             {/* Table - z-0 so toolbar dropdowns (z-[100]) render on top */}
             <div className="relative z-0 glass rounded-none md:rounded-3xl bg-transparent md:bg-gradient-to-br md:from-white/80 md:to-indigo-50/30 border border-slate-300/70 shadow-none md:shadow-xl md:shadow-slate-200/30 overflow-visible md:overflow-hidden glass-hover" data-aos="fade-up">
-              <div className="overflow-x-auto">
                 {activeTab === 'items' && isMdUp && (
-                  <table className="w-full bg-white/60 border border-slate-300/70">
+                  <div className="overflow-x-auto">
+                    <table className="w-full bg-white/60 border border-slate-300/70">
                     <thead>
                       <tr className="bg-gradient-to-r from-slate-200/80 via-slate-100/80 to-indigo-100/60 backdrop-blur-xl border-b border-slate-300/70">
                         {showItemBulkCheckboxes && (
@@ -2129,13 +2385,8 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                               {visibleColumnsItems.sla && (
                                 <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap">
                                   {(() => {
-                                    const meta = getSlaMeta(itemView.deadline)
-                                    const title = itemView.deadline ? `Deadline: ${String(itemView.deadline)}` : undefined
-                                    return (
-                                      <span className={`inline-flex px-2.5 py-1 text-[11px] font-semibold rounded-full whitespace-nowrap ${meta.pill}`} title={title}>
-                                        {meta.label}
-                                      </span>
-                                    )
+                                    const meta = getSlaChipForRow(itemView, getSlaDeadlineMeta)
+                                    return <SlaCell meta={meta} title={meta.title} />
                                   })()}
                                 </td>
                               )}
@@ -2233,6 +2484,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                       )}
                     </tbody>
                   </table>
+                  </div>
                 )}
 
                 {activeTab === 'items' && !isMdUp && (
@@ -2250,8 +2502,153 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                   />
                 )}
 
+                {activeTab === 'participated' && isMdUp && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full bg-white/60 border border-slate-300/70">
+                    <thead>
+                      <tr className="bg-gradient-to-r from-slate-200/80 via-slate-100/80 to-indigo-100/60 backdrop-blur-xl border-b border-slate-300/70">
+                        <th className="px-2 sm:px-3 py-3 sm:py-4 w-10 text-center" aria-label="Expand row">
+                          <span className="text-xs font-bold text-slate-500 uppercase"> </span>
+                        </th>
+                        {TASKS_COLUMNS.map((col) => (
+                          <th
+                            key={col.id}
+                            className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-bold text-slate-700 uppercase tracking-wider ${visibleColumnsTasks[col.id] ? '' : 'hidden'}`}
+                          >
+                            {col.label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="relative">
+                      {participatedLoading && participatedList.length === 0 ? (
+                        <tr>
+                          <td colSpan={tasksTableLeadingCols + TASKS_COLUMNS.length} className="px-6 py-12 text-center text-slate-500">
+                            Loading…
+                          </td>
+                        </tr>
+                      ) : participatedPaginated.length === 0 ? (
+                        <tr>
+                          <td colSpan={tasksTableLeadingCols + TASKS_COLUMNS.length} className="px-6 py-12 text-center text-slate-500">
+                            No participated leads found.
+                          </td>
+                        </tr>
+                      ) : (
+                        participatedPaginated.map((row) => {
+                          const rowView = resolveLeadRowView(row, participatedDetailsById, kpiLeads)
+                          return (
+                          <React.Fragment key={row.id}>
+                            <tr
+                              className={`transition-colors cursor-pointer [&>td]:border-b [&>td]:border-slate-200/80 ${expandedParticipatedId === row.id ? 'bg-indigo-50/60' : 'hover:bg-white/60'}`}
+                              onClick={() => setExpandedParticipatedId((prev) => (prev === row.id ? null : row.id))}
+                            >
+                              <td className="px-2 sm:px-3 py-3 sm:py-4 text-slate-500" onClick={(e) => e.stopPropagation()}>
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedParticipatedId((prev) => (prev === row.id ? null : row.id))}
+                                  className="p-1 rounded-lg hover:bg-white/80 transition-colors"
+                                  aria-label={expandedParticipatedId === row.id ? 'Collapse row' : 'Expand row'}
+                                >
+                                  <i className={`ri-arrow-down-s-line text-lg transition-transform ${expandedParticipatedId === row.id ? 'rotate-180' : ''}`}></i>
+                                </button>
+                              </td>
+                              {visibleColumnsTasks.fullName && (
+                                <td className="px-3 sm:px-6 py-3 sm:py-4 text-sm font-semibold text-slate-900 min-w-0 max-w-[220px] md:max-w-[280px] break-words [overflow-wrap:anywhere]">
+                                  {rowView.fullName || '—'}
+                                </td>
+                              )}
+                              {visibleColumnsTasks.status && (
+                                <td className="px-3 sm:px-6 py-3 sm:py-4">
+                                  <span className={`px-2.5 py-1 text-xs font-semibold rounded-lg ${getStatusBadgeClass(rowView.status)}`}>
+                                    {formatStatusForDisplay(rowView.status) || 'In progress'}
+                                  </span>
+                                </td>
+                              )}
+                              {visibleColumnsTasks.product && (
+                                <td className="px-3 sm:px-6 py-3 sm:py-4 text-sm text-slate-700 min-w-0 max-w-[220px] truncate" title={rowView.product ? String(rowView.product) : undefined}>
+                                  {String(rowView.product || '').trim() || '—'}
+                                </td>
+                              )}
+                              {visibleColumnsTasks.phoneNumber && (
+                                <td className="px-3 sm:px-6 py-3 sm:py-4 text-sm text-slate-700 whitespace-nowrap">
+                                  {String(rowView.phoneNumber || '').trim() || '—'}
+                                </td>
+                              )}
+                              {visibleColumnsTasks.emailId && (
+                                <td className="px-3 sm:px-6 py-3 sm:py-4 text-sm text-slate-700 min-w-0 max-w-[240px]">
+                                  {rowView.emailId ? (
+                                    <a
+                                      href={`mailto:${rowView.emailId}`}
+                                      className="text-brand-blue hover:underline block min-w-0 max-w-full truncate"
+                                      title={String(rowView.emailId)}
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      {rowView.emailId}
+                                    </a>
+                                  ) : (
+                                    '—'
+                                  )}
+                                </td>
+                              )}
+                              {visibleColumnsTasks.createdDate && (
+                                <td className="px-3 sm:px-6 py-3 sm:py-4 text-sm text-slate-600 whitespace-nowrap">
+                                  {formatDateTime(rowView.createdDate)}
+                                </td>
+                              )}
+                              {visibleColumnsTasks.sla && (
+                                <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap">
+                                  {(() => {
+                                    const meta = getSlaChipForRow(rowView, getSlaDeadlineMeta)
+                                    return <SlaCell meta={meta} title={meta.title} />
+                                  })()}
+                                </td>
+                              )}
+                            </tr>
+                            {expandedParticipatedId === row.id && (
+                              <tr>
+                                <td colSpan={tasksTableLeadingCols + TASKS_COLUMNS.length} className="p-0 align-top bg-gray-50/80 border-b border-gray-200">
+                                  <div className="px-3 sm:px-4 py-3 sm:py-4">
+                                    <LeadAccordionPanel
+                                      itemView={rowView}
+                                      progressData={rowView?.workflowProgress || null}
+                                      progressLoading={Boolean(rowView?.progressLoading)}
+                                      hideWorkflowProgress
+                                      formatDateTime={formatDateTime}
+                                      getStatusBadgeClass={getStatusBadgeClass}
+                                      formatStatusForDisplay={formatStatusForDisplay}
+                                      onViewDetails={openLeadPopup}
+                                      onCloseExpand={() => setExpandedParticipatedId(null)}
+                                    />
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        )})
+                      )}
+                    </tbody>
+                  </table>
+                  </div>
+                )}
+
+                {activeTab === 'participated' && !isMdUp && (
+                  <MobileLeadCards
+                    items={participatedPaginated}
+                    loading={participatedLoading && participatedList.length === 0}
+                    itemDetailsById={participatedDetailsById}
+                    kpiLeads={kpiLeads}
+                    expandedItemId={expandedParticipatedId}
+                    setExpandedItemId={setExpandedParticipatedId}
+                    onViewDetails={openLeadPopup}
+                    formatDateTime={formatDateTime}
+                    getStatusBadgeClass={getStatusBadgeClass}
+                    formatStatusForDisplay={formatStatusForDisplay}
+                  />
+                )}
+
                 {activeTab === 'tasks' && isMdUp && (
-                  <table className="w-full bg-white/60 border border-slate-300/70">
+                  <div className="overflow-x-auto">
+                    <table className="w-full bg-white/60 border border-slate-300/70">
                     <thead>
                       <tr className="bg-gradient-to-r from-slate-200/80 via-slate-100/80 to-indigo-100/60 backdrop-blur-xl border-b border-slate-300/70">
                         <th className="px-2 sm:px-3 py-3 sm:py-4 w-10 text-center" aria-label="Expand row">
@@ -2345,13 +2742,8 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                               {visibleColumnsTasks.sla && (
                                 <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap">
                                   {(() => {
-                                    const meta = getSlaMeta(taskView.deadline)
-                                    const title = taskView.deadline ? `Deadline: ${String(taskView.deadline)}` : undefined
-                                    return (
-                                      <span className={`inline-flex px-2.5 py-1 text-[11px] font-semibold rounded-full whitespace-nowrap ${meta.pill}`} title={title}>
-                                        {meta.label}
-                                      </span>
-                                    )
+                                    const meta = getSlaChipForRow(taskView, getSlaDeadlineMeta)
+                                    return <SlaCell meta={meta} title={meta.title} />
                                   })()}
                                 </td>
                               )}
@@ -2446,6 +2838,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                       )}
                     </tbody>
                   </table>
+                  </div>
                 )}
 
                 {activeTab === 'tasks' && !isMdUp && (
@@ -2462,9 +2855,9 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                     formatStatusForDisplay={formatStatusForDisplay}
                   />
                 )}
-              </div>
 
               {/* Pagination */}
+              {activeTab !== 'participated' ? (
               <div className="px-4 sm:px-6 py-4 sm:py-5 bg-gradient-to-r from-slate-200/70 via-slate-100/80 to-indigo-100/60 backdrop-blur-xl border-t border-slate-300/70 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <label htmlFor="rows-per-page-select" className="text-xs sm:text-sm text-slate-600 font-medium whitespace-nowrap">
@@ -2479,6 +2872,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                       setRowsPerPage(val)
                       setItemsPage(1)
                       setTasksPage(1)
+                      setParticipatedPage(1)
                     }}
                     className="min-h-[44px] min-w-[72px] pl-3 pr-8 py-2 text-sm font-medium bg-white/80 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-blue/50 focus:border-brand-blue cursor-pointer touch-manipulation hover:bg-white transition-colors"
                     aria-label="Rows per page"
@@ -2492,14 +2886,28 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                 <div className="flex items-center gap-3 flex-wrap justify-center sm:justify-end">
                   <span className="text-xs sm:text-sm text-slate-600 text-center sm:text-left break-words max-w-full">
                     {activeTab === 'items'
-                      ? `Showing ${totalItemsForDisplay === 0 ? 0 : (safeItemsPage - 1) * rowsPerPage + 1} to ${(safeItemsPage - 1) * rowsPerPage + itemsPaginated.length} out of ${totalItemsForDisplay} Items${itemsLoading ? ' · loading…' : ''}`
-                      : `Showing ${totalTasksForDisplay === 0 ? 0 : (safeTasksPage - 1) * rowsPerPage + 1} to ${(safeTasksPage - 1) * rowsPerPage + tasksPaginated.length} out of ${totalTasksForDisplay} Items${tasksLoading ? ' · loading…' : ''}`}
+                      ? `Showing ${totalItemsForDisplay === 0 ? 0 : (safeItemsPage - 1) * rowsPerPage + 1} to ${(safeItemsPage - 1) * rowsPerPage + itemsPaginated.length} out of ${totalItemsForDisplay} Leads${itemsLoading ? ' · loading…' : ''}`
+                      : activeTab === 'tasks'
+                        ? `Showing ${totalTasksForDisplay === 0 ? 0 : (safeTasksPage - 1) * rowsPerPage + 1} to ${(safeTasksPage - 1) * rowsPerPage + tasksPaginated.length} out of ${totalTasksForDisplay} Items${tasksLoading ? ' · loading…' : ''}`
+                        : `Showing ${totalParticipatedForDisplay === 0 ? 0 : (safeParticipatedPage - 1) * rowsPerPage + 1} to ${(safeParticipatedPage - 1) * rowsPerPage + participatedPaginated.length} out of ${totalParticipatedForDisplay} Items${participatedLoading ? ' · loading…' : ''}`}
                   </span>
                   <div className="flex items-center gap-1">
                     <button
                       type="button"
-                      disabled={activeTab === 'items' ? safeItemsPage <= 1 : safeTasksPage <= 1}
-                      onClick={() => (activeTab === 'items' ? setItemsPage((p) => Math.max(1, p - 1)) : setTasksPage((p) => Math.max(1, p - 1)))}
+                      disabled={
+                        activeTab === 'items'
+                          ? safeItemsPage <= 1
+                          : activeTab === 'tasks'
+                            ? safeTasksPage <= 1
+                            : safeParticipatedPage <= 1
+                      }
+                      onClick={() =>
+                        activeTab === 'items'
+                          ? setItemsPage((p) => Math.max(1, p - 1))
+                          : activeTab === 'tasks'
+                            ? setTasksPage((p) => Math.max(1, p - 1))
+                            : setParticipatedPage((p) => Math.max(1, p - 1))
+                      }
                       className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-white/80 border border-slate-200/80 text-slate-700 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white transition-all touch-manipulation text-lg font-semibold leading-none"
                       aria-label="Previous page"
                     >
@@ -2507,7 +2915,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                       <i className="ri-arrow-left-s-line text-lg max-md:hidden"></i>
                     </button>
                     <span className="md:hidden min-w-[2.5rem] text-center text-sm font-bold text-slate-800 tabular-nums px-1">
-                      {activeTab === 'items' ? safeItemsPage : safeTasksPage}
+                      {activeTab === 'items' ? safeItemsPage : activeTab === 'tasks' ? safeTasksPage : safeParticipatedPage}
                     </span>
                     <div className="hidden md:contents">
                       {activeTab === 'items' &&
@@ -2562,18 +2970,48 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                             </button>
                           )
                         )}
+                      {activeTab === 'participated' &&
+                        participatedPageNumbers.map((entry) =>
+                          entry.type === 'ellipsis' ? (
+                            <span
+                              key={entry.value}
+                              className="min-h-[44px] min-w-[28px] flex items-center justify-center text-sm font-bold text-slate-400 select-none"
+                              aria-hidden
+                            >
+                              …
+                            </span>
+                          ) : (
+                            <button
+                              key={entry.value}
+                              type="button"
+                              onClick={() => setParticipatedPage(entry.value)}
+                              disabled={participatedLoading && entry.value > maxLoadedParticipatedPage}
+                              className={`min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-sm font-bold transition-all touch-manipulation ${
+                                safeParticipatedPage === entry.value
+                                  ? 'bg-gradient-to-br from-brand-blue to-indigo-600 text-white shadow-lg'
+                                  : 'bg-white/80 border border-slate-200/80 text-slate-700 hover:bg-white'
+                              } disabled:opacity-40 disabled:cursor-not-allowed`}
+                            >
+                              {entry.value}
+                            </button>
+                          ),
+                        )}
                     </div>
                     <button
                       type="button"
                       disabled={
                         activeTab === 'items'
                           ? safeItemsPage >= totalItemsPages || (itemsLoading && safeItemsPage >= maxLoadedItemsPage)
-                          : safeTasksPage >= totalTasksPages || (tasksLoading && safeTasksPage >= maxLoadedTasksPage)
+                          : activeTab === 'tasks'
+                            ? safeTasksPage >= totalTasksPages || (tasksLoading && safeTasksPage >= maxLoadedTasksPage)
+                            : safeParticipatedPage >= totalParticipatedPages || (participatedLoading && safeParticipatedPage >= maxLoadedParticipatedPage)
                       }
                       onClick={() =>
                         activeTab === 'items'
                           ? setItemsPage((p) => Math.min(totalItemsPages, p + 1))
-                          : setTasksPage((p) => Math.min(totalTasksPages, p + 1))
+                          : activeTab === 'tasks'
+                            ? setTasksPage((p) => Math.min(totalTasksPages, p + 1))
+                            : setParticipatedPage((p) => Math.min(totalParticipatedPages, p + 1))
                       }
                       className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-white/80 border border-slate-200/80 text-slate-700 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white transition-all touch-manipulation text-lg font-semibold leading-none"
                       aria-label="Next page"
@@ -2584,6 +3022,90 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                   </div>
                 </div>
               </div>
+              ) : (
+                <div className="px-4 sm:px-6 py-4 sm:py-5 bg-gradient-to-r from-slate-200/70 via-slate-100/80 to-indigo-100/60 backdrop-blur-xl border-t border-slate-300/70 flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <label htmlFor="rows-per-page-select" className="text-xs sm:text-sm text-slate-600 font-medium whitespace-nowrap">
+                      Rows per page:
+                    </label>
+                    <select
+                      id="rows-per-page-select"
+                      value={Number(rowsPerPage)}
+                      onChange={(e) => {
+                        const val = Number(e.target.value)
+                        if (val === rowsPerPage) return
+                        setRowsPerPage(val)
+                        setParticipatedPage(1)
+                      }}
+                      className="min-h-[44px] min-w-[72px] pl-3 pr-8 py-2 text-sm font-medium bg-white/80 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-blue/50 focus:border-brand-blue cursor-pointer touch-manipulation hover:bg-white transition-colors"
+                      aria-label="Rows per page"
+                    >
+                      <option value={5}>5</option>
+                      <option value={10}>10</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-3 flex-wrap justify-center sm:justify-end">
+                    <span className="text-xs sm:text-sm text-slate-600 text-center sm:text-left break-words max-w-full">
+                      {`Showing ${totalParticipatedForDisplay === 0 ? 0 : (safeParticipatedPage - 1) * rowsPerPage + 1} to ${(safeParticipatedPage - 1) * rowsPerPage + participatedPaginated.length} out of ${totalParticipatedForDisplay} Items${participatedLoading ? ' · loading…' : ''}`}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        disabled={safeParticipatedPage <= 1}
+                        onClick={() => setParticipatedPage((p) => Math.max(1, p - 1))}
+                        className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-white/80 border border-slate-200/80 text-slate-700 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white transition-all touch-manipulation text-lg font-semibold leading-none"
+                        aria-label="Previous page"
+                      >
+                        <span className="max-md:inline md:hidden" aria-hidden>«</span>
+                        <i className="ri-arrow-left-s-line text-lg max-md:hidden"></i>
+                      </button>
+                      <span className="md:hidden min-w-[2.5rem] text-center text-sm font-bold text-slate-800 tabular-nums px-1">
+                        {safeParticipatedPage}
+                      </span>
+                      <div className="hidden md:contents">
+                        {participatedPageNumbers.map((entry) =>
+                          entry.type === 'ellipsis' ? (
+                            <span
+                              key={entry.value}
+                              className="min-h-[44px] min-w-[28px] flex items-center justify-center text-sm font-bold text-slate-400 select-none"
+                              aria-hidden
+                            >
+                              …
+                            </span>
+                          ) : (
+                            <button
+                              key={entry.value}
+                              type="button"
+                              onClick={() => setParticipatedPage(entry.value)}
+                              disabled={participatedLoading && entry.value > maxLoadedParticipatedPage}
+                              className={`min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-sm font-bold transition-all touch-manipulation ${
+                                safeParticipatedPage === entry.value
+                                  ? 'bg-gradient-to-br from-brand-blue to-indigo-600 text-white shadow-lg'
+                                  : 'bg-white/80 border border-slate-200/80 text-slate-700 hover:bg-white'
+                              } disabled:opacity-40 disabled:cursor-not-allowed`}
+                            >
+                              {entry.value}
+                            </button>
+                          ),
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        disabled={safeParticipatedPage >= totalParticipatedPages || (participatedLoading && safeParticipatedPage >= maxLoadedParticipatedPage)}
+                        onClick={() => setParticipatedPage((p) => Math.min(totalParticipatedPages, p + 1))}
+                        className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-white/80 border border-slate-200/80 text-slate-700 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white transition-all touch-manipulation text-lg font-semibold leading-none"
+                        aria-label="Next page"
+                      >
+                        <span className="max-md:inline md:hidden" aria-hidden>»</span>
+                        <i className="ri-arrow-right-s-line text-lg max-md:hidden"></i>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {selectedLead && (

@@ -59,6 +59,37 @@ export function canFetchKissflowTenantDirectly() {
   }
 }
 
+export function getKissflowSdk(kfInstance) {
+  if (kfInstance?.api) return kfInstance
+  if (typeof window !== 'undefined' && window.kf?.api) return window.kf
+  return kfInstance || (typeof window !== 'undefined' ? window.kf : null) || null
+}
+
+/**
+ * GET a Kissflow path. Uses kf.api inside the Page iframe (CDN origin).
+ * Falls back to fetch only when the page is same-origin with the tenant — never from resource.*.kissflow.store.
+ */
+export async function fetchKissflowPath(kfInstance, path) {
+  const sdk = getKissflowSdk(kfInstance)
+  if (typeof sdk?.api === 'function') {
+    const resp = await sdk.api(path, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    })
+    return resp?.data ?? resp ?? null
+  }
+  if (canFetchKissflowTenantDirectly()) {
+    const res = await fetch(getApiBase() + path, {
+      method: 'GET',
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+    })
+    if (!res.ok) throw new Error(`Kissflow HTTP ${res.status}`)
+    return res.json()
+  }
+  throw new Error('Kissflow SDK api is not ready (CDN frame cannot fetch tenant APIs)')
+}
+
 /**
  * Base URL for Kissflow API requests.
  * - kf.api() uses relative paths on the tenant origin via the SDK.

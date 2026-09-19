@@ -18,6 +18,15 @@ const DEFAULT_ACCOUNT_PROD = 'AcCMptlq60zH'
 const DEFAULT_ACCOUNT_DEV = 'AcCMptp3yqcn'
 const DEFAULT_LEAD_PROCESS_ID = 'Lead_tracker_1_A00'
 
+/** Venwind sales process in Lead Tracker app (appbuilder/Lead_Trcaker_A00/process/…). */
+export const VENWIND_SALES_PROCESS_ID = 'Vindview_Sales_Management_A00'
+/** 3i Sales Opportunity process in Lead Tracker app. */
+export const SALES_OPPORTUNITY_PROCESS_ID = '3i_Sales_Opportunity_A00'
+/** Sales Activity Module process in Lead Tracker app. */
+export const SALES_ACTIVITY_PROCESS_ID = 'Sales_Activity_Module_A00'
+/** Lead Tracker Kissflow application id (hosts multiple processes). */
+export const LEAD_TRACKER_APPLICATION_ID = 'Lead_Trcaker_A00'
+
 /** Map tenant hostname / URL fragment → Kissflow account id. */
 function accountIdFromUrlString(urlStr) {
   const u = String(urlStr || '').toLowerCase()
@@ -188,25 +197,156 @@ export function resolveMyTeamReportIds(kf, overrides = {}) {
   }
 }
 
-export function buildMyTeamReportPath(kf, pageNumber = 1, pageSize = 100000, options = {}) {
-  const { minimal = false, ...idOverrides } = options
+export function buildMyTeamReportPath(kf, pageNumber = 1, pageSize = 1000, options = {}) {
+  const { minimal = false, managerEmail: managerEmailOpt, loggedInEmail, ...idOverrides } = options
+  const managerEmail = String(managerEmailOpt || loggedInEmail || '').trim()
   const { accountId, applicationId, processId, reportId } = resolveMyTeamReportIds(kf, idOverrides)
 
   const params = new URLSearchParams()
-  if (!minimal) {
+  if (managerEmail) {
+    params.set('apply_preference', '1')
+  } else if (!minimal) {
     params.set('apply_preference', 'true')
     params.set('page_number', String(Math.max(1, Number(pageNumber) || 1)))
-    params.set('page_size', String(Math.min(100000, Math.max(1, Number(pageSize) || 100000))))
+    params.set('page_size', String(Math.min(1000, Math.max(1, Number(pageSize) || 1000))))
   }
   if (applicationId) params.set('_application_id', applicationId)
-  const qs = params.toString()
+  let qs = params.toString()
+  if (managerEmail) {
+    const enc = encodeURIComponent(managerEmail)
+    const mgr = `$final_l1_manager_email=${enc}&$final_l2_manager_email=${enc}`
+    qs = qs ? `${qs}&${mgr}` : mgr
+    if (!minimal) {
+      const pag = new URLSearchParams()
+      pag.set('page_number', String(Math.max(1, Number(pageNumber) || 1)))
+      pag.set('page_size', String(Math.min(1000, Math.max(1, Number(pageSize) || 1000))))
+      qs = `${qs}&${pag.toString()}`
+    }
+  }
   return `/process-report/2/${accountId}/${processId}/${encodeURIComponent(reportId)}${qs ? `?${qs}` : '?'}`
 }
 
-export function buildLeadAdminApiPaths(kf) {
-  const accountId = resolveKfAccountId(kf)
-  const applicationId = resolveKfApplicationId(kf)
-  const processId = resolveKfLeadProcessId(kf)
+/** Process id for Venwind Sales Management dashboard APIs. */
+export function resolveKfVenwindProcessId(kf) {
+  const fromEnv = env('VITE_KF_VENWIND_PROCESS_ID', '')
+  if (fromEnv) return fromEnv
+  if (kf && typeof kf === 'object') {
+    try {
+      const fromSdk =
+        kf.app?.Process?._id ??
+        kf.app?.process?._id ??
+        kf.context?.process?._id ??
+        kf.context?.Process?._id ??
+        ''
+      const s = String(fromSdk || '').trim()
+      if (s) return s
+    } catch {
+      // ignore
+    }
+  }
+  return VENWIND_SALES_PROCESS_ID
+}
+
+/** Application id for Venwind dashboard (_application_id on admin/process APIs). */
+export function resolveKfVenwindApplicationId(kf) {
+  const fromEnv = env('VITE_KF_VENWIND_APPLICATION_ID', '')
+  if (fromEnv) return fromEnv
+  if (kf && typeof kf === 'object') {
+    try {
+      const fromSdk = kf.app?._id || kf.context?.app?._id
+      if (fromSdk) return String(fromSdk).trim()
+    } catch {
+      // ignore
+    }
+  }
+  return LEAD_TRACKER_APPLICATION_ID
+}
+
+/** Admin API paths for Venwind Sales Management (`Vindview_Sales_Management_A00`). */
+export function buildVenwindAdminApiPaths(kf) {
+  return buildLeadAdminApiPaths(kf, {
+    processId: resolveKfVenwindProcessId(kf),
+    applicationId: resolveKfVenwindApplicationId(kf),
+  })
+}
+
+/** Process id for 3i Sales Opportunity dashboard APIs. */
+export function resolveKfSalesOpportunityProcessId(kf) {
+  const fromEnv = env('VITE_KF_SALES_OPP_PROCESS_ID', '')
+  if (fromEnv) return fromEnv
+  if (kf && typeof kf === 'object') {
+    try {
+      const fromSdk =
+        kf.app?.Process?._id ??
+        kf.app?.process?._id ??
+        kf.context?.process?._id ??
+        kf.context?.Process?._id ??
+        ''
+      const s = String(fromSdk || '').trim()
+      if (s && /sales.?opportunit/i.test(s)) return s
+    } catch {
+      // ignore
+    }
+  }
+  return SALES_OPPORTUNITY_PROCESS_ID
+}
+
+/** Application id for 3i Sales Opportunity (`Lead_Trcaker_A00`). */
+export function resolveKfSalesOpportunityApplicationId(kf) {
+  const fromEnv = env('VITE_KF_SALES_OPP_APPLICATION_ID', '')
+  if (fromEnv) return fromEnv
+  if (kf && typeof kf === 'object') {
+    try {
+      const fromSdk = kf.app?._id || kf.context?.app?._id
+      if (fromSdk) return String(fromSdk).trim()
+    } catch {
+      // ignore
+    }
+  }
+  return LEAD_TRACKER_APPLICATION_ID
+}
+
+/** Admin API paths for 3i Sales Opportunity (`3i_Sales_Opportunity_A00`). */
+export function buildSalesOpportunityAdminApiPaths(kf) {
+  return buildLeadAdminApiPaths(kf, {
+    processId: resolveKfSalesOpportunityProcessId(kf),
+    applicationId: resolveKfSalesOpportunityApplicationId(kf),
+  })
+}
+
+/** Process id for Sales Activity Module (`Sales_Activity_Module_A00`). */
+export function resolveKfSalesActivityProcessId(kf) {
+  const fromEnv = env('VITE_KF_SALES_ACTIVITY_PROCESS_ID', '')
+  if (fromEnv) return fromEnv
+  if (kf && typeof kf === 'object') {
+    try {
+      const fromSdk =
+        kf.app?.Process?._id ??
+        kf.app?.process?._id ??
+        kf.context?.process?._id ??
+        kf.context?.Process?._id ??
+        ''
+      const s = String(fromSdk || '').trim()
+      if (s && /sales.?activit/i.test(s)) return s
+    } catch {
+      // ignore
+    }
+  }
+  return SALES_ACTIVITY_PROCESS_ID
+}
+
+/** Admin API paths for Sales Activity Module (`Sales_Activity_Module_A00`). */
+export function buildSalesActivityAdminApiPaths(kf) {
+  return buildLeadAdminApiPaths(kf, {
+    processId: resolveKfSalesActivityProcessId(kf),
+    applicationId: resolveKfSalesOpportunityApplicationId(kf),
+  })
+}
+
+export function buildLeadAdminApiPaths(kf, overrides = {}) {
+  const accountId = overrides.accountId || resolveKfAccountId(kf)
+  const applicationId = overrides.applicationId || resolveKfApplicationId(kf)
+  const processId = overrides.processId || resolveKfLeadProcessId(kf)
   if (!accountId || !applicationId || !processId) return null
 
   const appQ = `_application_id=${encodeURIComponent(applicationId)}`
@@ -218,9 +358,13 @@ export function buildLeadAdminApiPaths(kf) {
     /** @param {number} pageNumber 1-based */
     getLeadItemsPath(pageNumber, pageSize) {
       const pn = Math.max(1, Number(pageNumber) || 1)
-      const ps = Math.min(100000, Math.max(1, Number(pageSize) || 100000))
+      const ps = Math.min(1000, Math.max(1, Number(pageSize) || 1000))
       // User-requested admin endpoint format for lead list data.
       return `/process/2/${accountId}/admin/${processId}/item?page_number=${pn}&page_size=${ps}&apply_preference=1`
+    },
+    getAdminItemPath(itemId) {
+      const id = encodeURIComponent(String(itemId || '').trim())
+      return `/process/2/${accountId}/admin/${processId}/${id}`
     },
     userPathPrefix: `/user/2/${accountId}/`,
     userPathSuffix: `?${appQ}`,

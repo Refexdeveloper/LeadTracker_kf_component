@@ -1,4 +1,5 @@
 import { useMemo, useEffect, useState } from 'react';
+import VenwindKPICardsView from './venwind/components/VenwindKPICardsView.jsx';
 
 /** Normalize status for comparisons */
 function statusNorm(lead) {
@@ -222,9 +223,19 @@ export default function KPICards({
     .filter((card) => !(dateRange === 'Today' && card.id === 'week'))
     .filter((card) => (showSourcesCard ? true : card.id !== 'sources'));
 
+  if (variant === 'venwind') {
+    return (
+      <VenwindKPICardsView
+        cards={cards}
+        activeCardId={activeCardId}
+        onCardClick={onCardClick}
+      />
+    );
+  }
+
   return (
-    <section className="mb-0">
-      <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-3 xl:grid-cols-6">
+    <section className="mb-0 w-full max-w-full min-w-0">
+      <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-3 xl:grid-cols-6 min-w-0 w-full max-w-full">
         {cards.map((card, index) => (
           <div
             key={card.id}
@@ -238,12 +249,12 @@ export default function KPICards({
                   }
                 : undefined
             }
-            className={`kpi-card relative overflow-hidden rounded-2xl px-3 py-3 min-h-[72px] sm:min-h-[78px] flex flex-col justify-between transition-all duration-200 ${
+            className={`kpi-card relative overflow-hidden rounded-2xl px-2.5 sm:px-3 py-3 min-h-[72px] sm:min-h-[78px] min-w-0 w-full max-w-full flex flex-col justify-between transition-all duration-200 ${
               variant === 'pro'
-                ? 'bg-gradient-to-br from-white via-white to-slate-50/60 border border-slate-200 shadow-[0_10px_30px_rgba(15,23,42,0.06)] hover:shadow-[0_14px_34px_rgba(15,23,42,0.10)] hover:-translate-y-[1px]'
-                : `bg-gradient-to-br ${card.gradient} border border-white/70 backdrop-blur-xl hover:scale-[1.02] hover:shadow-md`
+                ? 'bg-gradient-to-br from-white via-white to-slate-50/60 border border-slate-200 shadow-[0_10px_30px_rgba(15,23,42,0.06)] hover:shadow-[0_14px_34px_rgba(15,23,42,0.10)] md:hover:-translate-y-[1px]'
+                : `bg-gradient-to-br ${card.gradient} border border-white/70 backdrop-blur-xl md:hover:scale-[1.02] hover:shadow-md`
             } ${onCardClick ? 'cursor-pointer select-none' : ''} ${
-              activeCardId === card.id ? 'ring-2 ring-blue-500/40 ring-offset-2 ring-offset-transparent' : ''
+              activeCardId === card.id ? 'ring-2 ring-blue-500/40 ring-offset-1 ring-offset-transparent' : ''
             }`}
             style={variant === 'pro'
               ? {
@@ -291,8 +302,8 @@ export default function KPICards({
               )}
             </div>
 
-            <div className="relative z-10 space-y-0.5 text-center sm:text-left">
-              <p className={`text-[10px] sm:text-[11px] font-semibold tracking-wide uppercase ${variant === 'pro' ? 'text-slate-500' : 'text-slate-600/90'}`}>
+            <div className="relative z-10 space-y-0.5 text-center sm:text-left min-w-0">
+              <p className={`text-[10px] sm:text-[11px] font-semibold tracking-wide uppercase truncate ${variant === 'pro' ? 'text-slate-500' : 'text-slate-600/90'}`}>
                 {card.title}
               </p>
               <p className={`text-lg sm:text-xl font-black tracking-tight leading-tight ${variant === 'pro' ? 'text-slate-900' : 'text-slate-900'}`}>

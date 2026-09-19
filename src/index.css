@@ -22,18 +22,28 @@
     font-weight: 400;
 }
 
+/*
+ * Kissflow Page builder does not size custom components.
+ * The iframe/slot is flex; html → body → #root → .rootDiv must be height 100%
+ * so the page can fill available space. One scroll surface lives on the page.
+ */
 html {
-    overflow-x: hidden;
-    overflow-y: auto;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
     -webkit-overflow-scrolling: touch;
 }
 
 body {
     margin: 0;
+    width: 100%;
+    height: 100%;
     min-width: 320px;
-    min-height: 0;
-    overflow-x: hidden;
-    overflow-y: auto;
+    min-height: 100%;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
     -webkit-tap-highlight-color: transparent;
     -webkit-overflow-scrolling: touch;
     touch-action: manipulation;
@@ -42,17 +52,24 @@ body {
 
 #root {
     width: 100%;
-    max-width: 100vw;
+    height: 100%;
+    max-width: 100%;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
     min-height: 0;
-    overflow-x: hidden;
-    overflow-y: visible;
+    overflow: hidden;
 }
 
 .rootDiv {
     width: 100%;
+    height: 100%;
     max-width: 100%;
-    overflow-x: hidden;
-    overflow-y: visible;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
 }
 
 /* Leads (and similar): scroll works, scrollbars hidden — WebKit, Firefox, IE/old Edge */
@@ -101,6 +118,23 @@ body {
     animation: filter-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
+@keyframes vms-vendor-panel-in {
+    from {
+        opacity: 0;
+        transform: translateX(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .vms-vendor-panel-in {
+        animation: vms-vendor-panel-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    }
+}
+
 /* Glassmorphism base */
 .glass {
     background: rgba(255, 255, 255, 0.4);
@@ -128,6 +162,8 @@ body {
 
 /* KPI cards: same lift + magnification feel as Quick Insights (.glass-hover), plus accent glow */
 .kpi-card {
+    min-width: 0;
+    max-width: 100%;
     transform: translateZ(0);
     will-change: transform, box-shadow;
     transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1),
@@ -146,14 +182,117 @@ body {
         0 22px 50px rgba(var(--accent-rgb, 148, 163, 184), 0.28);
 }
 
-@media (prefers-reduced-motion: reduce) {
+@media (max-width: 991px) {
+    .kpi-card {
+        box-shadow:
+            0 6px 16px rgba(var(--accent-rgb, 148, 163, 184), 0.14),
+            0 0 0 1px rgba(255, 255, 255, 0.55);
+    }
     .kpi-card:hover {
         transform: none;
     }
 }
 
-/* Accent-colored shadow on hover — uses inline --accent var */
-.group:hover {
+@media (prefers-reduced-motion: reduce) {
+    .kpi-card:hover {
+        transform: none;
+    }
+
+    .kpi-card .group-hover\:scale-\[1\.22\],
+    .group:hover .origin-bottom-right {
+        transform: none !important;
+    }
+}
+
+/* Venwind hub — wind turbine & ambient motion */
+@keyframes venwind-blade-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+@keyframes venwind-float {
+    0%, 100% { transform: translateY(0); opacity: 0.35; }
+    50% { transform: translateY(-6px); opacity: 0.55; }
+}
+
+.venwind-blade-spin {
+    animation: venwind-blade-spin 6s linear infinite;
+    transform-origin: 24px 24px;
+}
+
+.venwind-blade-spin-slow {
+    animation: venwind-blade-spin 12s linear infinite;
+    transform-origin: 24px 24px;
+}
+
+.venwind-float {
+    animation: venwind-float 5s ease-in-out infinite;
+}
+
+.venwind-float-delayed {
+    animation: venwind-float 7s ease-in-out infinite;
+    animation-delay: 1.5s;
+}
+
+@keyframes venwind-kpi-watermark-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+}
+
+.venwind-kpi-watermark-float {
+    animation: venwind-kpi-watermark-float 4.5s ease-in-out infinite;
+}
+
+.group:hover .venwind-kpi-icon {
+    box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.4),
+        0 0 14px rgba(var(--vw-glow-rgb, 15, 118, 110), 0.55),
+        0 0 28px rgba(var(--vw-glow-rgb, 15, 118, 110), 0.28);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .venwind-blade-spin,
+    .venwind-blade-spin-slow,
+    .venwind-float,
+    .venwind-float-delayed,
+    .venwind-kpi-watermark-float {
+        animation: none;
+    }
+}
+
+.venwind-dashboard {
+    --vw-bg: #FAFBFC;
+    --vw-primary: #0F766E;
+    --vw-primary-hover: #115E59;
+    --vw-secondary: #64748B;
+    --vw-text: #0F172A;
+    --vw-text-muted: #64748B;
+    --vw-card: #FFFFFF;
+    --vw-border: #E2E8F0;
+    --vw-transition: all 0.25s ease;
+}
+
+/* Accent-colored shadow on hover — uses inline --accent var (not KPI cards) */
+.group:hover:not(.venwind-kpi-card) {
     box-shadow: 0 20px 40px -12px color-mix(in srgb, var(--accent, #94a3b8) 25%, transparent);
+}
+
+/* Match VWMyItemsMyTasksPage: neutral elevation, no accent neon glow */
+.venwind-dashboard .venwind-kpi-card {
+    box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05), 0 1px 3px rgba(15, 23, 42, 0.04) !important;
+    border-radius: 1rem;
+}
+
+.venwind-dashboard .venwind-kpi-card:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 8px 24px -6px rgba(15, 23, 42, 0.1), 0 2px 6px rgba(15, 23, 42, 0.05) !important;
+}
+
+.venwind-dashboard .venwind-kpi-card.group:hover {
+    box-shadow: 0 8px 24px -6px rgba(15, 23, 42, 0.1), 0 2px 6px rgba(15, 23, 42, 0.05) !important;
+}
+
+.venwind-dashboard .group:hover .venwind-kpi-icon {
+    box-shadow: 0 3px 10px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(255, 255, 255, 0.2);
 }
 

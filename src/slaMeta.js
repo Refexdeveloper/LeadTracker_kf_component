@@ -1,7 +1,70 @@
 /**
  * SLA pill meta — same rules as LeadsTable (Latest Leads): deadline datetime or numeric seconds/ms countdown.
+ *
+ * Severity tiers:
+ *   🟢 more than 24h remaining · 🟡 less than 24h · 🟠 less than 1h · 🔴 breached (label prefixed with "+")
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
+
+const SLA_PILL_STYLES = {
+  ok: 'bg-emerald-100 text-emerald-700 border border-emerald-200',
+  warning: 'bg-amber-100 text-amber-800 border border-amber-200',
+  urgent: 'bg-orange-100 text-orange-700 border border-orange-200',
+  breached: 'bg-red-100 text-red-700 border border-red-200',
+  none: 'bg-slate-100 text-slate-700 border border-slate-200',
+}
+
+const SLA_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/** "16 Jul 2026, 11:27:25 AM" from an epoch-ms number or parseable date string. */
+export function formatSlaDeadlineDisplay(deadlineMsOrLike) {
+  if (deadlineMsOrLike == null || deadlineMsOrLike === '') return ''
+  // Pure-numeric strings are countdown seconds/ms, not an absolute date.
+  if (typeof deadlineMsOrLike === 'string' && /^[0-9]+(\.[0-9]+)?$/.test(deadlineMsOrLike.trim())) return ''
+  // Small numbers are countdown durations, not epoch-ms timestamps.
+  if (typeof deadlineMsOrLike === 'number' && deadlineMsOrLike < 1e12) return ''
+  const d = typeof deadlineMsOrLike === 'number' ? new Date(deadlineMsOrLike) : new Date(String(deadlineMsOrLike).trim())
+  if (Number.isNaN(d.getTime())) return ''
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })
+  return `${d.getDate()} ${SLA_MONTHS[d.getMonth()]} ${d.getFullYear()}, ${time}`
+}
+
+/** Compact duration with only the required units: "45m", "12h", "2d 6h", "122d 21h". */
+export function formatSlaDuration(ms) {
+  const totalSecs = Math.max(0, Math.floor(Math.abs(ms) / 1000))
+  const days = Math.floor(totalSecs / 86400)
+  const hours = Math.floor((totalSecs % 86400) / 3600)
+  const mins = Math.floor((totalSecs % 3600) / 60)
+  const secs = totalSecs % 60
+  if (days > 0) return hours > 0 ? `${days}d ${hours}h` : `${days}d`
+  if (hours > 0) return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`
+  if (mins > 0) return `${mins}m`
+  return `${secs}s`
+}
+
+const SLA_EMPTY_META = { label: '—', icon: '', pill: SLA_PILL_STYLES.none, breached: false, deadlineDisplay: '' }
+
+function slaMetaFromRemaining(remainingMs, deadlineMs) {
+  const deadlineDisplay = deadlineMs != null ? formatSlaDeadlineDisplay(deadlineMs) : ''
+  if (remainingMs <= 0) {
+    return {
+      label: `+${formatSlaDuration(-remainingMs)}`,
+      icon: '🔴',
+      pill: SLA_PILL_STYLES.breached,
+      breached: true,
+      deadlineDisplay,
+    }
+  }
+  const urgent = remainingMs < 60 * 60 * 1000
+  const warning = remainingMs < 24 * 60 * 60 * 1000
+  return {
+    label: `${formatSlaDuration(remainingMs)} left`,
+    icon: urgent ? '🟠' : warning ? '🟡' : '🟢',
+    pill: urgent ? SLA_PILL_STYLES.urgent : warning ? SLA_PILL_STYLES.warning : SLA_PILL_STYLES.ok,
+    breached: false,
+    deadlineDisplay,
+  }
+}
 
 export function computeSlaMeta(rowKey, deadlineLike, nowTick, durationRefMap) {
   const rawStr = String(deadlineLike ?? '').trim()
@@ -16,7 +79,7 @@ export function computeSlaMeta(rowKey, deadlineLike, nowTick, durationRefMap) {
 
   if (key && rawNum != null && Number.isFinite(rawNum)) {
     const seconds = rawNum > 100000 ? Math.round(rawNum / 1000) : Math.round(rawNum)
-    if (seconds <= 0) return { label: 'Breached', pill: 'bg-red-100 text-red-700 border border-red-200', breached: true }
+    if (seconds <= 0) return slaMetaFromRemaining(seconds * 1000, nowTick + seconds * 1000)
 
     if (!durationRefMap.has(key)) {
       durationRefMap.set(key, { startMs: nowTick, initialSeconds: seconds })
@@ -26,54 +89,100 @@ export function computeSlaMeta(rowKey, deadlineLike, nowTick, durationRefMap) {
       durationRefMap.set(key, { startMs: nowTick, initialSeconds: seconds })
     }
     const cur = durationRefMap.get(key) || { startMs: nowTick, initialSeconds: seconds }
-    const elapsed = Math.floor((nowTick - cur.startMs) / 1000)
-    const remaining = cur.initialSeconds - elapsed
-    if (remaining <= 0) return { label: 'Breached', pill: 'bg-red-100 text-red-700 border border-red-200', breached: true }
-
-    const diffMs = remaining * 1000
-    const totalSecs = Math.max(1, Math.ceil(diffMs / 1000))
-    const urgent = diffMs < 2 * 60 * 60 * 1000
-
-    const days = Math.floor(totalSecs / (60 * 60 * 24))
-    const hours = Math.floor((totalSecs - days * 60 * 60 * 24) / (60 * 60))
-    const mins = Math.floor((totalSecs - days * 60 * 60 * 24 - hours * 60 * 60) / 60)
-    const secs = totalSecs - days * 60 * 60 * 24 - hours * 60 * 60 - mins * 60
-
-    const short =
-      days > 0 ? `${days}d ${hours}h` : hours > 0 ? `${hours}h ${mins}m` : mins > 0 ? `${mins}m ${secs}s` : `${secs}s`
-
-    return {
-      label: short,
-      pill: urgent ? 'bg-amber-100 text-amber-800 border border-amber-200' : 'bg-blue-100 text-blue-800 border border-blue-200',
-      breached: false,
-    }
+    const deadlineMs = cur.startMs + cur.initialSeconds * 1000
+    return slaMetaFromRemaining(deadlineMs - nowTick, deadlineMs)
   }
 
-  if (!rawStr) return { label: '—', pill: 'bg-slate-100 text-slate-700 border border-slate-200', breached: false }
+  if (!rawStr) return SLA_EMPTY_META
   const d = new Date(rawStr)
-  if (Number.isNaN(d.getTime())) {
-    return { label: '—', pill: 'bg-slate-100 text-slate-700 border border-slate-200', breached: false }
-  }
-  const diffMs = d.getTime() - nowTick
-  if (diffMs <= 0) {
-    return { label: 'Breached', pill: 'bg-red-100 text-red-700 border border-red-200', breached: true }
+  if (Number.isNaN(d.getTime())) return SLA_EMPTY_META
+
+  return slaMetaFromRemaining(d.getTime() - nowTick, d.getTime())
+}
+
+function cleanIsoTimestamp(iso) {
+  const raw = String(iso || '').trim()
+  if (!raw) return ''
+  const trimmedMicros = raw.replace(
+    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3})\d+(Z|[+-]\d{2}:\d{2})?$/,
+    '$1$2',
+  )
+  if (/[zZ]|[+-]\d{2}:\d{2}$/.test(trimmedMicros)) return trimmedMicros
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?$/.test(trimmedMicros)) return `${trimmedMicros}Z`
+  return trimmedMicros
+}
+
+function parseIsoMs(isoLike) {
+  const cleaned = cleanIsoTimestamp(isoLike)
+  if (!cleaned) return null
+  const d = new Date(cleaned)
+  const t = d.getTime()
+  return Number.isNaN(t) ? null : t
+}
+
+const SLA_OUTCOME_WITHIN = {
+  label: 'Closed Within SLA',
+  icon: '🟢',
+  pill: 'bg-emerald-100 text-emerald-700 border border-emerald-200',
+  withinSla: true,
+}
+const SLA_OUTCOME_BREACHED = {
+  label: 'SLA Breached',
+  icon: '🔴',
+  pill: 'bg-red-100 text-red-700 border border-red-200',
+  withinSla: false,
+}
+
+/**
+ * SLA outcome meta for a completed lead.
+ * - If deadlineLike is numeric seconds/ms remaining, treat >0 as within SLA else breached.
+ * - If deadlineLike is a datetime, compare completedAt <= deadline.
+ */
+export function computeCompletedSlaOutcomeMeta(completedAtLike, deadlineLike) {
+  const rawStr = String(deadlineLike ?? '').trim()
+  const rawNum =
+    typeof deadlineLike === 'number'
+      ? deadlineLike
+      : rawStr && /^[0-9]+(\.[0-9]+)?$/.test(rawStr)
+        ? Number(rawStr)
+        : null
+
+  if (rawNum != null && Number.isFinite(rawNum)) {
+    const seconds = rawNum > 100000 ? Math.round(rawNum / 1000) : Math.round(rawNum)
+    return seconds > 0 ? SLA_OUTCOME_WITHIN : SLA_OUTCOME_BREACHED
   }
 
-  const totalSecs = Math.max(1, Math.ceil(diffMs / 1000))
-  const days = Math.floor(totalSecs / (60 * 60 * 24))
-  const hours = Math.floor((totalSecs - days * 60 * 60 * 24) / (60 * 60))
-  const mins = Math.floor((totalSecs - days * 60 * 60 * 24 - hours * 60 * 60) / 60)
-  const secs = totalSecs - days * 60 * 60 * 24 - hours * 60 * 60 - mins * 60
+  const completedAtMs = parseIsoMs(completedAtLike)
+  if (!completedAtMs || !rawStr) return null
 
-  const short =
-    days > 0 ? `${days}d ${hours}h` : hours > 0 ? `${hours}h ${mins}m` : mins > 0 ? `${mins}m ${secs}s` : `${secs}s`
+  const deadlineMs = parseIsoMs(rawStr)
+  if (!deadlineMs) return null
 
-  const urgent = diffMs < 2 * 60 * 60 * 1000
-  return {
-    label: short,
-    pill: urgent ? 'bg-amber-100 text-amber-800 border border-amber-200' : 'bg-blue-100 text-blue-800 border border-blue-200',
-    breached: false,
-  }
+  return completedAtMs <= deadlineMs ? SLA_OUTCOME_WITHIN : SLA_OUTCOME_BREACHED
+}
+
+/** Resolve completion timestamp from common Kissflow lead row fields. */
+export function resolveLeadCompletedAt(lead) {
+  return (
+    lead?.completedAt ??
+    lead?._completed_at ??
+    lead?.Completed_at ??
+    lead?.Completed_At ??
+    lead?.completed_at ??
+    lead?.modifiedAt ??
+    lead?._modified_at ??
+    lead?.Modified_at ??
+    null
+  )
+}
+
+/** True when lead workflow status is Completed (case/spacing tolerant). */
+export function isLeadStatusCompleted(statusLike) {
+  const s = String(statusLike || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '')
+  return s === 'completed' || s === 'complete'
 }
 
 /** 1s ticker + stable countdown refs — use for contract/lead SLA columns. */

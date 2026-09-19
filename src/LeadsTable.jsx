@@ -4,6 +4,15 @@ import { useMediaQuery } from './hooks/useMediaQuery.js';
 import { pickFirstActivityInstanceId } from './leadPopupIds.js';
 import MyTeamLeadAccordionPanel from './MyTeamLeadAccordionPanel.jsx';
 import { formatCallDurationDisplay } from './leadWorkflowUi.js';
+import {
+  computeCompletedSlaOutcomeMeta,
+  computeSlaMeta,
+  formatSlaDeadlineDisplay,
+  isLeadStatusCompleted,
+  resolveLeadCompletedAt,
+  slaDeadlineTitle,
+} from './slaMeta.js'
+import SlaCell from './SlaCell.jsx'
 
 function InlineAudioPlayer({ url }) {
   const [playing, setPlaying] = useState(false)
@@ -325,93 +334,25 @@ export default function LeadsTable({
     return { iconWrap: 'bg-gradient-to-br from-slate-100 to-white text-slate-800 border-slate-200 shadow-sm', icon: 'ri-box-3-line' }
   }
 
-  const getSlaMeta = (lead, deadlineLike) => {
-    const rawStr = String(deadlineLike ?? '').trim()
-    const rawNum = typeof deadlineLike === 'number'
-      ? deadlineLike
-      : (rawStr && /^[0-9]+(\.[0-9]+)?$/.test(rawStr) ? Number(rawStr) : null)
+  const getSlaMeta = (lead, deadlineLike) =>
+    computeSlaMeta(leadKeyOf(lead), deadlineLike, nowTick, slaDurationRef.current)
 
-    // If API gives seconds (or ms) remaining, treat it as a duration countdown.
-    // We "start" the countdown the first time we see this lead row.
-    const key = leadKeyOf(lead)
-    if (key && rawNum != null && Number.isFinite(rawNum)) {
-      const seconds = rawNum > 100000 ? Math.round(rawNum / 1000) : Math.round(rawNum) // heuristic: big numbers are ms
-      if (seconds <= 0) return { label: 'Breached', pill: 'bg-red-100 text-red-700 border border-red-200', breached: true }
-
-      if (!slaDurationRef.current.has(key)) {
-        slaDurationRef.current.set(key, { startMs: nowTick, initialSeconds: seconds })
+  const getSlaChipForLead = (lead) => {
+    const deadlineLike = lead?.deadline ?? lead?.Deadline
+    if (isLeadStatusCompleted(lead?.status)) {
+      const outcome = computeCompletedSlaOutcomeMeta(resolveLeadCompletedAt(lead), deadlineLike) || {
+        label: 'Closed Within SLA',
+        icon: '🟢',
+        pill: 'bg-emerald-100 text-emerald-700 border border-emerald-200',
       }
-      const rec = slaDurationRef.current.get(key)
-      // If the API-provided seconds changed meaningfully, reset.
-      if (rec && Math.abs(rec.initialSeconds - seconds) > 2) {
-        slaDurationRef.current.set(key, { startMs: nowTick, initialSeconds: seconds })
-      }
-      const cur = slaDurationRef.current.get(key) || { startMs: nowTick, initialSeconds: seconds }
-      const elapsed = Math.floor((nowTick - cur.startMs) / 1000)
-      const remaining = cur.initialSeconds - elapsed
-      if (remaining <= 0) return { label: 'Breached', pill: 'bg-red-100 text-red-700 border border-red-200', breached: true }
-
-      const diffMs = remaining * 1000
-      const totalSecs = Math.max(1, Math.ceil(diffMs / 1000))
-      const urgent = diffMs < 2 * 60 * 60 * 1000
-
-      const days = Math.floor(totalSecs / (60 * 60 * 24))
-      const hours = Math.floor((totalSecs - days * 60 * 60 * 24) / (60 * 60))
-      const mins = Math.floor((totalSecs - days * 60 * 60 * 24 - hours * 60 * 60) / 60)
-      const secs = totalSecs - days * 60 * 60 * 24 - hours * 60 * 60 - mins * 60
-
-      const short =
-        days > 0
-          ? `${days}d ${hours}h`
-          : hours > 0
-            ? `${hours}h ${mins}m`
-            : mins > 0
-              ? `${mins}m ${secs}s`
-              : `${secs}s`
-
       return {
-        label: short,
-        pill: urgent
-          ? 'bg-amber-100 text-amber-800 border border-amber-200'
-          : 'bg-blue-100 text-blue-800 border border-blue-200',
-        breached: false,
+        ...outcome,
+        deadlineDisplay: formatSlaDeadlineDisplay(deadlineLike),
+        title: slaDeadlineTitle(deadlineLike),
       }
     }
-
-    // Otherwise treat it as a datetime deadline.
-    if (!rawStr) return { label: '—', pill: 'bg-slate-100 text-slate-700 border border-slate-200', breached: false }
-    const d = new Date(rawStr)
-    if (Number.isNaN(d.getTime())) {
-      return { label: '—', pill: 'bg-slate-100 text-slate-700 border border-slate-200', breached: false }
-    }
-    const diffMs = d.getTime() - nowTick
-    if (diffMs <= 0) {
-      return { label: 'Breached', pill: 'bg-red-100 text-red-700 border border-red-200', breached: true }
-    }
-
-    const totalSecs = Math.max(1, Math.ceil(diffMs / 1000))
-    const days = Math.floor(totalSecs / (60 * 60 * 24))
-    const hours = Math.floor((totalSecs - days * 60 * 60 * 24) / (60 * 60))
-    const mins = Math.floor((totalSecs - days * 60 * 60 * 24 - hours * 60 * 60) / 60)
-    const secs = totalSecs - days * 60 * 60 * 24 - hours * 60 * 60 - mins * 60
-
-    const short =
-      days > 0
-        ? `${days}d ${hours}h`
-        : hours > 0
-          ? `${hours}h ${mins}m`
-          : mins > 0
-            ? `${mins}m ${secs}s`
-            : `${secs}s`
-
-    const urgent = diffMs < 2 * 60 * 60 * 1000
-    return {
-      label: short,
-      pill: urgent
-        ? 'bg-amber-100 text-amber-800 border border-amber-200'
-        : 'bg-blue-100 text-blue-800 border border-blue-200',
-      breached: false,
-    }
+    const meta = getSlaMeta(lead, deadlineLike)
+    return { ...meta, title: slaDeadlineTitle(deadlineLike) }
   }
 
   const handleSort = (field) => {
@@ -425,8 +366,10 @@ export default function LeadsTable({
 
   const websiteColors = {
     Venwind: 'bg-blue-50 text-blue-700 border-blue-200',
+    'Venwind Refex': 'bg-blue-50 text-blue-700 border-blue-200',
     RIL: 'bg-indigo-50 text-indigo-700 border-indigo-200',
     RRIL: 'bg-amber-50 text-amber-700 border-amber-200',
+    Modepro: 'bg-violet-50 text-violet-700 border-violet-200',
   };
 
   const statusLabel = (status) => {
@@ -806,6 +749,12 @@ export default function LeadsTable({
     setMobileMessageOpenId(null)
   }, [])
 
+  const openMobileLeadSheet = useCallback((lead) => {
+    if (!lead) return
+    setSelectedLead(lead)
+    setMobileMessageOpenId(null)
+  }, [])
+
   useEffect(() => {
     if (typeof document === 'undefined') return
     if (isDesktop || !selectedLead) return
@@ -918,7 +867,7 @@ export default function LeadsTable({
   }
 
   const renderExpansionContent = (accordionLead, { tableShell = true } = {}) => {
-    if (expansionLayout === 'myTeamReport' && accordionLead) {
+    if ((expansionLayout === 'myTeamReport' || expansionLayout === 'participated') && accordionLead) {
       const shell = tableShell ? 'px-3 sm:px-4 py-2.5 sm:py-3' : 'mt-3 w-full max-w-full overflow-hidden'
       return (
         <div className={shell}>
@@ -1348,7 +1297,7 @@ export default function LeadsTable({
   }
 
   return (
-    <section className="mb-0 w-full max-w-full min-w-0" data-aos="fade-up">
+    <section className="mb-0 w-full max-w-full min-w-0">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-6 sm:mb-8">
         <div className="flex items-center gap-3 sm:gap-4 min-w-0">
           <div className="w-12 h-12 flex items-center justify-center bg-blue-100 rounded-2xl border border-blue-200 shrink-0">
@@ -1390,7 +1339,7 @@ export default function LeadsTable({
       <div className="w-full max-w-full min-w-0 overflow-hidden">
         {/* Mobile: card list — desktop unchanged table */}
         {!isDesktop && (
-          <div className="space-y-3 w-full max-w-full">
+          <div className="space-y-3 w-full max-w-full min-w-0">
             {loading ? (
               <div className="py-12 text-center text-slate-500">
                 <i className="ri-loader-4-line animate-spin text-2xl inline-block mb-2" />
@@ -1472,17 +1421,11 @@ export default function LeadsTable({
                         <div className="min-w-0">
                           <p className="text-xs font-medium text-gray-500">SLA</p>
                           {(() => {
-                            const meta = getSlaMeta(lead, lead.deadline || lead.Deadline)
-                            const deadlineTitle = lead.deadline || lead.Deadline
-                              ? `Deadline: ${new Date(lead.deadline || lead.Deadline).toLocaleString('en-IN')}`
-                              : undefined
+                            const meta = getSlaChipForLead(lead)
                             return (
-                              <span
-                                className={`inline-flex mt-0.5 px-2.5 py-1 text-[11px] font-semibold rounded-full border whitespace-nowrap ${meta.pill}`}
-                                title={deadlineTitle}
-                              >
-                                {meta.label}
-                              </span>
+                              <div className="mt-0.5">
+                                <SlaCell meta={meta} title={meta.title} compact />
+                              </div>
                             )
                           })()}
                         </div>
@@ -1506,16 +1449,14 @@ export default function LeadsTable({
                     )}
 
                     <div className="mt-4">
-                      {hasViewDetails && (
-                        <button
-                          type="button"
-                          onClick={() => handleViewDetailsClick(lead)}
-                          className="inline-flex w-full md:w-auto items-center justify-center gap-2 min-h-[44px] px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors touch-manipulation"
-                        >
-                          <i className="ri-external-link-line text-lg" />
-                          View Details
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => openMobileLeadSheet(lead)}
+                        className="inline-flex w-full md:w-auto items-center justify-center gap-2 min-h-[44px] px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors touch-manipulation"
+                      >
+                        <i className="ri-arrow-down-s-line text-lg" />
+                        View Details
+                      </button>
                     </div>
                   </article>
                 )
@@ -1706,18 +1647,8 @@ export default function LeadsTable({
                       {showSlaColumn && (
                         <td className={`px-3 sm:px-6 whitespace-nowrap ${variant === 'pro' ? 'py-2.5 sm:py-3' : 'py-3 sm:py-4'}`}>
                           {(() => {
-                            const meta = getSlaMeta(lead, lead.deadline || lead.Deadline)
-                            const deadlineTitle = lead.deadline || lead.Deadline
-                              ? `Deadline: ${new Date(lead.deadline || lead.Deadline).toLocaleString('en-IN')}`
-                              : undefined
-                            return (
-                              <span
-                                className={`inline-flex items-center justify-center px-2.5 py-1 text-[11px] font-semibold rounded-full whitespace-nowrap ${meta.pill}`}
-                                title={deadlineTitle}
-                              >
-                                {meta.label}
-                              </span>
-                            )
+                            const meta = getSlaChipForLead(lead)
+                            return <SlaCell meta={meta} title={meta.title} />
                           })()}
                         </td>
                       )}
@@ -1728,7 +1659,7 @@ export default function LeadsTable({
                         <div
                           className={`overflow-hidden transition-[max-height,opacity] duration-300 ease-out ${
                             isExpanded
-                              ? expansionLayout === 'myTeamReport'
+                              ? expansionLayout === 'myTeamReport' || expansionLayout === 'participated'
                                 ? 'max-h-[2400px] opacity-100'
                                 : 'max-h-[1400px] opacity-100'
                               : 'max-h-0 opacity-0'
