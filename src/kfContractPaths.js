@@ -49,7 +49,7 @@ export function buildTotalVendorsReportCountPath(kf) {
 /**
  * Vendor Master list endpoint (all vendor records).
  * Example:
- * `/form/2/{account}/Vendor_Master_A02/list?page_number=1&page_size=100000&apply_preference=1`
+ * `/form/2/{account}/Vendor_Master_A02/list?page_number=1&page_size=1000&apply_preference=1`
  */
 export function buildVendorMasterApiPaths(kf) {
   const accountId = resolveKfAccountId(kf)
@@ -58,9 +58,9 @@ export function buildVendorMasterApiPaths(kf) {
   return {
     accountId,
     vendorFormId,
-    getVendorItemsPath(pageNumber = 1, pageSize = 100000) {
+    getVendorItemsPath(pageNumber = 1, pageSize = 1000) {
       const pn = Math.max(1, Number(pageNumber) || 1)
-      const ps = Math.min(100000, Math.max(1, Number(pageSize) || 100000))
+      const ps = Math.min(1000, Math.max(1, Number(pageSize) || 1000))
       return `/form/2/${accountId}/${vendorFormId}/list?page_number=${pn}&page_size=${ps}&apply_preference=1`
     },
   }
@@ -133,11 +133,66 @@ export function buildContractAdminApiPaths(kf) {
     /** @param {number} pageNumber 1-based */
     getContractItemsPath(pageNumber, pageSize) {
       const pn = Math.max(1, Number(pageNumber) || 1)
-      const ps = Math.min(100000, Math.max(1, Number(pageSize) || 100000))
+      const ps = Math.min(100000, Math.max(1, Number(pageSize) || 1000))
       return `/process/2/${accountId}/admin/${processId}/item?page_number=${pn}&page_size=${ps}&apply_preference=1`
     },
     userPathPrefix: `/user/2/${accountId}/`,
     userPathSuffix: `?${appQ}`,
     openPageAppId: applicationId,
+  }
+}
+
+/** Kissflow contract workflow popup — same default as ContractsMyItemsPro / VMS2.0 */
+export const CONTRACT_WORKFLOW_POPUP_ID = 'Popup_6xSap6ocDi'
+
+export function resolveContractPopupId() {
+  return env('VITE_KF_CONTRACT_POPUP_ID', CONTRACT_WORKFLOW_POPUP_ID)
+}
+
+/**
+ * Open contract instance in Kissflow popup (duplicate alias keys for SDK compatibility).
+ * @returns {boolean} true if openPopup was invoked
+ */
+export function openContractWorkflowPopup(kf, { instanceId, activityInstanceId }, { onFallback, onError } = {}) {
+  const popupId = resolveContractPopupId()
+  const activityId = activityInstanceId ? String(activityInstanceId) : ''
+  const instId = instanceId ? String(instanceId) : ''
+
+  if (!kf?.app?.page?.openPopup) {
+    onFallback?.()
+    return false
+  }
+  if (!instId || !activityId) {
+    console.warn('openContractWorkflowPopup: missing instance/activity id', { instId, activityId })
+    onFallback?.()
+    return false
+  }
+
+  try {
+    const p = kf.app.page.openPopup(popupId, {
+      ActivityID: activityId,
+      InstanceId: instId,
+      ActivityInstanceId: activityId,
+      ActivityId: activityId,
+      activityId: activityId,
+      InstanceID: instId,
+      width: 960,
+      height: 720,
+      popupWidth: '960px',
+      popupHeight: '720px',
+    })
+    if (p && typeof p.catch === 'function') {
+      p.catch((e) => {
+        console.warn('openContractWorkflowPopup failed:', e?.message || e)
+        onError?.(e)
+        onFallback?.()
+      })
+    }
+    return true
+  } catch (e) {
+    console.warn('openContractWorkflowPopup failed:', e?.message || e)
+    onError?.(e)
+    onFallback?.()
+    return false
   }
 }

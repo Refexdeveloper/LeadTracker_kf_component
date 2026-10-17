@@ -32,12 +32,12 @@ export default function OpportunityFunnel({ rows, activeStageId, onStageClick })
   return (
     <section className="min-w-0">
       <div className="flex items-center gap-3 mb-5">
-        <div className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center bg-gradient-to-br from-sky-500 via-indigo-500 to-violet-600 rounded-2xl shadow-lg shadow-indigo-500/20 shrink-0">
-          <i className="ri-filter-3-line text-white text-lg sm:text-xl" />
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#1E88E5]/10 text-[#1E88E5] ring-1 ring-[#1E88E5]/20 sm:h-12 sm:w-12">
+          <i className="ri-filter-3-line text-lg sm:text-xl" />
         </div>
         <div className="min-w-0">
-          <h2 className="text-base sm:text-xl font-bold text-slate-900">Sales Funnel</h2>
-          <p className="text-xs sm:text-sm text-slate-500">Open deals by probability stage</p>
+          <h2 className="text-base sm:text-xl font-bold text-[#0F172A]">Sales Funnel</h2>
+          <p className="text-xs sm:text-sm text-[#64748B]">Open deals by probability stage</p>
         </div>
       </div>
 
@@ -52,7 +52,7 @@ export default function OpportunityFunnel({ rows, activeStageId, onStageClick })
               type="button"
               onClick={() => onStageClick?.(stage.id)}
               className={`w-full min-w-0 text-left rounded-2xl border px-3 py-3 sm:px-4 sm:py-3.5 transition-colors touch-manipulation min-h-[60px] ${
-                active ? 'border-indigo-300 bg-indigo-50/80' : 'border-slate-200/80 bg-white/80'
+                active ? 'border-[#1E88E5] bg-[#EEF4FF] ring-2 ring-[#1E88E5]/30' : 'border-slate-200/80 bg-white'
               }`}
             >
               <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 mb-2">

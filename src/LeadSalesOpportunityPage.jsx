@@ -19,6 +19,7 @@ import {
   mapKfItemToOpportunity,
   opportunityInDateRange,
 } from './salesOpportunity/salesOpportunityMap.js'
+import { PT_AVATAR, PT_PAGE_SHELL, PT_SECTION } from './leadPtTheme.js'
 
 function emptyOpportunityFilters() {
   return {
@@ -308,21 +309,21 @@ export default function LeadSalesOpportunityPage() {
   ].filter(Boolean)
 
   return (
-    <div className="h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain bg-gradient-to-br from-slate-100 via-slate-50 to-cyan-50/40 px-3 pb-8 pt-1 md:px-4 md:pb-10 md:pt-2">
+    <div className={`h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain ${PT_PAGE_SHELL} px-3 pb-8 pt-1 md:px-4 md:pb-10 md:pt-2`}>
       <div className="mx-auto max-w-[1500px] min-w-0">
         <div className="p-1 sm:p-2 md:p-3 flex flex-col gap-5 sm:gap-6 md:gap-8 transition-smooth">
         <section className="min-w-0">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-start gap-3">
               <div
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-400 via-sky-500 to-indigo-600 text-xs font-black tracking-tight text-white shadow-sm"
+                className={`${PT_AVATAR} !h-11 !w-11 text-xs font-bold tracking-tight`}
                 aria-label="3i"
               >
                 3i
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-[11px] uppercase tracking-wide font-semibold text-slate-500">3i Medical Technologies</p>
-                <h1 className="text-lg sm:text-2xl font-bold text-slate-900 leading-tight">Sales Opportunity Funnel</h1>
+                <p className="text-[11px] uppercase tracking-wide font-semibold text-[#64748B]">3i Medical Technologies</p>
+                <h1 className="text-lg sm:text-2xl font-bold text-[#0F172A] leading-tight">Sales Opportunity Funnel</h1>
               </div>
             </div>
             <div className="w-full sm:w-auto sm:shrink-0">
@@ -468,14 +469,14 @@ export default function LeadSalesOpportunityPage() {
             />
           </div>
 
-          <div className="min-w-0 rounded-2xl border border-white/70 bg-white/80 p-4 sm:p-5 md:p-6 shadow-sm">
+          <div className={`min-w-0 ${PT_SECTION} sm:p-5 md:p-6`}>
             <OpportunityFunnel
               rows={displayRows}
               activeStageId={stageFilter !== 'All' ? stageFilter : ''}
               onStageClick={(id) => setStageFilter((prev) => (prev === id ? 'All' : id))}
             />
           </div>
-          <div className="min-w-0 rounded-2xl border border-white/70 bg-white/80 p-4 sm:p-5 md:p-6 shadow-sm overflow-hidden">
+          <div className={`min-w-0 overflow-hidden ${PT_SECTION} sm:p-5 md:p-6`}>
             <OpportunityMixCharts rows={kpiFilteredRows} />
           </div>
 
@@ -483,7 +484,7 @@ export default function LeadSalesOpportunityPage() {
             <OpportunityInsightCards rows={displayRows} />
           </div>
 
-          <section className="min-w-0 rounded-2xl border border-white/70 bg-white/80 p-4 sm:p-5 md:p-6 shadow-sm">
+          <section className={`min-w-0 ${PT_SECTION} sm:p-5 md:p-6`}>
             <OpportunityTable
               rows={tableRows}
               loading={apiLoading}

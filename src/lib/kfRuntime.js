@@ -71,14 +71,15 @@ export async function kfMutateJson(kfInstance, path, { method = 'POST', body } =
   let fetchBody;
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
-    fetchBody = JSON.stringify(body);
+    // Kissflow SDK + fetch both expect a JSON string (same as Postman raw body).
+    fetchBody = typeof body === 'string' ? body : JSON.stringify(body);
   }
 
   if (kfInstance?.api) {
     const resp = await kfInstance.api(path, {
       method,
       headers,
-      body: body !== undefined ? body : undefined,
+      body: fetchBody,
     });
     const data = resp?.data ?? resp ?? null;
     const err = parseKfApiError(data);

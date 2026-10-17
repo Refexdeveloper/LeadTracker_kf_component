@@ -42,18 +42,41 @@ function formatDate(isoString) {
   })
 }
 
-function formatSlaTimeLeft(ms) {
-  if (ms <= 0) return 'Breached'
-  const totalSeconds = Math.floor(ms / 1000)
-  const hours = Math.floor(totalSeconds / 3600)
-  const minutes = Math.floor((totalSeconds % 3600) / 60)
-  const seconds = totalSeconds % 60
+const SLA_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-  let str = ''
-  if (hours > 0) str += `${hours.toString().padStart(2, '0')} hour: `
-  if (minutes > 0 || hours > 0) str += `${minutes.toString().padStart(2, '0')} minute: `
-  str += `${seconds} sec left`
-  return str
+/** "16 Jul 2026, 11:27:25 AM" */
+function formatSlaDeadlineDate(ms) {
+  const d = new Date(ms)
+  if (isNaN(d.getTime())) return ''
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })
+  return `${d.getDate()} ${SLA_MONTHS[d.getMonth()]} ${d.getFullYear()}, ${time}`
+}
+
+/** Compact duration with only the required units: "45m", "12h", "2d 6h". */
+function formatSlaDuration(ms) {
+  const totalSecs = Math.max(0, Math.floor(Math.abs(ms) / 1000))
+  const days = Math.floor(totalSecs / 86400)
+  const hours = Math.floor((totalSecs % 86400) / 3600)
+  const mins = Math.floor((totalSecs % 3600) / 60)
+  const secs = totalSecs % 60
+  if (days > 0) return hours > 0 ? `${days}d ${hours}h` : `${days}d`
+  if (hours > 0) return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`
+  if (mins > 0) return `${mins}m`
+  return `${secs}s`
+}
+
+/** 🟢 >24h · 🟡 <24h · 🟠 <1h · 🔴 breached ("+" prefixed overdue duration). */
+function slaBadgeMeta(diffMs) {
+  if (diffMs <= 0) {
+    return { icon: '🔴', label: `+${formatSlaDuration(-diffMs)}`, bg: '#fef2f2', color: '#b91c1c', border: '#fecaca' }
+  }
+  if (diffMs < 60 * 60 * 1000) {
+    return { icon: '🟠', label: `${formatSlaDuration(diffMs)} left`, bg: '#fff7ed', color: '#ea580c', border: '#fed7aa' }
+  }
+  if (diffMs < 24 * 60 * 60 * 1000) {
+    return { icon: '🟡', label: `${formatSlaDuration(diffMs)} left`, bg: '#fef9c3', color: '#a16207', border: '#fde047' }
+  }
+  return { icon: '🟢', label: `${formatSlaDuration(diffMs)} left`, bg: '#ecfdf5', color: '#059669', border: '#a7f3d0' }
 }
 
 function buildListUrl(accountId, status, config) {
@@ -305,7 +328,7 @@ export default function KarthikaTable() {
       const tabHidden = tab.hiddenColumns || []
       const combinedHidden = [...globalHidden, ...tabHidden]
 
-      const visibleCols = rawCols.filter(c => {
+      let visibleCols = rawCols.filter(c => {
         if (!c?.Id || !c?.Name) return false
         if (combinedHidden.includes(c.Id)) return false
         if (isFinishedTab && c.Id === appConfig.currentStepFieldId) return false
@@ -313,7 +336,9 @@ export default function KarthikaTable() {
       })
 
       if (tab.filterType === 'todo' && appConfig.slaConfig?.deadlineFieldId) {
-        visibleCols.push({ Id: 'KF_SLA_TIMER', Name: 'Time Left' })
+        // Combined SLA column shows the deadline datetime + countdown pill, so drop the raw deadline column.
+        visibleCols = visibleCols.filter(c => c.Id !== appConfig.slaConfig.deadlineFieldId)
+        visibleCols.push({ Id: 'KF_SLA_TIMER', Name: 'SLA' })
       }
 
       setCols(visibleCols)
@@ -632,12 +657,14 @@ export default function KarthikaTable() {
                     let themeClass = ''
                     let textFallback = ''
                     let diffMs = null
+                    let deadlineMs = null
 
                     if (activeKey === 'todo' && appConfig.slaConfig?.deadlineFieldId) {
                       const deadlineStr = toText(r?.[appConfig.slaConfig.deadlineFieldId])
                       if (deadlineStr) {
                         const deadlineDate = new Date(deadlineStr).getTime()
                         if (!isNaN(deadlineDate)) {
+                          deadlineMs = deadlineDate
                           diffMs = deadlineDate - now
                           const warningThresholdMs = (appConfig.slaConfig.warningSeconds || 30) * 1000
 
@@ -678,11 +705,37 @@ export default function KarthikaTable() {
                       >
                         {cols.map((c) => {
                           if (c.Id === 'KF_SLA_TIMER') {
+                            const badge = diffMs !== null ? slaBadgeMeta(diffMs) : null
                             return (
                               <td key={c.Id} style={ui.td}>
-                                <div style={{ ...ui.cellEllipsis, fontWeight: diffMs <= 0 ? 800 : 600, color: diffMs <= 0 ? '#b91c1c' : 'inherit' }}>
-                                  {diffMs !== null ? formatSlaTimeLeft(diffMs) : <span style={ui.muted}>—</span>}
-                                </div>
+                                {badge ? (
+                                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+                                    <span style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
+                                      {formatSlaDeadlineDate(deadlineMs)}
+                                    </span>
+                                    <span
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: 4,
+                                        padding: '2px 10px',
+                                        borderRadius: 9999,
+                                        fontSize: 11,
+                                        fontWeight: 700,
+                                        whiteSpace: 'nowrap',
+                                        fontVariantNumeric: 'tabular-nums',
+                                        background: badge.bg,
+                                        color: badge.color,
+                                        border: `1px solid ${badge.border}`,
+                                      }}
+                                    >
+                                      <span aria-hidden="true">{badge.icon}</span>
+                                      <span>{badge.label}</span>
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <span style={ui.muted}>—</span>
+                                )}
                               </td>
                             )
                           }

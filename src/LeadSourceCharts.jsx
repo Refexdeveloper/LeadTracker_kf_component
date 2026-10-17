@@ -33,7 +33,7 @@ function getWebsiteColor(name, nameToIndex) {
 
 const MOBILE_CHART_MAX = 767
 
-export default function LeadSourceCharts({ leads }) {
+export default function LeadSourceCharts({ leads, theme = 'classic' }) {
   const canRenderCharts = typeof window !== 'undefined' && typeof window.ResizeObserver !== 'undefined'
   const isMobile = useMediaQuery(`(max-width: ${MOBILE_CHART_MAX}px)`)
   const totalLeads = Array.isArray(leads) ? leads.length : 0
@@ -126,16 +126,22 @@ export default function LeadSourceCharts({ leads }) {
   }, [sourceData])
 
   return (
-    <section className="mb-0 w-full max-w-full overflow-x-hidden min-w-0">
+    <section className={`mb-0 w-full max-w-full min-w-0 ${theme === 'pt' ? 'overflow-visible' : 'overflow-x-hidden'}`}>
       <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-5">
-        <div className="w-12 h-12 flex items-center justify-center bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-600 rounded-2xl shadow-xl shadow-indigo-500/25">
-          <i className="ri-pie-chart-line text-white text-xl"></i>
+        <div className={`w-12 h-12 flex items-center justify-center rounded-2xl shrink-0 ${
+          theme === 'pt'
+            ? 'bg-[#1E88E5]/10 text-[#1E88E5] ring-1 ring-[#1E88E5]/20'
+            : 'bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-600 shadow-xl shadow-indigo-500/25'
+        }`}>
+          <i className={`ri-pie-chart-line text-xl ${theme === 'pt' ? '' : 'text-white'}`}></i>
         </div>
-        <h2 className="text-lg sm:text-xl md:text-2xl font-bold bg-gradient-to-r from-slate-900 via-indigo-900 to-purple-900 bg-clip-text text-transparent">Lead Source Analytics</h2>
+        <h2 className={`text-lg sm:text-xl md:text-2xl font-bold ${
+          theme === 'pt' ? 'text-[#0F172A]' : 'bg-gradient-to-r from-slate-900 via-indigo-900 to-purple-900 bg-clip-text text-transparent'
+        }`}>Lead Source Analytics</h2>
       </div>
 
       <div className="grid grid-cols-1 gap-4 w-full max-w-full overflow-visible min-w-0">
-        <div className="p-0 overflow-x-hidden min-w-0 w-full max-w-full">
+        <div className={`p-0 min-w-0 w-full max-w-full ${theme === 'pt' ? 'overflow-visible' : 'overflow-x-hidden'}`}>
           <h3 className="text-base sm:text-lg font-bold text-slate-900 mb-4 sm:mb-6 flex items-center gap-2">
             <span className="w-2 h-2 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full"></span>
             Leads by Website

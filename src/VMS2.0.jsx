@@ -33,24 +33,79 @@ import {
 import { resolveKfAccountId } from './kfLeadPaths.js'
 import { formatStatusForDisplay, isDocAvailable, mapKfContractItem } from './kfContractItemMap.js'
 import { useSlaDeadlineMeta, slaDeadlineTitle } from './slaMeta.js'
+import SlaCell from './SlaCell.jsx'
 
 export { mapKfContractItem } from './kfContractItemMap.js'
 import { useMediaQuery } from './hooks/useMediaQuery.js'
+import {
+  vmsPageClass,
+  vmsPageInnerClass,
+  vmsSectionShellClass,
+  vmsSectionHeaderClass,
+  vmsSectionTitleClass,
+  vmsSectionSubtitleClass,
+  vmsSearchInputClass,
+  vmsGhostBtnClass,
+  vmsTableHeadClass,
+  vmsTableHeadCellClass,
+  vmsTableRowClass,
+  vmsTableDivideClass,
+  vmsExpandBtnClass,
+  vmsMobileCardClass,
+  vmsPaginationBarClass,
+  vmsPaginationBtnClass,
+  vmsVendorRowClass,
+  vmsVendorMobileCardClass,
+  vmsAccordionShellClass,
+  vmsWorkflowStepClass,
+  vmsHeaderShellClass,
+  vmsAvatarClass,
+  vmsRoleAccentClass,
+  vmsBrandIconWrapClass,
+  vmsBrandKpiAccent,
+  vmsBrandProgressBarClass,
+  vmsContractTypeIcon,
+  vmsTypeChipClass,
+  vmsColIconClass,
+} from './vms/vmsTheme.js'
+import P2pKpiCard, { P2pHeaderFx } from './vms/P2pKpiCard.jsx'
 
 const EXPIRY_SOON_DAYS = 30
 
+function VmsSection({ title, subtitle, icon, headerRight, accent = 'brand', className = '', bodyClassName = 'p-2.5 md:p-4', children, ...props }) {
+  return (
+    <section className={vmsSectionShellClass(className)} {...props}>
+      {(title || subtitle || headerRight) && (
+        <div className={`flex flex-col gap-2 md:flex-row md:items-center md:justify-between ${vmsSectionHeaderClass(accent)}`}>
+          <div className="min-w-0">
+            {title ? (
+              <h2 className={`${vmsSectionTitleClass()} inline-flex items-center gap-2.5`}>
+                {icon ? <span className={vmsBrandIconWrapClass()}><i className={`${icon} text-base`} /></span> : null}
+                <span>{title}</span>
+              </h2>
+            ) : null}
+            {subtitle ? <p className={vmsSectionSubtitleClass()}>{subtitle}</p> : null}
+          </div>
+          {headerRight ? <div className="w-full md:w-auto shrink-0">{headerRight}</div> : null}
+        </div>
+      )}
+      <div className={bodyClassName}>{children}</div>
+    </section>
+  )
+}
+
 // —— UI constants (same visual language as polished VMS2.0) ——
 const CONTRACT_TYPE_DATA_FALLBACK = [
-  { name: 'AMC', value: 8, color: '#2563eb' },
-  { name: 'Rental', value: 5, color: '#3b82f6' },
-  { name: 'One-Time', value: 3, color: '#7c3aed' },
+  { name: 'AMC', value: 8, color: '#17a2b4' },
+  { name: 'Rental', value: 5, color: '#0f6b7a' },
+  { name: 'One-Time', value: 3, color: '#5cc3cf' },
   { name: 'MSA', value: 2, color: '#f59e0b' },
   { name: 'MSSA', value: 2, color: '#e11d48' },
 ]
 
 const STATUS_CHART_COLORS = {
   Active: '#16a34a',
-  Draft: '#60a5fa',
+  Draft: '#5cc3cf',
   Rejected: '#ef4444',
   Expired: '#94a3b8',
 }
@@ -318,226 +373,131 @@ function VendorPerfMetricCard({ label, value }) {
   const has = value != null && !Number.isNaN(Number(value))
   const pct = has ? Math.max(0, Math.min(100, Math.round(Number(value)))) : null
   return (
-    <div className={`rounded-xl border border-blue-100/80 bg-white/80 p-3 shadow-sm ${has ? '' : 'border-dashed'}`}>
-      <p className="text-xs font-medium text-slate-600">{label}</p>
-      <p className={`mt-1 text-xl font-semibold ${has ? 'text-slate-800' : 'text-slate-400'}`}>{has ? `${pct}%` : 'No Data'}</p>
-      <div className="mt-2 h-2 w-full rounded-full bg-slate-200">
+    <div className={`rounded-xl border border-gray-200 bg-white p-3 ${has ? '' : 'border-dashed'}`}>
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      <p className={`mt-1 text-xl font-semibold transition-colors duration-300 ${has ? 'text-slate-800' : 'text-slate-400'}`}>{has ? `${pct}%` : 'No Data'}</p>
+      <div className="mt-2 h-2 w-full rounded-full bg-slate-200/80 overflow-hidden">
         {has ? (
-          <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
+          <div className={`h-full rounded-full ${vmsBrandProgressBarClass()} transition-[width] duration-500 ease-out`} style={{ width: `${pct}%` }} />
         ) : (
-          <div className="h-full rounded-full bg-slate-300/60" style={{ width: '0%' }} title="No data" />
+          <div className="h-full rounded-full bg-slate-300/60 transition-[width] duration-500 ease-out" style={{ width: '0%' }} title="No data" />
         )}
       </div>
     </div>
   )
 }
 
-/** KPI row — same visual system as ContractsMyItemsPro (wash + radial + watermark dock-zoom) */
 const VMS_KPI_SUMMARY = [
   {
     label: 'Total Contracts',
     key: 'total',
-    icon: 'ri-file-paper-2-line',
-    accent: {
-      borderClass: 'border border-blue-200/70',
-      washClass: 'bg-gradient-to-br from-white from-[14%] via-white via-[48%] to-blue-100/48',
-      radialWash: 'bg-[radial-gradient(155%_118%_at_88%_88%,rgba(59,130,246,0.22)_0%,transparent_72%)]',
-      iconGradient: 'from-blue-500 to-blue-600',
-      valueClass: 'text-blue-600',
-      watermarkColor: 'text-blue-600',
-    },
+    icon: 'ri-file-copy-2-line',
+    tone: 'brand',
+    variant: 'all',
+    accent: { borderClass: 'border border-[#bfe6ec]', iconBg: 'bg-[#e6f6f8]', iconColor: 'text-[#17a2b4]', valueClass: 'text-gray-900' },
   },
   {
     label: 'Active Contracts',
     key: 'active',
-    icon: 'ri-shield-check-line',
-    accent: {
-      borderClass: 'border border-emerald-200/70',
-      washClass: 'bg-gradient-to-br from-white from-[14%] via-white via-[48%] to-emerald-100/44',
-      radialWash: 'bg-[radial-gradient(155%_118%_at_88%_88%,rgba(16,185,129,0.20)_0%,transparent_72%)]',
-      iconGradient: 'from-emerald-500 to-emerald-600',
-      valueClass: 'text-emerald-600',
-      watermarkColor: 'text-emerald-600',
-    },
+    icon: 'ri-file-check-line',
+    tone: 'success',
+    variant: 'approved',
+    accent: { borderClass: 'border border-emerald-100', iconBg: 'bg-emerald-50', iconColor: 'text-emerald-600', valueClass: 'text-gray-900' },
   },
   {
     label: 'Expiring Soon',
     key: 'expiring',
     icon: 'ri-calendar-schedule-line',
     segmented: true,
-    accent: {
-      borderClass: 'border border-violet-200/70',
-      washClass: 'bg-gradient-to-br from-white from-[14%] via-white via-[48%] to-violet-100/44',
-      radialWash: 'bg-[radial-gradient(155%_118%_at_88%_88%,rgba(139,92,246,0.20)_0%,transparent_72%)]',
-      iconGradient: 'from-violet-500 to-violet-600',
-      valueClass: 'text-violet-600',
-      watermarkColor: 'text-violet-600',
-    },
+    tone: 'warn',
+    variant: 'overdue',
+    live: true,
+    accent: vmsBrandKpiAccent(),
   },
   {
     label: 'Expired',
     key: 'expired',
-    icon: 'ri-time-line',
-    accent: {
-      borderClass: 'border border-rose-200/70',
-      washClass: 'bg-gradient-to-br from-white from-[14%] via-white via-[48%] to-rose-100/44',
-      radialWash: 'bg-[radial-gradient(155%_118%_at_88%_88%,rgba(244,63,94,0.19)_0%,transparent_72%)]',
-      iconGradient: 'from-rose-500 to-rose-600',
-      valueClass: 'text-rose-600',
-      watermarkColor: 'text-rose-600',
-    },
+    icon: 'ri-calendar-close-line',
+    tone: 'danger',
+    variant: 'rejected',
+    accent: { borderClass: 'border border-rose-100', iconBg: 'bg-rose-50', iconColor: 'text-rose-600', valueClass: 'text-gray-900' },
   },
   {
     label: 'NDA Missing',
     key: 'ndaMiss',
-    icon: 'ri-file-warning-line',
-    accent: {
-      borderClass: 'border border-fuchsia-200/70',
-      washClass: 'bg-gradient-to-br from-white from-[14%] via-white via-[48%] to-fuchsia-100/42',
-      radialWash: 'bg-[radial-gradient(155%_118%_at_88%_88%,rgba(217,70,239,0.19)_0%,transparent_72%)]',
-      iconGradient: 'from-fuchsia-500 to-fuchsia-600',
-      valueClass: 'text-fuchsia-600',
-      watermarkColor: 'text-fuchsia-600',
-    },
+    icon: 'ri-lock-2-line',
+    tone: 'amber',
+    variant: 'draft',
+    accent: { borderClass: 'border border-amber-100', iconBg: 'bg-amber-50', iconColor: 'text-amber-600', valueClass: 'text-gray-900' },
   },
   {
     label: 'MSA Missing',
     key: 'msaMiss',
-    icon: 'ri-shield-line',
-    accent: {
-      borderClass: 'border border-orange-200/70',
-      washClass: 'bg-gradient-to-br from-white from-[14%] via-white via-[48%] to-orange-100/42',
-      radialWash: 'bg-[radial-gradient(155%_118%_at_88%_88%,rgba(249,115,22,0.19)_0%,transparent_72%)]',
-      iconGradient: 'from-orange-500 to-orange-600',
-      valueClass: 'text-orange-600',
-      watermarkColor: 'text-orange-600',
-    },
+    icon: 'ri-stack-line',
+    tone: 'warn',
+    variant: 'returned',
+    accent: { borderClass: 'border border-orange-100', iconBg: 'bg-orange-50', iconColor: 'text-orange-600', valueClass: 'text-gray-900' },
   },
   {
     label: 'SOW Missing',
     key: 'sowMiss',
     icon: 'ri-clipboard-line',
-    accent: {
-      borderClass: 'border border-sky-200/70',
-      washClass: 'bg-gradient-to-br from-white from-[14%] via-white via-[48%] to-sky-100/47',
-      radialWash: 'bg-[radial-gradient(155%_118%_at_88%_88%,rgba(14,165,233,0.20)_0%,transparent_72%)]',
-      iconGradient: 'from-sky-500 to-sky-600',
-      valueClass: 'text-sky-600',
-      watermarkColor: 'text-sky-600',
-    },
+    tone: 'teal',
+    variant: 'pending_approval',
+    accent: { borderClass: 'border border-slate-200/80', iconBg: 'bg-[#e6f6f8]', iconColor: 'text-[#17a2b4]', valueClass: 'text-[#0F172A]' },
   },
   {
     label: 'Total Vendors',
     key: 'vendors',
-    icon: 'ri-team-line',
-    accent: {
-      borderClass: 'border border-indigo-200/70',
-      washClass: 'bg-gradient-to-br from-white from-[14%] via-white via-[48%] to-indigo-100/44',
-      radialWash: 'bg-[radial-gradient(155%_118%_at_88%_88%,rgba(79,70,229,0.20)_0%,transparent_72%)]',
-      iconGradient: 'from-indigo-600 to-indigo-700',
-      valueClass: 'text-indigo-600',
-      watermarkColor: 'text-indigo-600',
-    },
+    icon: 'ri-handshake-line',
+    tone: 'brand',
+    variant: 'payments',
+    accent: vmsBrandKpiAccent(),
   },
 ]
 
-const TYPE_FALLBACK_COLORS = ['#2563eb', '#3b82f6', '#7c3aed', '#f59e0b', '#e11d48', '#0ea5e9', '#14b8a6']
-
-function KpiCardWatermark({ iconClass, colorClass }) {
-  return (
-    <div className="pointer-events-none absolute inset-0 z-[2] overflow-hidden rounded-2xl" aria-hidden>
-      <div className="absolute bottom-2 right-2 origin-bottom-right transition-transform duration-[380ms] ease-[cubic-bezier(0.34,1.56,0.64,1)] will-change-transform group-hover:scale-[1.22] md:bottom-2.5 md:right-2.5">
-        <i
-          className={`${iconClass} ${colorClass} block text-[4.35rem] leading-none opacity-[0.13] transition-opacity duration-300 ease-out select-none group-hover:opacity-[0.18] md:text-[4.85rem]`}
-        />
-      </div>
-    </div>
-  )
-}
+const TYPE_FALLBACK_COLORS = ['#17a2b4', '#0f6b7a', '#0b5361', '#f59e0b', '#e11d48', '#0084AD', '#22C55E']
 
 function StatCard({
   item,
   delay = 0,
   value,
+  total = 0,
   expiringWindow = '90',
   onExpiringWindowChange,
   onClick,
+  selected = false,
 }) {
-  const displayValue = typeof value === 'number' ? value.toLocaleString() : (value ?? 0)
-  const a = item.accent || {}
-  const borderClass = a.borderClass || 'border border-slate-200/70'
-  const washClass = a.washClass || 'bg-gradient-to-br from-white via-white to-slate-50/40'
-  const radialWash = a.radialWash || ''
-  const iconGradient = a.iconGradient || 'from-slate-500 to-slate-600'
-  const valueCls = a.valueClass || 'text-slate-700'
-  const wmColor = a.watermarkColor || 'text-slate-400'
-
   return (
-    <div
-      className={`kpi-card group relative min-h-[96px] overflow-hidden rounded-2xl bg-white shadow-[0_1px_0_rgba(15,23,42,0.04),0_1px_3px_rgba(15,23,42,0.07)] md:min-h-[108px] ${borderClass} ${onClick ? 'cursor-pointer' : ''}`}
-      data-aos="fade-up"
-      data-aos-delay={delay}
-      role={onClick ? 'button' : undefined}
-      tabIndex={onClick ? 0 : undefined}
+    <P2pKpiCard
+      label={item.label}
+      value={value}
+      icon={item.icon}
+      tone={item.tone || 'brand'}
+      variant={item.variant}
+      live={item.live}
+      total={item.key === 'vendors' ? value : total}
+      index={Math.round(delay / 40)}
+      selected={selected}
       onClick={onClick}
-      onKeyDown={(e) => {
-        if (!onClick) return
-        if (e.key === 'Enter' || e.key === ' ') onClick()
-      }}
-    >
-      <div className="pointer-events-none absolute inset-0 z-0 bg-white" aria-hidden />
-      <div className={`pointer-events-none absolute inset-0 z-[1] ${washClass}`} aria-hidden />
-      {radialWash ? (
-        <div className={`pointer-events-none absolute inset-0 z-[1] opacity-[0.76] ${radialWash}`} aria-hidden />
+      extra={item.segmented ? (
+        <div className="tfx-kpi-windows">
+          {['30', '60', '90'].map((w) => (
+            <button
+              key={w}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onExpiringWindowChange?.(w)
+              }}
+              className={expiringWindow === w ? 'is-on' : ''}
+            >
+              {w}d
+            </button>
+          ))}
+        </div>
       ) : null}
-
-      <KpiCardWatermark iconClass={item.icon} colorClass={wmColor} />
-
-      <div className="relative z-10 flex min-h-[96px] flex-col p-2.5 md:min-h-[108px] md:p-3">
-        <div
-          className={`relative z-10 inline-flex h-9 w-9 shrink-0 cursor-default items-center justify-center rounded-lg bg-gradient-to-br md:h-7 md:w-7 ${iconGradient} shadow-sm ring-1 ring-black/[0.06]`}
-        >
-          <i className={`${item.icon} text-lg leading-none text-white md:text-sm`} />
-        </div>
-
-        <div className="mt-2 min-w-0 flex-1">
-          <p className="text-[10px] font-semibold uppercase leading-snug tracking-[0.12em] text-slate-500 md:text-[11px] md:tracking-wide">
-            {item.label}
-          </p>
-
-          {item.segmented ? (
-            <div className="mt-1 flex h-[62px] flex-col justify-between">
-              <div className="inline-flex w-fit max-w-full overflow-hidden rounded-md border border-violet-200/60 bg-white p-0.5 shadow-sm">
-                {['30', '60', '90'].map((w) => (
-                  <button
-                    key={w}
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onExpiringWindowChange?.(w)
-                    }}
-                    className={`rounded px-1 py-0.5 text-[9px] font-semibold transition-colors md:px-1 ${
-                      expiringWindow === w ? 'bg-violet-600 text-white shadow-sm' : 'text-slate-600 hover:bg-violet-50'
-                    }`}
-                  >
-                    {w}d
-                  </button>
-                ))}
-              </div>
-              <div className="flex flex-col items-start">
-                <p className={`text-[26px] font-bold leading-none tabular-nums tracking-tight md:text-[28px] ${valueCls}`}>
-                  {displayValue}
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="mt-2 flex h-[48px] items-end md:mt-3 md:h-[54px]">
-              <p className={`text-3xl font-bold leading-none tabular-nums tracking-tight ${valueCls}`}>{displayValue}</p>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+    />
   )
 }
 
@@ -555,7 +515,7 @@ function statusPillClass(status) {
   if (s.includes('rejected')) return 'bg-red-100 text-red-700 border-red-200'
   if (s.includes('withdrawn')) return 'bg-orange-100 text-orange-700 border-orange-200'
   if (s.includes('draft')) return 'bg-gray-100 text-gray-700 border-gray-200'
-  if (s.includes('progress')) return 'bg-blue-100 text-blue-700 border-blue-200'
+  if (s.includes('progress')) return 'bg-[#e6f6f8] text-[#0f6b7a] border-[#bfe6ec]'
   return 'bg-slate-100 text-slate-700 border-slate-200'
 }
 
@@ -605,7 +565,7 @@ function statusTrackerSteps(contract) {
 function stepStatusBadgeClass(status) {
   const s = String(status || '').toLowerCase()
   if (s.includes('completed')) return 'bg-emerald-600 text-white'
-  if (s.includes('in progress')) return 'bg-blue-600 text-white'
+  if (s.includes('in progress')) return 'bg-[#17a2b4] text-white'
   if (s.includes('rejected')) return 'bg-red-600 text-white'
   if (s.includes('withdrawn')) return 'bg-orange-500 text-white'
   return 'bg-gray-500 text-white'
@@ -644,10 +604,7 @@ function flattenProgressSteps(progress) {
   return out
 }
 
-function ComplianceSummaryCustomTooltip({ active, payload, onActiveChange }) {
-  useEffect(() => {
-    onActiveChange?.(!!(active && payload && payload.length))
-  }, [active, payload, onActiveChange])
+function ComplianceSummaryCustomTooltip({ active, payload }) {
   if (!(active && payload && payload.length)) return null
   const data = payload[0]
   const name = data.name ?? data.payload?.name ?? ''
@@ -707,12 +664,193 @@ function ExpiringContractsTooltip({ active, payload }) {
     <div className="rounded-xl border border-slate-200/90 bg-white/95 px-3 py-2.5 text-sm shadow-lg shadow-slate-400/20 backdrop-blur-sm">
       <p className="font-semibold text-slate-800">{row.label}</p>
       <p className="mt-1 text-slate-600">
-        <span className="text-lg font-bold text-blue-700">{row.value}</span>
+        <span className="text-lg font-bold text-[#0f6b7a]">{row.value}</span>
         <span className="text-slate-500"> contracts</span>
       </p>
     </div>
   )
 }
+
+function ContractSlaBadge({ rowKey, slaDeadline }) {
+  const getSlaMeta = useSlaDeadlineMeta()
+  const meta = getSlaMeta(rowKey, slaDeadline)
+  return <SlaCell meta={meta} title={slaDeadlineTitle(slaDeadline)} />
+}
+
+function TypePieActiveShape(props) {
+  return <Sector {...props} outerRadius={(props.outerRadius || 92) + 8} />
+}
+
+const ContractsByTypeChart = React.memo(function ContractsByTypeChart({
+  contractTypeData,
+  activeTypeIndex,
+  onActiveTypeIndexChange,
+}) {
+  return (
+    <div className="flex min-h-[240px] flex-col items-center gap-4 lg:flex-row">
+      <div className="h-[210px] w-full max-w-[280px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={contractTypeData}
+              dataKey="value"
+              nameKey="name"
+              innerRadius={52}
+              outerRadius={92}
+              paddingAngle={1}
+              isAnimationActive={false}
+              activeIndex={activeTypeIndex}
+              activeShape={TypePieActiveShape}
+              onMouseEnter={(_, idx) => onActiveTypeIndexChange(idx)}
+              onClick={(_, idx) => onActiveTypeIndexChange(idx)}
+            >
+              {contractTypeData.map((entry) => (
+                <Cell key={entry.name} fill={entry.color} />
+              ))}
+            </Pie>
+            <Tooltip formatter={(v, n) => [v, n]} isAnimationActive={false} />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="w-full space-y-2">
+        {contractTypeData.map((row) => (
+          <div key={row.name} className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2 text-slate-700">
+              <span className="h-3 w-3 rounded-full" style={{ backgroundColor: row.color }} />
+              <span>{row.name}</span>
+            </div>
+            <span className="font-semibold text-slate-800">{row.value}</span>
+          </div>
+        ))}
+        {contractTypeData[activeTypeIndex] && (
+          <div className="mt-3 rounded-xl border border-[#bfe6ec] bg-[#e6f6f8]/60 px-3 py-2 text-xs text-slate-700">
+            <span className="font-semibold">{contractTypeData[activeTypeIndex].name}</span>
+            : {contractTypeData[activeTypeIndex].value} contracts
+          </div>
+        )}
+      </div>
+    </div>
+  )
+})
+
+const ContractsByStatusChart = React.memo(function ContractsByStatusChart({ statusData, isMdUp }) {
+  return (
+    <div className="h-[230px] md:h-[240px] w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart
+          data={statusData}
+          margin={isMdUp ? { top: 8, right: 8, left: 0, bottom: 4 } : { top: 8, right: 8, left: 8, bottom: 10 }}
+          barCategoryGap={isMdUp ? '28%' : '30%'}
+        >
+          <CartesianGrid stroke="#e5e7eb" vertical={false} />
+          <XAxis
+            dataKey="name"
+            interval={0}
+            axisLine={false}
+            tickLine={false}
+            tickMargin={6}
+            padding={isMdUp ? undefined : { left: 8, right: 16 }}
+            tickFormatter={(v) => {
+              if (isMdUp) return v
+              if (v === 'Rejected') return 'Rej'
+              if (v === 'Expired') return 'Exp'
+              return v
+            }}
+            tick={{ fill: '#374151', fontSize: isMdUp ? 12 : 10 }}
+          />
+          <YAxis
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: '#6b7280', fontSize: isMdUp ? 11 : 10 }}
+            width={isMdUp ? 34 : 30}
+          />
+          <Tooltip isAnimationActive={false} />
+          <Bar dataKey="value" radius={[8, 8, 0, 0]} maxBarSize={isMdUp ? 46 : 34} isAnimationActive={false}>
+            {statusData.map((d) => (
+              <Cell key={d.name} fill={d.color} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  )
+})
+
+const ExpiringContractsChart = React.memo(function ExpiringContractsChart({
+  expiryTrend,
+  expiryBuckets,
+  isMdUp,
+  loading,
+  hasContractData,
+}) {
+  if (!hasContractData) {
+    return (
+      <div className="flex min-h-[220px] items-center justify-center px-4 text-center text-sm text-slate-500">
+        {loading ? 'Loading contract data…' : 'No contract data available'}
+      </div>
+    )
+  }
+  return (
+    <>
+      <div className="h-[220px] md:h-[240px] w-full min-h-[190px] md:min-h-[200px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart
+            data={expiryTrend}
+            margin={isMdUp ? { top: 10, right: 20, left: 40, bottom: 34 } : { top: 8, right: 20, left: 6, bottom: 20 }}
+          >
+            <defs>
+              <linearGradient id="expiryLineStroke" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stopColor="#5cc3cf" />
+                <stop offset="100%" stopColor="#0f6b7a" />
+              </linearGradient>
+              <linearGradient id="expiryAreaFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#17a2b4" stopOpacity={0.32} />
+                <stop offset="100%" stopColor="#5fe0e6" stopOpacity={0.04} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid stroke="#e5e7eb" vertical={false} />
+            <XAxis
+              dataKey="label"
+              tick={{ fill: '#4b5563', fontSize: isMdUp ? 11 : 10 }}
+              tickFormatter={(v) => {
+                if (isMdUp) return v
+                if (v === 'Due in 30 Days') return '30D'
+                if (v === 'Due in 60 Days') return '60D'
+                if (v === 'Due in 90 Days') return '90D'
+                return 'Expired'
+              }}
+              interval={0}
+              angle={0}
+              textAnchor="middle"
+              height={isMdUp ? 42 : 30}
+              tickMargin={isMdUp ? 10 : 8}
+              scale="point"
+              padding={{ left: 0, right: 0 }}
+            />
+            <YAxis tick={{ fill: '#6b7280', fontSize: isMdUp ? 11 : 10 }} allowDecimals={false} width={isMdUp ? 36 : 28} />
+            <Tooltip content={<ExpiringContractsTooltip />} cursor={{ stroke: '#94a3b8', strokeDasharray: '4 4' }} isAnimationActive={false} />
+            <Area type="monotone" dataKey="value" stroke="none" fill="url(#expiryAreaFill)" isAnimationActive={false} />
+            <Line
+              type="monotone"
+              dataKey="value"
+              stroke="url(#expiryLineStroke)"
+              strokeWidth={3}
+              dot={{ r: 4, fill: '#0f6b7a', stroke: '#ffffff', strokeWidth: 2 }}
+              activeDot={{ r: 8, fill: '#17a2b4', stroke: '#ffffff', strokeWidth: 2 }}
+              isAnimationActive={false}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="mt-1.5 md:mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs md:text-sm text-slate-600">
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-3 rounded bg-emerald-500" /> Due in 30 Days: {expiryBuckets.next30}</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-3 rounded bg-[#17a2b4]" /> Due in 60 Days: {expiryBuckets.next60}</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-3 rounded bg-[#5cc3cf]" /> Due in 90 Days: {expiryBuckets.next90}</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-2 w-3 rounded bg-rose-500" /> Expired: {expiryBuckets.expired}</span>
+      </div>
+    </>
+  )
+})
 
 export default function VMS2_0() {
   const isMdUp = useMediaQuery('(min-width: 768px)')
@@ -721,16 +859,12 @@ export default function VMS2_0() {
   /** Stable primitives — avoid churn when Kissflow passes a new `kf` object identity each render. */
   const contractIdsSig = `${resolveKfAccountId(kfInstance)}|${resolveKfContractApplicationId(kfInstance)}|${resolveKfContractProcessId(kfInstance)}`
   const vendorAccountSig = `${resolveKfAccountId(kfInstance)}`
-  const adminPaths = useMemo(() => buildContractAdminApiPaths(kfInstance), [contractIdsSig])
-  const totalVendorsCountPath = useMemo(() => buildTotalVendorsReportCountPath(kfInstance), [contractIdsSig])
-  const vendorMasterPaths = useMemo(() => buildVendorMasterApiPaths(kfInstance), [vendorAccountSig])
 
   const kfRef = useRef(kfInstance)
   kfRef.current = kfInstance
 
   const [apiRows, setApiRows] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [watchTick, setWatchTick] = useState(0)
   /** Total vendors from Vendor Master form report count API; null = use unique vendors on contracts. */
   const [vendorTotalFromReport, setVendorTotalFromReport] = useState(null)
   const [vendorMasterRows, setVendorMasterRows] = useState([])
@@ -744,7 +878,6 @@ export default function VMS2_0() {
   const [activeTypeIndex, setActiveTypeIndex] = useState(0)
   const [vpVendorFilter, setVpVendorFilter] = useState('')
   const [latestContractsQuery, setLatestContractsQuery] = useState('')
-  const getSlaMeta = useSlaDeadlineMeta()
   const [vpSortKey, setVpSortKey] = useState('score')
   const [vpSortDir, setVpSortDir] = useState('desc')
   const [compliancePieActiveIndex, setCompliancePieActiveIndex] = useState(null)
@@ -752,39 +885,14 @@ export default function VMS2_0() {
     Compliant: false,
     'Missing Docs': false,
   }))
-  const [complianceTooltipOpen, setComplianceTooltipOpen] = useState(false)
-  const handleComplianceTooltipActive = useCallback((open) => {
-    setComplianceTooltipOpen(!!open)
-  }, [])
 
   useEffect(() => {
     AOS.init({ duration: 700, once: true, offset: 24, easing: 'ease-out-cubic' })
   }, [])
 
   useEffect(() => {
-    if (!kfInstance?.context?.watchParams) return
-    let debounceTimer = null
-    let lastSerialized = ''
-    function handle(data) {
-      let serialized = ''
-      try {
-        serialized = data && typeof data === 'object' ? JSON.stringify(data) : String(data ?? '')
-      } catch {
-        serialized = String(Date.now())
-      }
-      if (serialized === lastSerialized) return
-      lastSerialized = serialized
-      clearTimeout(debounceTimer)
-      debounceTimer = setTimeout(() => setWatchTick((n) => n + 1), 400)
-    }
-    kfInstance.context.watchParams(handle)
-    return () => {
-      clearTimeout(debounceTimer)
-    }
-  }, [kfInstance])
-
-  useEffect(() => {
-    const sdk = kfInstance
+    if (!sdkReady) return
+    const sdk = kfRef.current
     if (!sdk?.user) return
     setUser((prev) => {
       if (prev && (prev._id || prev.Name)) return prev
@@ -809,10 +917,11 @@ export default function VMS2_0() {
       '',
     )
     if (role) setRoleName(String(role).trim())
-  }, [kfInstance, sdkReady])
+  }, [sdkReady, contractIdsSig])
 
   useEffect(() => {
-    const sdk = kfInstance
+    if (!sdkReady) return
+    const sdk = kfRef.current
     if (!sdk?.user) return
     let cancelled = false
     const abc =
@@ -838,21 +947,28 @@ export default function VMS2_0() {
             : String(roleToStore || '').trim()
         if (!resolvedRole || cancelled) return
         setRoleName(resolvedRole)
-        // if (sdk.client?.showInfo) sdk.client.showInfo(resolvedRole)
       } catch (e) {
         if (!cancelled) console.warn('VMS role setup failed:', e?.message || e)
       }
     }
     run()
     return () => { cancelled = true }
-  }, [kfInstance])
+  }, [sdkReady, contractIdsSig])
+
+  const userFetchSigRef = useRef('')
 
   useEffect(() => {
-    if (!adminPaths) return
-    const sdk = kfInstance
+    if (!sdkReady) return
+    const paths = buildContractAdminApiPaths(kfRef.current)
+    if (!paths) return
+    const sdk = kfRef.current
     const userId = sdk?.user?._id || sdk?.context?.user?._id
     if (!userId) return
-    const path = `${adminPaths.userPathPrefix}${userId}${adminPaths.userPathSuffix}`
+    const fetchSig = `${paths.accountId}|${userId}`
+    if (userFetchSigRef.current === fetchSig) return
+    userFetchSigRef.current = fetchSig
+
+    const path = `${paths.userPathPrefix}${userId}${paths.userPathSuffix}`
     let cancelled = false
     async function run() {
       try {
@@ -885,28 +1001,35 @@ export default function VMS2_0() {
     }
     run()
     return () => { cancelled = true }
-  }, [adminPaths, kfInstance, sdkReady])
+  }, [sdkReady, contractIdsSig])
 
   const contractFetchSigRef = useRef('')
   const contractShowSpinnerRef = useRef(true)
+  const contractFetchInFlightRef = useRef(false)
+  const contractDataLoadedSigRef = useRef('')
 
   useEffect(() => {
-    if (!adminPaths) {
+    if (!sdkReady) return
+    const paths = buildContractAdminApiPaths(kfRef.current)
+    if (!paths) {
       setLoading(false)
       return
     }
-    const fetchSig = `${adminPaths.accountId}|${adminPaths.applicationId}|${adminPaths.processId}`
+    const fetchSig = `${paths.accountId}|${paths.applicationId}|${paths.processId}`
     if (fetchSig !== contractFetchSigRef.current) {
       contractFetchSigRef.current = fetchSig
+      contractDataLoadedSigRef.current = ''
       contractShowSpinnerRef.current = true
       setApiRows(null)
     }
+    if (contractDataLoadedSigRef.current === fetchSig || contractFetchInFlightRef.current) return
 
     let cancelled = false
+    contractFetchInFlightRef.current = true
     if (contractShowSpinnerRef.current) setLoading(true)
 
     async function fetchOnePage() {
-      const path = adminPaths.getContractItemsPath(1, 100000)
+      const path = paths.getContractItemsPath(1, 1000)
       const kf = kfRef.current
       if (kf?.api) {
         const resp = await kf.api(path, { method: 'GET', headers: { Accept: 'application/json' } })
@@ -937,12 +1060,14 @@ export default function VMS2_0() {
         } else {
           setApiRows([])
         }
+        contractDataLoadedSigRef.current = fetchSig
       } catch (e) {
         if (!cancelled) {
           console.warn('Contract dashboard fetch failed:', e?.message || e)
           setApiRows([])
         }
       } finally {
+        contractFetchInFlightRef.current = false
         if (!cancelled) {
           setLoading(false)
           contractShowSpinnerRef.current = false
@@ -950,14 +1075,24 @@ export default function VMS2_0() {
       }
     }
     run()
-    return () => { cancelled = true }
-  }, [sdkReady, watchTick, adminPaths])
+    return () => {
+      cancelled = true
+      contractFetchInFlightRef.current = false
+    }
+  }, [sdkReady, contractIdsSig])
+
+  const vendorCountLoadedSigRef = useRef('')
 
   useEffect(() => {
-    if (!totalVendorsCountPath) {
+    if (!sdkReady) return
+    const countPath = buildTotalVendorsReportCountPath(kfRef.current)
+    if (!countPath) {
       setVendorTotalFromReport(null)
       return
     }
+    if (vendorCountLoadedSigRef.current === countPath) return
+    vendorCountLoadedSigRef.current = countPath
+
     let cancelled = false
 
     async function fetchVendorCount() {
@@ -965,12 +1100,12 @@ export default function VMS2_0() {
         let response
         const kf = kfRef.current
         if (kf?.api) {
-          response = await kf.api(totalVendorsCountPath, {
+          response = await kf.api(countPath, {
             method: 'GET',
             headers: { Accept: 'application/json' },
           })
         } else {
-          const res = await fetch(getApiBase() + totalVendorsCountPath, {
+          const res = await fetch(getApiBase() + countPath, {
             method: 'GET',
             credentials: 'include',
             headers: { Accept: 'application/json' },
@@ -990,14 +1125,28 @@ export default function VMS2_0() {
     }
     fetchVendorCount()
     return () => { cancelled = true }
-  }, [sdkReady, watchTick, totalVendorsCountPath])
+  }, [sdkReady, contractIdsSig])
+
+  const vendorListLoadedSigRef = useRef('')
+  const vendorListFetchSigRef = useRef('')
+  const vendorFetchInFlightRef = useRef(false)
 
   useEffect(() => {
-    if (!vendorMasterPaths) {
+    if (!sdkReady) return
+    const paths = buildVendorMasterApiPaths(kfRef.current)
+    if (!paths) {
       setVendorMasterRows([])
       return
     }
+    const fetchSig = `${paths.accountId}|${paths.applicationId}|${paths.processId}`
+    if (fetchSig !== vendorListFetchSigRef.current) {
+      vendorListFetchSigRef.current = fetchSig
+      vendorListLoadedSigRef.current = ''
+    }
+    if (vendorListLoadedSigRef.current === fetchSig || vendorFetchInFlightRef.current) return
+
     let cancelled = false
+    vendorFetchInFlightRef.current = true
 
     function mapVendor(item) {
       if (!item || typeof item !== 'object') return null
@@ -1017,7 +1166,7 @@ export default function VMS2_0() {
 
     async function run() {
       try {
-        const path = vendorMasterPaths.getVendorItemsPath(1, 100000)
+        const path = paths.getVendorItemsPath(1, 1000)
         let response
         const kf = kfRef.current
         if (kf?.api) {
@@ -1040,16 +1189,22 @@ export default function VMS2_0() {
         const list = Array.isArray(data) ? data : []
         const mapped = list.map(mapVendor).filter(Boolean)
         setVendorMasterRows(mapped)
+        vendorListLoadedSigRef.current = fetchSig
       } catch (e) {
         if (!cancelled) {
           console.warn('Vendor master list fetch failed:', e?.message || e)
           setVendorMasterRows([])
         }
+      } finally {
+        vendorFetchInFlightRef.current = false
       }
     }
     run()
-    return () => { cancelled = true }
-  }, [sdkReady, watchTick, vendorMasterPaths])
+    return () => {
+      cancelled = true
+      vendorFetchInFlightRef.current = false
+    }
+  }, [sdkReady, vendorAccountSig])
 
   const contracts = useMemo(() => {
     if (apiRows != null) return apiRows
@@ -1077,17 +1232,17 @@ export default function VMS2_0() {
   }, [vendorPerformanceRows, vpVendorFilter, vpSortKey, vpSortDir])
   const [selectedVendorKey, setSelectedVendorKey] = useState(null)
 
-  useEffect(() => {
-    if (!filteredVendorPerformanceRows.length) return
-    setSelectedVendorKey((k) => {
-      if (k && filteredVendorPerformanceRows.some((r) => r.key === k)) return k
-      return filteredVendorPerformanceRows[0].key
-    })
-  }, [filteredVendorPerformanceRows])
+  const resolvedVendorKey = useMemo(() => {
+    if (!filteredVendorPerformanceRows.length) return null
+    if (selectedVendorKey && filteredVendorPerformanceRows.some((r) => r.key === selectedVendorKey)) {
+      return selectedVendorKey
+    }
+    return filteredVendorPerformanceRows[0].key
+  }, [filteredVendorPerformanceRows, selectedVendorKey])
 
   const selectedVendor = useMemo(
-    () => filteredVendorPerformanceRows.find((r) => r.key === selectedVendorKey) ?? null,
-    [filteredVendorPerformanceRows, selectedVendorKey],
+    () => filteredVendorPerformanceRows.find((r) => r.key === resolvedVendorKey) ?? null,
+    [filteredVendorPerformanceRows, resolvedVendorKey],
   )
   const toggleVendorSort = (key) => {
     if (vpSortKey === key) {
@@ -1191,9 +1346,9 @@ export default function VMS2_0() {
       return { doc: label, icon, iconClass, present, missing, count: missing }
     }
     return [
-      mk('NDA', 'ri-file-text-line', 'text-blue-600', (c) => c.nda),
-      mk('MSA', 'ri-file-copy-2-line', 'text-emerald-600', (c) => c.msa),
-      mk('SOW', 'ri-file-list-2-line', 'text-violet-600', (c) => c.sow),
+      mk('NDA', 'ri-lock-2-line', 'text-[#17a2b4]', (c) => c.nda),
+      mk('MSA', 'ri-stack-line', 'text-emerald-600', (c) => c.msa),
+      mk('SOW', 'ri-clipboard-line', 'text-[#17a2b4]', (c) => c.sow),
     ]
   }, [contracts])
 
@@ -1270,23 +1425,42 @@ export default function VMS2_0() {
     setExpandedContractId('')
   }, [activeKpiCardId, expiringWindow, latestContractsQuery])
 
-  const activeType = contractTypeData[activeTypeIndex] || null
-
-  const expandedContract = useMemo(() => {
-    if (!expandedContractId) return null
-    return latestContractsAll.find((row) => String(row._id || row.contractTitle) === expandedContractId) || null
-  }, [expandedContractId, latestContractsAll])
+  const handleActiveTypeIndexChange = useCallback((idx) => {
+    setActiveTypeIndex(idx)
+  }, [])
 
   useEffect(() => {
-    if (!expandedContractId || !adminPaths) {
+    setActiveTypeIndex((idx) => {
+      if (!contractTypeData.length) return 0
+      return idx >= contractTypeData.length ? 0 : idx
+    })
+  }, [contractTypeData.length])
+
+  const progressFetchKeyRef = useRef('')
+  const progressFetchInFlightRef = useRef(false)
+  const progressDataLoadedRef = useRef('')
+
+  useEffect(() => {
+    if (!expandedContractId) {
+      progressFetchKeyRef.current = ''
+      progressDataLoadedRef.current = ''
       setExpandedProgress(null)
       setExpandedProgressLoading(false)
       return
     }
-    const sdk = kfInstance
+    const paths = buildContractAdminApiPaths(kfRef.current)
+    if (!paths) return
+
+    const fetchKey = `${paths.processId}|${expandedContractId}`
+    if (progressDataLoadedRef.current === fetchKey) return
+    if (progressFetchInFlightRef.current && progressFetchKeyRef.current === fetchKey) return
+    progressFetchKeyRef.current = fetchKey
+
+    const sdk = kfRef.current
     const instanceId = encodeURIComponent(String(expandedContractId))
-    const progressPath = `/process/2/${adminPaths.accountId}/${adminPaths.processId}/${instanceId}/progress`
+    const progressPath = `/process/2/${paths.accountId}/${paths.processId}/${instanceId}/progress`
     let cancelled = false
+    progressFetchInFlightRef.current = true
     setExpandedProgressLoading(true)
 
     async function run() {
@@ -1307,19 +1481,26 @@ export default function VMS2_0() {
           if (!res.ok) throw new Error(`Progress HTTP ${res.status}`)
           response = await res.json()
         }
-        if (!cancelled) setExpandedProgress(response)
+        if (!cancelled) {
+          setExpandedProgress(response)
+          progressDataLoadedRef.current = fetchKey
+        }
       } catch (e) {
         if (!cancelled) {
           console.warn('Contract progress fetch failed:', e?.message || e)
           setExpandedProgress(null)
         }
       } finally {
+        progressFetchInFlightRef.current = false
         if (!cancelled) setExpandedProgressLoading(false)
       }
     }
     run()
-    return () => { cancelled = true }
-  }, [expandedContractId, adminPaths, kfInstance])
+    return () => {
+      cancelled = true
+      progressFetchInFlightRef.current = false
+    }
+  }, [expandedContractId, contractIdsSig])
 
   const compliance = useMemo(() => {
     const total = contracts.length
@@ -1331,7 +1512,7 @@ export default function VMS2_0() {
         compliantCount: 0,
         missingCount: 0,
         slices: [
-          { name: 'Compliant', value: 0, count: 0, color: '#2563eb', fill: gradCompliant },
+          { name: 'Compliant', value: 0, count: 0, color: '#17a2b4', fill: gradCompliant },
           { name: 'Missing Docs', value: 0, count: 0, color: '#f59e0b', fill: gradMissing },
         ],
       }
@@ -1345,7 +1526,7 @@ export default function VMS2_0() {
       compliantCount: compliantN,
       missingCount: missingN,
       slices: [
-        { name: 'Compliant', value: pct, count: compliantN, color: '#2563eb', fill: gradCompliant },
+        { name: 'Compliant', value: pct, count: compliantN, color: '#17a2b4', fill: gradCompliant },
         { name: 'Missing Docs', value: missingPct, count: missingN, color: '#f59e0b', fill: gradMissing },
       ],
     }
@@ -1387,7 +1568,7 @@ export default function VMS2_0() {
     return (
     <div className="grid grid-cols-1 xl:grid-cols-[2fr_1fr] gap-3 md:gap-4 items-stretch">
       <div className="h-full">
-        <div className="h-full bg-white border border-slate-200 rounded-xl p-3 sm:p-4 max-md:min-w-0 max-md:border-0 max-md:bg-transparent max-md:rounded-none max-md:p-0">
+        <div className={`h-full p-3 sm:p-4 max-md:min-w-0 max-md:p-0 ${vmsAccordionShellClass()}`}>
           <div
             className={
               stackNarrow
@@ -1396,8 +1577,8 @@ export default function VMS2_0() {
             }
           >
             <div className="min-w-0 w-full">
-              <p className="text-xs text-slate-500">Contract</p>
-              <p className="text-base font-semibold text-slate-900 break-words [overflow-wrap:anywhere]">{row.contractTitle || '—'}</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-[#17a2b4]/80">Contract Details</p>
+              <p className="mt-1 text-base font-semibold text-slate-900 break-words [overflow-wrap:anywhere]">{row.contractTitle || '—'}</p>
             </div>
             <span
               className={`px-2.5 py-1 text-xs font-medium rounded-full border w-fit max-w-full ${stackNarrow ? 'self-start' : 'shrink-0'} ${statusPillClass(row.status)}`}
@@ -1406,39 +1587,42 @@ export default function VMS2_0() {
             </span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4">
-            <div>
-              <p className="text-xs text-slate-500 mb-1">Vendor</p>
+            <div className="rounded-lg bg-slate-50/80 px-3 py-2.5 ring-1 ring-slate-100">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500 mb-1">Vendor</p>
               <p className="text-sm font-semibold text-slate-900 break-words">{row.vendor || '—'}</p>
             </div>
-            <div>
-              <p className="text-xs text-slate-500 mb-1">Contract Type</p>
-              <p className="text-sm font-semibold text-slate-900 break-words">{row.contractType || '—'}</p>
+            <div className="rounded-lg bg-slate-50/80 px-3 py-2.5 ring-1 ring-slate-100">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500 mb-1">Contract Type</p>
+              <p className="text-sm font-semibold text-slate-900 break-words">
+                <span className={vmsTypeChipClass()}>
+                  <i className={`${vmsContractTypeIcon(row.contractType)} text-[12px]`} aria-hidden />
+                  {row.contractType || '—'}
+                </span>
+              </p>
             </div>
-            <div>
-              <p className="text-xs text-slate-500 mb-1">Contract Value</p>
+            <div className="rounded-lg bg-slate-50/80 px-3 py-2.5 ring-1 ring-slate-100">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500 mb-1">Contract Value</p>
               <p className="text-sm font-semibold text-slate-900 break-words">{row.valueDisplay || '—'}</p>
             </div>
-            <div>
-              <p className="text-xs text-slate-500 mb-1">Created</p>
+            <div className="rounded-lg bg-slate-50/80 px-3 py-2.5 ring-1 ring-slate-100">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500 mb-1">Created</p>
               <p className="text-sm font-semibold text-slate-900 break-words">{row.createdDateDisplay || '—'}</p>
             </div>
-            <div>
-              <p className="text-xs text-slate-500 mb-1">End Date</p>
+            <div className="rounded-lg bg-slate-50/80 px-3 py-2.5 ring-1 ring-slate-100">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500 mb-1">End Date</p>
               <p className="text-sm font-semibold text-slate-900 break-words">{row.endDate || '—'}</p>
             </div>
-            <div>
-              <p className="text-xs text-slate-500 mb-1">NDA</p>
-              <p className="text-sm font-semibold text-slate-900">{isDocAvailable(row.nda) ? 'Available' : 'Missing'}</p>
-            </div>
-            <div>
-              <p className="text-xs text-slate-500 mb-1">MSA / SOW</p>
-              <p className="text-sm font-semibold text-slate-900">{`${isDocAvailable(row.msa) ? 'Available' : 'Missing'} / ${isDocAvailable(row.sow) ? 'Available' : 'Missing'}`}</p>
+            <div className="rounded-lg bg-slate-50/80 px-3 py-2.5 ring-1 ring-slate-100">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500 mb-1">Documents</p>
+              <p className="text-sm font-semibold text-slate-900">
+                NDA {isDocAvailable(row.nda) ? '✓' : '✗'} · MSA {isDocAvailable(row.msa) ? '✓' : '✗'} · SOW {isDocAvailable(row.sow) ? '✓' : '✗'}
+              </p>
             </div>
           </div>
         </div>
       </div>
 
-      <div className="h-full bg-white border border-slate-200 rounded-xl p-3 sm:p-4 w-full min-w-0 max-md:overflow-visible md:overflow-visible max-md:border-0 max-md:bg-transparent max-md:rounded-none max-md:p-0">
+      <div className={`h-full w-full min-w-0 p-3 sm:p-4 max-md:p-0 ${vmsAccordionShellClass()}`}>
         <div
           className={
             stackNarrow
@@ -1446,7 +1630,10 @@ export default function VMS2_0() {
               : 'mb-4 flex items-center justify-between gap-2'
           }
         >
-          <p className="text-sm font-semibold text-slate-800 min-w-0">Status Tracker</p>
+          <p className="text-sm font-semibold text-slate-800 min-w-0 inline-flex items-center gap-2">
+            <i className="ri-route-line text-[#17a2b4]" />
+            Workflow Progress
+          </p>
           <p className="text-xs text-slate-500 shrink-0 tabular-nums">{expandedProgressLoading && expanded ? 'Loading…' : `${progress}% complete`}</p>
         </div>
         <div className={`min-w-0 w-full ${stackNarrow ? 'space-y-2.5' : 'space-y-3'}`}>
@@ -1460,14 +1647,10 @@ export default function VMS2_0() {
             ? steps.map((step, idx) => (
                 <div
                   key={`${step.title}-${idx}`}
-                  className={`w-full min-w-0 rounded-xl border border-slate-200/70 bg-gradient-to-r from-white to-slate-50/40 px-3 py-2.5 ${
-                    idx === 0 ? 'mt-0' : 'mt-1.5'
-                  } ${
-                    idx === steps.length - 1 ? 'mb-0' : 'mb-0.5'
-                  }`}
+                  className={`w-full min-w-0 ${vmsWorkflowStepClass()} ${idx === 0 ? 'mt-0' : 'mt-2'}`}
                 >
                   <div className="flex items-start gap-2.5 min-w-0">
-                    <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-blue-500 ring-2 ring-blue-100" />
+                    <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-[#17a2b4] ring-4 ring-[#e6f6f8]" />
                     <div className="min-w-0 flex-1">
                       <p className="text-[15px] font-semibold text-slate-800 leading-snug break-words">
                         {step.title}
@@ -1483,21 +1666,22 @@ export default function VMS2_0() {
               ))
             : steps.map((step, idx) => {
                 const isLast = idx === steps.length - 1
+                const isDone = String(step.status).toLowerCase().includes('completed')
                 return (
                   <div key={`${step.title}-${idx}`} className="relative flex items-start gap-3 pl-1 min-w-0 w-full">
                     <div className="relative mt-0.5 w-5 flex justify-center shrink-0">
                       {!isLast && (
-                        <span className="absolute top-6 bottom-[-14px] left-1/2 -translate-x-1/2 border-l border-dashed border-slate-300" />
+                        <span className={`absolute top-6 bottom-[-14px] left-1/2 -translate-x-1/2 border-l-2 ${isDone ? 'border-emerald-300' : 'border-dashed border-slate-300'}`} />
                       )}
-                      <div className="relative z-10 w-5 h-5 rounded-full border border-slate-300 bg-slate-100 flex items-center justify-center">
-                        <i className="ri-arrow-right-s-line text-[10px] text-slate-500" />
+                      <div className={`relative z-10 w-5 h-5 rounded-full flex items-center justify-center ${isDone ? 'bg-emerald-500 text-white' : 'border border-slate-300 bg-white text-slate-500'}`}>
+                        {isDone ? <i className="ri-check-line text-[10px]" /> : <span className="text-[9px] font-bold">{idx + 1}</span>}
                       </div>
                     </div>
-                    <div className="min-w-0 flex-1 basis-0 rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+                    <div className={`min-w-0 flex-1 basis-0 ${vmsWorkflowStepClass()}`}>
                       <div className="flex items-start justify-between gap-3 min-w-0">
                         <p className="text-sm font-medium text-slate-700 min-w-0 break-words">{step.title}</p>
                         <span
-                          className={`shrink-0 px-2.5 py-1 rounded-md text-xs font-semibold leading-snug ${stepStatusBadgeClass(step.status)}`}
+                          className={`shrink-0 px-2.5 py-1 rounded-full text-xs font-semibold leading-snug ${stepStatusBadgeClass(step.status)}`}
                         >
                           {formatStepStatusLabel(step.status)}
                         </span>
@@ -1526,25 +1710,24 @@ export default function VMS2_0() {
   const greeting = getTimeGreeting()
 
   return (
-    <div className="bg-[#f6f8fb] p-2 md:p-4 min-w-0 overflow-x-hidden max-md:overflow-y-visible md:overflow-hidden">
-      <div className="mx-auto max-w-[1500px] min-w-0">
-        <section className="mb-3 sm:mb-4" data-aos="fade-down">
-          <div className="flex items-center gap-3 overflow-x-auto md:overflow-visible [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden whitespace-nowrap">
-            <div className="flex items-center gap-3 min-w-0 shrink-0">
-              <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-indigo-500 via-brand-blue to-brand-green flex items-center justify-center text-white text-sm font-bold shadow-sm">
-                {(firstName || 'U').charAt(0)}
-              </div>
-              <div className="min-w-0">
-                <p className="text-base sm:text-lg font-semibold tracking-tight text-gray-900 truncate">{greeting}, {firstName}</p>
-                <p className="text-xs sm:text-sm text-gray-600 truncate">
-                  Logged in as <span className="font-semibold text-[#0565FF]">{displayRole}</span>
-                </p>
-              </div>
+    <div className={vmsPageClass}>
+      <div className={vmsPageInnerClass}>
+        <section className={vmsHeaderShellClass()} data-aos="fade-down">
+          <P2pHeaderFx />
+          <div className="relative z-[1] flex items-center gap-3 min-w-0">
+            <div className={vmsAvatarClass()}>
+              {(firstName || 'U').charAt(0)}
+            </div>
+            <div className="min-w-0">
+              <p className="text-base sm:text-xl font-semibold tracking-tight text-slate-900 truncate">{greeting}, {firstName}</p>
+              <p className="text-xs sm:text-sm text-slate-500 truncate">
+                Logged in as <span className={vmsRoleAccentClass()}>{displayRole}</span>
+              </p>
             </div>
           </div>
         </section>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 gap-2.5 sm:gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 items-stretch gap-3 sm:gap-3.5">
           {VMS_KPI_SUMMARY.map((item, idx) => {
             const v = kpis[item.key]
             return (
@@ -1553,34 +1736,39 @@ export default function VMS2_0() {
                 item={item}
                 delay={idx * 40}
                 value={v}
+                total={kpis.total}
                 expiringWindow={expiringWindow}
                 onExpiringWindowChange={setExpiringWindow}
                 onClick={() => setActiveKpiCardId(item.key)}
+                selected={activeKpiCardId === item.key}
               />
             )
           })}
         </div>
 
-        <div className="mt-2.5 md:mt-3 rounded-2xl border border-blue-100/80 bg-gradient-to-r from-white/90 via-blue-50/80 to-indigo-50/80 p-2.5 md:p-4 shadow-[0_10px_26px_rgba(30,64,175,0.10)] backdrop-blur-md" data-aos="fade-up">
-          <div className="mb-2.5 md:mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <h2 className="text-base md:text-xl font-semibold text-slate-800">
-              Latest Contracts
-            </h2>
+        <VmsSection
+          className="mt-3 md:mt-4"
+          title="Latest Contracts"
+          icon="ri-file-paper-2-line"
+          accent="brand"
+          bodyClassName="p-0 md:p-0"
+          data-aos="fade-up"
+          headerRight={(
             <div className="w-full md:w-[360px] flex items-center gap-2">
-              <div className="relative flex-1 min-w-0">
-                <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg pointer-events-none" />
+              <div className="relative flex-1 min-w-0 group">
+                <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg pointer-events-none group-focus-within:text-[#17a2b4]" />
                 <input
                   type="text"
                   value={latestContractsQuery}
                   onChange={(e) => setLatestContractsQuery(e.target.value)}
                   placeholder="Search contracts"
-                  className="w-full min-h-[44px] md:min-h-[36px] pl-10 pr-10 py-2.5 md:py-2 text-sm md:text-xs bg-white/80 border border-blue-100/80 rounded-2xl focus:outline-none focus:ring-2 focus:ring-[#0565FF]/25 focus:border-[#0565FF] placeholder:text-slate-400 touch-manipulation"
+                  className={vmsSearchInputClass()}
                 />
                 {latestContractsQuery ? (
                   <button
                     type="button"
                     onClick={() => setLatestContractsQuery('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 h-9 w-9 rounded-xl text-slate-500 hover:bg-slate-100 transition-colors flex items-center justify-center"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 h-9 w-9 rounded-full text-slate-500 hover:bg-[#e6f6f8] transition-colors flex items-center justify-center"
                     aria-label="Clear latest contracts search"
                     title="Clear"
                   >
@@ -1589,18 +1777,14 @@ export default function VMS2_0() {
                 ) : null}
               </div>
               {latestContractsQuery ? (
-                <button
-                  type="button"
-                  onClick={() => setLatestContractsQuery('')}
-                  className="min-h-[44px] md:min-h-[36px] px-3 rounded-2xl border border-blue-100/80 bg-white/80 text-sm md:text-xs font-semibold text-slate-700 hover:bg-white transition-colors whitespace-nowrap"
-                >
+                <button type="button" onClick={() => setLatestContractsQuery('')} className={vmsGhostBtnClass()}>
                   Clear
                 </button>
               ) : null}
             </div>
-          </div>
-
-          <div className="md:hidden space-y-3 w-full min-w-0">
+          )}
+        >
+          <div className="md:hidden space-y-3 w-full min-w-0 p-2.5">
             {latestContractsPageRows.map((row) => {
               const key = String(row._id || row.contractTitle)
               const expanded = expandedContractId === key
@@ -1609,15 +1793,12 @@ export default function VMS2_0() {
               const doneCount = steps.filter((s) => String(s.status).toLowerCase().includes('completed')).length
               const progress = Math.round((doneCount / Math.max(1, steps.length)) * 100)
               return (
-                <article
-                  key={key}
-                  className="rounded-2xl border border-blue-100/80 bg-white/95 shadow-sm p-3 w-full min-w-0 max-w-full transition-shadow"
-                >
+                <article key={key} className={vmsMobileCardClass(expanded)}>
                   <div className="flex w-full min-w-0 items-start gap-3">
                     <button
                       type="button"
                       onClick={() => setExpandedContractId(expanded ? '' : key)}
-                      className="mt-0.5 h-10 w-10 shrink-0 flex items-center justify-center bg-blue-50 text-blue-700 rounded-xl border border-blue-200 hover:bg-blue-100 transition-colors touch-manipulation"
+                      className={vmsExpandBtnClass(expanded)}
                       aria-label={`View details for ${row.contractTitle || 'contract'}`}
                     >
                       <i className={`${expanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-lg`} />
@@ -1641,39 +1822,36 @@ export default function VMS2_0() {
 
                   <div className="mt-3.5 grid grid-cols-2 gap-x-2.5 gap-y-2.5 text-[13px] text-slate-800 w-full min-w-0">
                     <div className="min-w-0 col-span-1">
-                      <p className="text-xs font-medium text-slate-500">Value</p>
+                      <p className="text-xs font-medium text-slate-500 inline-flex items-center gap-1"><i className="ri-money-rupee-circle-line text-[#17a2b4]" aria-hidden />Value</p>
                       <p className="font-semibold tabular-nums break-words [overflow-wrap:anywhere]">{row.valueDisplay || '—'}</p>
                     </div>
                     <div className="min-w-0 col-span-1">
-                      <p className="text-xs font-medium text-slate-500">Type</p>
-                      <p className="font-semibold break-words [overflow-wrap:anywhere]">{row.contractType || '—'}</p>
-                    </div>
-                    <div className="min-w-0 col-span-1">
-                      <p className="text-xs font-medium text-slate-500">Created</p>
-                      <p className="font-semibold break-words [overflow-wrap:anywhere]">{row.createdDateDisplay || '—'}</p>
-                    </div>
-                    <div className="min-w-0 col-span-1">
-                      <p className="text-xs font-medium text-slate-500">SLA</p>
-                      <p className="font-semibold">
-                        {(() => {
-                          const k = String(row._id || row.contractTitle || '')
-                          const meta = getSlaMeta(k, row.slaDeadline)
-                          return (
-                            <span className={`inline-flex px-2.5 py-1 text-[11px] font-semibold rounded-full border ${meta.pill}`} title={slaDeadlineTitle(row.slaDeadline)}>
-                              {meta.label}
-                            </span>
-                          )
-                        })()}
+                      <p className="text-xs font-medium text-slate-500 inline-flex items-center gap-1"><i className="ri-price-tag-3-line text-[#17a2b4]" aria-hidden />Type</p>
+                      <p className="font-semibold break-words [overflow-wrap:anywhere]">
+                        <span className={vmsTypeChipClass()}>
+                          <i className={`${vmsContractTypeIcon(row.contractType)} text-[12px]`} aria-hidden />
+                          {row.contractType || '—'}
+                        </span>
                       </p>
                     </div>
                     <div className="min-w-0 col-span-1">
-                      <p className="text-xs font-medium text-slate-500">End Date</p>
+                      <p className="text-xs font-medium text-slate-500 inline-flex items-center gap-1"><i className="ri-calendar-line text-[#17a2b4]" aria-hidden />Created</p>
+                      <p className="font-semibold break-words [overflow-wrap:anywhere]">{row.createdDateDisplay || '—'}</p>
+                    </div>
+                    <div className="min-w-0 col-span-1">
+                      <p className="text-xs font-medium text-slate-500 inline-flex items-center gap-1"><i className="ri-timer-flash-line text-[#17a2b4]" aria-hidden />SLA</p>
+                      <p className="font-semibold">
+                        <ContractSlaBadge rowKey={String(row._id || row.contractTitle || '')} slaDeadline={row.slaDeadline} />
+                      </p>
+                    </div>
+                    <div className="min-w-0 col-span-1">
+                      <p className="text-xs font-medium text-slate-500 inline-flex items-center gap-1"><i className="ri-calendar-close-line text-[#17a2b4]" aria-hidden />End Date</p>
                       <p className="font-semibold break-words">{row.endDate || '—'}</p>
                     </div>
                   </div>
 
                   {expanded && (
-                    <div className="mt-3.5 pt-3.5 border-t border-slate-200/80 min-w-0">
+                    <div className="mt-3.5 pt-3.5 border-t border-[#bfe6ec]/80 min-w-0 bg-[#e6f6f8]/40 rounded-xl px-2 py-2">
                       <div className="p-0 sm:p-4 min-w-0 w-full max-md:overflow-visible md:overflow-x-hidden max-md:bg-transparent max-md:border-0 max-md:shadow-none">
                         {renderContractValueExpansionGrid(row, expanded, steps, progress)}
                       </div>
@@ -1687,18 +1865,18 @@ export default function VMS2_0() {
           <div className="hidden md:block overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             <table className="w-full text-left table-auto min-w-[980px]">
               <thead>
-                <tr className="border-b border-blue-100/80 bg-gradient-to-r from-white/90 via-blue-50/80 to-indigo-50/80 text-sm text-slate-600">
-                  <th className="rounded-l px-3 py-2 w-[220px]">Contract</th>
-                  <th className="px-3 py-2 w-[130px]">Vendor</th>
-                  <th className="px-3 py-2 w-[150px]">Value</th>
-                  <th className="px-3 py-2 w-[120px]">Type</th>
-                  <th className="px-3 py-2 w-[120px]">Status</th>
-                  <th className="px-3 py-2 w-[150px]">Created</th>
-                  <th className="px-3 py-2 w-[120px]">SLA</th>
-                  <th className="rounded-r px-3 py-2 w-[120px]">End Date</th>
+                <tr className={vmsTableHeadClass()}>
+                  <th className={`${vmsTableHeadCellClass()} w-[240px]`}><span className="inline-flex items-center gap-1.5"><i className={`ri-file-paper-2-line ${vmsColIconClass()}`} aria-hidden />Contract</span></th>
+                  <th className={`${vmsTableHeadCellClass()} w-[140px]`}><span className="inline-flex items-center gap-1.5"><i className={`ri-building-2-line ${vmsColIconClass()}`} aria-hidden />Vendor</span></th>
+                  <th className={`${vmsTableHeadCellClass()} w-[130px]`}><span className="inline-flex items-center gap-1.5"><i className={`ri-money-rupee-circle-line ${vmsColIconClass()}`} aria-hidden />Value</span></th>
+                  <th className={`${vmsTableHeadCellClass()} w-[110px]`}><span className="inline-flex items-center gap-1.5"><i className={`ri-price-tag-3-line ${vmsColIconClass()}`} aria-hidden />Type</span></th>
+                  <th className={`${vmsTableHeadCellClass()} w-[120px]`}><span className="inline-flex items-center gap-1.5"><i className={`ri-flag-line ${vmsColIconClass()}`} aria-hidden />Status</span></th>
+                  <th className={`${vmsTableHeadCellClass()} w-[150px]`}><span className="inline-flex items-center gap-1.5"><i className={`ri-calendar-line ${vmsColIconClass()}`} aria-hidden />Created</span></th>
+                  <th className={`${vmsTableHeadCellClass()} w-[120px]`}><span className="inline-flex items-center gap-1.5"><i className={`ri-timer-flash-line ${vmsColIconClass()}`} aria-hidden />SLA</span></th>
+                  <th className={`${vmsTableHeadCellClass()} w-[120px]`}><span className="inline-flex items-center gap-1.5"><i className={`ri-calendar-close-line ${vmsColIconClass()}`} aria-hidden />End Date</span></th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-blue-100/80 text-sm">
+              <tbody className={`${vmsTableDivideClass()} bg-white text-sm`}>
                 {latestContractsPageRows.map((row) => {
                   const key = String(row._id || row.contractTitle)
                   const expanded = expandedContractId === key
@@ -1708,52 +1886,46 @@ export default function VMS2_0() {
                   const progress = Math.round((doneCount / Math.max(1, steps.length)) * 100)
                   return (
                     <React.Fragment key={key}>
-                      <tr className="transition-colors">
-                        <td className="px-3 py-2 align-top">
-                          <div className="flex items-center gap-2 min-w-0">
+                      <tr className={vmsTableRowClass(expanded)}>
+                        <td className="px-4 py-3 align-middle">
+                          <div className="flex items-center gap-2.5 min-w-0">
                             <button
                               type="button"
                               onClick={() => setExpandedContractId(expanded ? '' : key)}
-                              className="w-8 h-8 flex items-center justify-center bg-blue-50 text-blue-700 rounded-lg border border-blue-200 hover:bg-blue-100 transition-colors"
+                              className={vmsExpandBtnClass(expanded, true)}
                               aria-label={`View details for ${row.contractTitle || 'contract'}`}
                             >
                               <i className={`${expanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-lg`} />
                             </button>
                             <div className="min-w-0">
                               <p className="text-sm font-semibold text-slate-900 truncate">{row.contractTitle || '—'}</p>
-                              <p className="text-xs text-slate-500 truncate">{row.vendor || '—'}</p>
+                              <p className="mt-0.5 text-xs text-slate-500 truncate">{row.vendor || '—'}</p>
                             </div>
                           </div>
                         </td>
-                        <td className="px-3 py-2 text-slate-700 break-words">{row.vendor}</td>
-                        <td className="px-3 py-2 text-slate-700 break-words">{row.valueDisplay}</td>
-                        <td className="px-3 py-2 text-slate-700 break-words">{row.contractType}</td>
-                        <td className="px-3 py-2 break-words">
-                          <span className={`px-2 py-0.5 text-[11px] font-medium rounded-full border ${statusPillClass(row.status)}`}>
+                        <td className="px-4 py-3 text-slate-700 truncate">{row.vendor || '—'}</td>
+                        <td className="px-4 py-3 font-semibold tabular-nums text-slate-900 whitespace-nowrap">{row.valueDisplay}</td>
+                        <td className="px-4 py-3">
+                          <span className={vmsTypeChipClass()}>
+                            <i className={`${vmsContractTypeIcon(row.contractType)} text-[12px]`} aria-hidden />
+                            {row.contractType || '—'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex px-2.5 py-0.5 text-[11px] font-medium rounded-full border ${statusPillClass(row.status)}`}>
                             {row.status || 'In Progress'}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-slate-700 break-words whitespace-nowrap">{row.createdDateDisplay || '—'}</td>
-                        <td className="px-3 py-2 align-top whitespace-nowrap">
-                          {(() => {
-                            const k = String(row._id || row.contractTitle || '')
-                            const meta = getSlaMeta(k, row.slaDeadline)
-                            return (
-                              <span
-                                className={`inline-flex px-2.5 py-1 text-[11px] font-semibold rounded-full border ${meta.pill}`}
-                                title={slaDeadlineTitle(row.slaDeadline)}
-                              >
-                                {meta.label}
-                              </span>
-                            )
-                          })()}
+                        <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{row.createdDateDisplay || '—'}</td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <ContractSlaBadge rowKey={String(row._id || row.contractTitle || '')} slaDeadline={row.slaDeadline} />
                         </td>
-                        <td className="px-3 py-2 text-slate-700 break-words">{row.endDate}</td>
+                        <td className="px-4 py-3 text-slate-700 whitespace-nowrap">{row.endDate}</td>
                       </tr>
                       {expanded && (
-                        <tr>
+                        <tr className="bg-[#e6f6f8]/70">
                           <td colSpan={8} className="p-0">
-                            <div className="px-3 sm:px-4 py-3 sm:py-4">
+                            <div className="px-4 py-3 border-t border-[#bfe6ec]/70">
                               {renderContractValueExpansionGrid(row, expanded, steps, progress)}
                             </div>
                           </td>
@@ -1767,7 +1939,7 @@ export default function VMS2_0() {
           </div>
 
           {/* Pagination for Latest Contracts */}
-          <div className="mt-3 border-t border-blue-100/80 pt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
+          <div className={vmsPaginationBarClass()}>
             <p className="text-xs text-slate-500">
               Showing{' '}
               <span className="font-semibold text-slate-700">
@@ -1784,7 +1956,7 @@ export default function VMS2_0() {
                 type="button"
                 onClick={() => { setLatestContractsPage((p) => Math.max(1, p - 1)); setExpandedContractId('') }}
                 disabled={latestContractsPageSafe <= 1}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-blue-100 bg-white text-slate-600 disabled:opacity-40 hover:bg-blue-50 transition-colors"
+                className={vmsPaginationBtnClass(false)}
                 aria-label="Previous page"
               >
                 <i className="ri-arrow-left-s-line" />
@@ -1804,9 +1976,7 @@ export default function VMS2_0() {
                     key={pageNum}
                     type="button"
                     onClick={() => { setLatestContractsPage(pageNum); setExpandedContractId('') }}
-                    className={`h-8 w-8 rounded-lg text-xs font-semibold transition-colors ${
-                      active ? 'bg-[#0565FF] text-white' : 'border border-blue-100 bg-white text-slate-600 hover:bg-blue-50'
-                    }`}
+                    className={vmsPaginationBtnClass(active)}
                     aria-label={`Page ${pageNum}`}
                   >
                     {pageNum}
@@ -1820,11 +1990,7 @@ export default function VMS2_0() {
                 <button
                   type="button"
                   onClick={() => { setLatestContractsPage(latestContractsTotalPages); setExpandedContractId('') }}
-                  className={`h-8 w-8 rounded-lg text-xs font-semibold transition-colors ${
-                    latestContractsPageSafe === latestContractsTotalPages
-                      ? 'bg-[#0565FF] text-white'
-                      : 'border border-blue-100 bg-white text-slate-600 hover:bg-blue-50'
-                  }`}
+                  className={vmsPaginationBtnClass(latestContractsPageSafe === latestContractsTotalPages)}
                   aria-label={`Page ${latestContractsTotalPages}`}
                 >
                   {latestContractsTotalPages}
@@ -1834,38 +2000,41 @@ export default function VMS2_0() {
                 type="button"
                 onClick={() => { setLatestContractsPage((p) => Math.min(latestContractsTotalPages, p + 1)); setExpandedContractId('') }}
                 disabled={latestContractsPageSafe >= latestContractsTotalPages}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-blue-100 bg-white text-slate-600 disabled:opacity-40 hover:bg-blue-50 transition-colors"
+                className={vmsPaginationBtnClass(false)}
                 aria-label="Next page"
               >
                 <i className="ri-arrow-right-s-line" />
               </button>
             </div>
           </div>
-        </div>
+        </VmsSection>
 
+        {/* Charts, vendor performance, and analytics — re-enable when needed */}
+        {false && (
+        <>
         <div className="mt-5" data-aos="fade-up">
-          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div className={`mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between ${vmsHeaderShellClass()} !mb-3`}>
             <div>
-              <h2 className="text-xl font-semibold text-slate-800">Vendor Performance</h2>
-              <p className="mt-0.5 text-sm text-slate-500">
+              <h2 className={vmsSectionTitleClass()}>Vendor Performance</h2>
+              <p className={vmsSectionSubtitleClass()}>
                 Admin · Monitoring Mode ·{' '}
                 {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
               </p>
             </div>
-            <span className="inline-flex w-fit items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-800">
+            <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-[#bfe6ec] bg-[#e6f6f8] px-3 py-1.5 text-xs font-semibold text-[#0f6b7a]">
               <i className="ri-pulse-line" aria-hidden />
               Ratings from contract fields (TAT · PM · Service · Response)
             </span>
           </div>
 
           <div className="grid grid-cols-1 gap-3 xl:grid-cols-12">
-            <div className="rounded-2xl border border-blue-100/80 bg-gradient-to-r from-white/90 via-blue-50/80 to-indigo-50/80 p-0 shadow-[0_10px_26px_rgba(30,64,175,0.10)] backdrop-blur-md xl:col-span-5 md:min-h-0 xl:h-[430px] flex flex-col">
-              <div className="grid grid-cols-1 gap-2 border-b border-blue-100/80 bg-white/60 p-2">
+            <div className={`${vmsSectionShellClass('xl:col-span-5 md:min-h-0 xl:h-[430px] flex flex-col')} p-0`}>
+              <div className={`grid grid-cols-1 gap-2 border-b border-slate-100/90 ${vmsSectionHeaderClass('slate')} !py-2.5`}>
                 <input
                   value={vpVendorFilter}
                   onChange={(e) => setVpVendorFilter(e.target.value)}
                   placeholder="Filter vendor"
-                  className="h-10 md:h-8 min-h-[44px] md:min-h-0 rounded-md border border-blue-100 bg-white px-3 md:px-2 text-sm md:text-xs text-slate-700 outline-none touch-manipulation"
+                  className={`${vmsSearchInputClass()} !min-h-[38px] !rounded-xl !pl-3`}
                 />
               </div>
 
@@ -1877,11 +2046,7 @@ export default function VMS2_0() {
                       key={row.key}
                       type="button"
                       onClick={() => setSelectedVendorKey(row.key)}
-                    className={`w-full text-left rounded-2xl border p-3 transition-colors touch-manipulation min-w-0 ${
-                        sel
-                          ? 'border-brand-blue bg-blue-100/70 ring-1 ring-brand-blue/25 shadow-sm'
-                          : 'border-blue-100/80 bg-white/90 hover:bg-white'
-                      }`}
+                      className={vmsVendorMobileCardClass(sel)}
                     >
                       <div className="flex flex-row items-start justify-between gap-3 w-full min-w-0">
                         <div className="min-w-0 flex-1">
@@ -1895,7 +2060,7 @@ export default function VMS2_0() {
                         <VendorScoreRing score={row.score} />
                       </div>
                       <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <span className="inline-flex rounded-full bg-blue-100 px-2.5 py-1 text-xs font-semibold text-blue-800">
+                        <span className="inline-flex rounded-full bg-[#e6f6f8] px-2.5 py-1 text-xs font-semibold text-[#0f6b7a]">
                           {row.category}
                         </span>
                         <span className={`text-xs font-semibold ${trendArrowClass(row.trend)}`}>
@@ -1919,7 +2084,7 @@ export default function VMS2_0() {
               <div className="hidden md:block flex-1 min-h-0 overflow-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                 <table className="w-full min-w-[520px] text-left text-sm">
                   <thead>
-                    <tr className="border-b border-blue-100/80 bg-gradient-to-r from-white/90 via-blue-50/80 to-indigo-50/80 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <tr className={vmsTableHeadClass()}>
                       <th className="px-3 py-2.5">
                         <button type="button" onClick={() => toggleVendorSort('vendorName')} className="inline-flex items-center gap-1">
                           Vendor <i className={`ri-arrow-${vpSortKey === 'vendorName' && vpSortDir === 'asc' ? 'up' : 'down'}-s-line`} />
@@ -1949,7 +2114,7 @@ export default function VMS2_0() {
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-blue-100/80">
+                  <tbody className={vmsTableDivideClass()}>
                     {filteredVendorPerformanceRows.map((row) => {
                       const sel = selectedVendorKey === row.key
                       return (
@@ -1964,7 +2129,7 @@ export default function VMS2_0() {
                               setSelectedVendorKey(row.key)
                             }
                           }}
-                          className={`cursor-pointer transition-colors ${sel ? 'bg-blue-100/70' : 'hover:bg-white/60'}`}
+                          className={vmsVendorRowClass(sel)}
                         >
                           <td className="px-3 py-3">
                             <div className="font-medium text-slate-800">{row.vendorName}</div>
@@ -1973,7 +2138,7 @@ export default function VMS2_0() {
                             </div>
                           </td>
                           <td className="px-3 py-3">
-                            <span className="inline-flex rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800">
+                            <span className="inline-flex rounded-full bg-[#e6f6f8] px-2 py-0.5 text-xs font-medium text-[#0f6b7a]">
                               {row.category}
                             </span>
                           </td>
@@ -2004,19 +2169,20 @@ export default function VMS2_0() {
               )}
             </div>
 
-            <div className="rounded-2xl border border-blue-100/80 bg-gradient-to-r from-white/90 via-blue-50/80 to-indigo-50/80 p-4 shadow-[0_10px_26px_rgba(30,64,175,0.10)] backdrop-blur-md xl:col-span-7 md:min-h-0 xl:h-[430px] flex items-center max-md:py-5">
+            <div className={`${vmsSectionShellClass('xl:col-span-7 md:min-h-0 xl:h-[430px] flex items-center max-md:py-5')} p-4 overflow-hidden`}>
               {selectedVendor ? (
-                <div className="w-full">
+                <div key={resolvedVendorKey} className="w-full vms-vendor-panel-in">
                   <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
-                      <h3 className="text-lg font-bold uppercase tracking-tight text-slate-800">{selectedVendor.vendorName}</h3>
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-[#17a2b4]/80">Selected Vendor</p>
+                      <h3 className="mt-1 text-lg font-bold tracking-tight text-slate-800 transition-colors duration-300">{selectedVendor.vendorName}</h3>
                       <p className="text-xs text-slate-500">Averaged from {selectedVendor.contractCount} contract(s)</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                        <span className="hidden md:inline-flex rounded-lg bg-violet-600 px-2.5 py-1 text-xs font-semibold text-white">
-                        + AI Insight
+                        <span className="hidden md:inline-flex rounded-full bg-gradient-to-r from-[#17a2b4] to-[#0f6b7a] px-2.5 py-1 text-xs font-semibold text-white shadow-sm">
+                        AI Insight
                       </span>
-                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${riskPillClass(selectedVendor.risk)}`}>
+                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors duration-300 ${riskPillClass(selectedVendor.risk)}`}>
                         {selectedVendor.risk}
                       </span>
                     </div>
@@ -2033,6 +2199,7 @@ export default function VMS2_0() {
                       ) : (
                         <ResponsiveContainer width="100%" height="100%" className={!isMdUp ? '[&_.recharts-surface]:overflow-visible' : undefined}>
                           <RadarChart
+                            key={resolvedVendorKey}
                             cx="50%"
                             cy="50%"
                             outerRadius={isMdUp ? '78%' : '50%'}
@@ -2046,19 +2213,30 @@ export default function VMS2_0() {
                               tickLine={isMdUp}
                             />
                             <PolarRadiusAxis angle={40} domain={[0, 100]} tick={{ fill: '#94a3b8', fontSize: isMdUp ? 10 : 9 }} />
-                            <Radar name="Score" dataKey="score" stroke="#2563eb" fill="#3b82f6" fillOpacity={0.45} strokeWidth={2} connectNulls={false} />
-                            <Tooltip formatter={(v) => [`${v}%`, 'Score']} />
+                            <Radar
+                              name="Score"
+                              dataKey="score"
+                              stroke="#17a2b4"
+                              fill="#17a2b4"
+                              fillOpacity={0.45}
+                              strokeWidth={2}
+                              connectNulls={false}
+                              isAnimationActive
+                              animationDuration={380}
+                              animationEasing="ease-out"
+                            />
+                            <Tooltip formatter={(v) => [`${v}%`, 'Score']} isAnimationActive={false} />
                           </RadarChart>
                         </ResponsiveContainer>
                       )}
                     </div>
                     <div className="grid grid-cols-2 gap-1.5 md:gap-2">
-                      <VendorPerfMetricCard label="TAT Adherence" value={selectedVendor.tat} />
+                      <VendorPerfMetricCard key={`tat-${resolvedVendorKey}`} label="TAT Adherence" value={selectedVendor.tat} />
                       {String(selectedVendor.category || '').trim().toLowerCase() === 'amc' && (
-                        <VendorPerfMetricCard label="PM Adherence" value={selectedVendor.pm} />
+                        <VendorPerfMetricCard key={`pm-${resolvedVendorKey}`} label="PM Adherence" value={selectedVendor.pm} />
                       )}
-                      <VendorPerfMetricCard label="Service Rate" value={selectedVendor.service} />
-                      <VendorPerfMetricCard label="Response Rate" value={selectedVendor.response} />
+                      <VendorPerfMetricCard key={`svc-${resolvedVendorKey}`} label="Service Rate" value={selectedVendor.service} />
+                      <VendorPerfMetricCard key={`rsp-${resolvedVendorKey}`} label="Response Rate" value={selectedVendor.response} />
                     </div>
                   </div>
 
@@ -2071,94 +2249,34 @@ export default function VMS2_0() {
         </div>
 
         <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-12">
-          <div className="rounded-2xl border border-blue-100/80 bg-gradient-to-r from-white/90 via-blue-50/80 to-indigo-50/80 p-4 shadow-[0_10px_26px_rgba(30,64,175,0.10)] backdrop-blur-md xl:col-span-7" data-aos="zoom-in">
-            <h2 className="mb-3 text-lg md:text-xl font-semibold text-slate-800">Contracts by Type</h2>
-            <div className="flex min-h-[240px] flex-col items-center gap-4 lg:flex-row">
-              <div className="h-[210px] w-full max-w-[280px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={contractTypeData}
-                      dataKey="value"
-                      nameKey="name"
-                      innerRadius={52}
-                      outerRadius={92}
-                      paddingAngle={1}
-                      activeIndex={activeTypeIndex}
-                      activeShape={(props) => <Sector {...props} outerRadius={(props.outerRadius || 92) + 8} />}
-                      onMouseEnter={(_, idx) => setActiveTypeIndex(idx)}
-                      onClick={(_, idx) => setActiveTypeIndex(idx)}
-                    >
-                      {contractTypeData.map((entry) => (
-                        <Cell key={entry.name} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(v, n) => [v, n]} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="w-full space-y-2">
-                {contractTypeData.map((row) => (
-                  <div key={row.name} className="flex items-center justify-between text-sm">
-                    <div className="flex items-center gap-2 text-slate-700">
-                      <span className="h-3 w-3 rounded-full" style={{ backgroundColor: row.color }} />
-                      <span>{row.name}</span>
-                    </div>
-                    <span className="font-semibold text-slate-800">{row.value}</span>
-                  </div>
-                ))}
-                {activeType && (
-                  <div className="mt-3 rounded-lg border border-blue-100 bg-white/80 px-3 py-2 text-xs text-slate-700">
-                    <span className="font-semibold">{activeType.name}</span>: {activeType.value} contracts
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+          <VmsSection
+            className="xl:col-span-7"
+            title="Contracts by Type"
+            icon="ri-pie-chart-2-line"
+            accent="brandAlt"
+            bodyClassName="p-4"
+            data-aos="zoom-in"
+          >
+            <ContractsByTypeChart
+              contractTypeData={contractTypeData}
+              activeTypeIndex={activeTypeIndex}
+              onActiveTypeIndexChange={handleActiveTypeIndexChange}
+            />
+          </VmsSection>
 
-          <div className="rounded-2xl border border-blue-100/80 bg-gradient-to-r from-white/90 via-blue-50/80 to-indigo-50/80 p-3 md:p-4 shadow-[0_10px_26px_rgba(30,64,175,0.10)] backdrop-blur-md xl:col-span-5" data-aos="zoom-in" data-aos-delay="80">
-            <h2 className="mb-2.5 md:mb-3 text-base md:text-xl font-semibold text-slate-800">Contracts by Status</h2>
-            <div className="h-[230px] md:h-[240px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={statusData}
-                  margin={isMdUp ? { top: 8, right: 8, left: 0, bottom: 4 } : { top: 8, right: 8, left: 8, bottom: 10 }}
-                  barCategoryGap={isMdUp ? '28%' : '30%'}
-                >
-                  <CartesianGrid stroke="#e5e7eb" vertical={false} />
-                  <XAxis
-                    dataKey="name"
-                    interval={0}
-                    axisLine={false}
-                    tickLine={false}
-                    tickMargin={6}
-                    padding={isMdUp ? undefined : { left: 8, right: 16 }}
-                    tickFormatter={(v) => {
-                      if (isMdUp) return v
-                      if (v === 'Rejected') return 'Rej'
-                      if (v === 'Expired') return 'Exp'
-                      return v
-                    }}
-                    tick={{ fill: '#374151', fontSize: isMdUp ? 12 : 10 }}
-                  />
-                  <YAxis
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: '#6b7280', fontSize: isMdUp ? 11 : 10 }}
-                    width={isMdUp ? 34 : 30}
-                  />
-                  <Tooltip />
-                  <Bar dataKey="value" radius={[8, 8, 0, 0]} maxBarSize={isMdUp ? 46 : 34}>
-                    {statusData.map((d) => (
-                      <Cell key={d.name} fill={d.color} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+          <VmsSection
+            className="xl:col-span-5"
+            title="Contracts by Status"
+            icon="ri-bar-chart-grouped-line"
+            accent="brand"
+            bodyClassName="p-3 md:p-4"
+            data-aos="zoom-in"
+            data-aos-delay="80"
+          >
+            <ContractsByStatusChart statusData={statusData} isMdUp={isMdUp} />
+          </VmsSection>
 
-          {/* <div className="rounded-2xl border border-blue-100/80 bg-gradient-to-r from-white/90 via-blue-50/80 to-indigo-50/80 p-3 md:p-4 shadow-[0_10px_26px_rgba(30,64,175,0.10)] backdrop-blur-md xl:col-span-3" data-aos="zoom-in" data-aos-delay="140">
+          {/* <div className="rounded-2xl border border-[#bfe6ec]/80 bg-gradient-to-r from-white/90 via-[#e6f6f8]/80 to-[#f3f8fb]/80 p-3 md:p-4 shadow-[0_10px_26px_rgba(15,107,122,0.10)] backdrop-blur-md xl:col-span-3" data-aos="zoom-in" data-aos-delay="140">
             <h2 className="mb-2.5 md:mb-3 text-base md:text-xl font-semibold text-slate-800">Document Availability</h2>
             <div className="rounded-md bg-slate-100 px-3 py-2 text-slate-500">
               <div className="grid grid-cols-[1.2fr_.8fr_.8fr_.8fr] gap-1 text-sm font-medium">
@@ -2187,85 +2305,26 @@ export default function VMS2_0() {
           </div> */}
         </div>
 
-        <div className="mt-3">
-          <div className="rounded-2xl border border-blue-100/80 bg-gradient-to-r from-white/90 via-blue-50/80 to-indigo-50/80 p-3 md:p-4 shadow-[0_10px_26px_rgba(30,64,175,0.10)] backdrop-blur-md" data-aos="fade-up">
-            <h2 className="mb-2.5 md:mb-3 text-base md:text-xl font-semibold text-slate-800">Expiring Contracts</h2>
-            {!hasContractData ? (
-              <div className="flex min-h-[220px] items-center justify-center px-4 text-center text-sm text-slate-500">
-                {loading ? 'Loading contract data…' : 'No contract data available'}
-              </div>
-            ) : (
-              <>
-                <div className="h-[220px] md:h-[240px] w-full min-h-[190px] md:min-h-[200px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart
-                      data={expiryTrend}
-                      margin={isMdUp ? { top: 10, right: 20, left: 40, bottom: 34 } : { top: 8, right: 20, left: 6, bottom: 20 }}
-                    >
-                      <defs>
-                        <linearGradient id="expiryLineStroke" x1="0" y1="0" x2="1" y2="0">
-                          <stop offset="0%" stopColor="#93c5fd" />
-                          <stop offset="100%" stopColor="#1d4ed8" />
-                        </linearGradient>
-                        <linearGradient id="expiryAreaFill" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.32} />
-                          <stop offset="100%" stopColor="#60a5fa" stopOpacity={0.04} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid stroke="#e5e7eb" vertical={false} />
-                      <XAxis
-                        dataKey="label"
-                        tick={{ fill: '#4b5563', fontSize: isMdUp ? 11 : 10 }}
-                        tickFormatter={(v) => {
-                          if (isMdUp) return v
-                          if (v === 'Due in 30 Days') return '30D'
-                          if (v === 'Due in 60 Days') return '60D'
-                          if (v === 'Due in 90 Days') return '90D'
-                          return 'Expired'
-                        }}
-                        interval={0}
-                        angle={0}
-                        textAnchor="middle"
-                        height={isMdUp ? 42 : 30}
-                        tickMargin={isMdUp ? 10 : 8}
-                        // Remove band padding so the first point starts at the axis (like "Latest Contracts" tables).
-                        scale="point"
-                        padding={{ left: 0, right: 0 }}
-                      />
-                      <YAxis tick={{ fill: '#6b7280', fontSize: isMdUp ? 11 : 10 }} allowDecimals={false} width={isMdUp ? 36 : 28} />
-                      <Tooltip content={<ExpiringContractsTooltip />} cursor={{ stroke: '#94a3b8', strokeDasharray: '4 4' }} />
-                      <Area
-                        type="monotone"
-                        dataKey="value"
-                        stroke="none"
-                        fill="url(#expiryAreaFill)"
-                        isAnimationActive
-                        animationDuration={800}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="value"
-                        stroke="url(#expiryLineStroke)"
-                        strokeWidth={3}
-                        dot={{ r: 4, fill: '#1d4ed8', stroke: '#ffffff', strokeWidth: 2 }}
-                        activeDot={{ r: 8, fill: '#2563eb', stroke: '#ffffff', strokeWidth: 2 }}
-                        isAnimationActive
-                        animationDuration={800}
-                      />
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="mt-1.5 md:mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs md:text-sm text-slate-600">
-                  <span className="inline-flex items-center gap-1.5"><span className="h-2 w-3 rounded bg-emerald-500" /> Due in 30 Days: {expiryBuckets.next30}</span>
-                  <span className="inline-flex items-center gap-1.5"><span className="h-2 w-3 rounded bg-cyan-500" /> Due in 60 Days: {expiryBuckets.next60}</span>
-                  <span className="inline-flex items-center gap-1.5"><span className="h-2 w-3 rounded bg-blue-500" /> Due in 90 Days: {expiryBuckets.next90}</span>
-                  <span className="inline-flex items-center gap-1.5"><span className="h-2 w-3 rounded bg-rose-500" /> Expired: {expiryBuckets.expired}</span>
-                </div>
-              </>
-            )}
-          </div>
+        <VmsSection
+          className="mt-3"
+          title="Expiring Contracts"
+          icon="ri-calendar-event-line"
+          accent="rose"
+          bodyClassName="p-3 md:p-4"
+          data-aos="fade-up"
+        >
+          <ExpiringContractsChart
+            expiryTrend={expiryTrend}
+            expiryBuckets={expiryBuckets}
+            isMdUp={isMdUp}
+            loading={loading}
+            hasContractData={hasContractData}
+          />
+        </VmsSection>
+        </>
+        )}
 
-          {/* <div className="rounded-2xl border border-blue-100/80 bg-gradient-to-r from-white/90 via-blue-50/80 to-indigo-50/80 p-3 md:p-4 shadow-[0_10px_26px_rgba(30,64,175,0.10)] backdrop-blur-md xl:col-span-5" data-aos="fade-up" data-aos-delay="80">
+          {/* <div className="rounded-2xl border border-[#bfe6ec]/80 bg-gradient-to-r from-white/90 via-[#e6f6f8]/80 to-[#f3f8fb]/80 p-3 md:p-4 shadow-[0_10px_26px_rgba(15,107,122,0.10)] backdrop-blur-md xl:col-span-5" data-aos="fade-up" data-aos-delay="80">
             <h2 className="mb-2.5 md:mb-3 text-base md:text-xl font-semibold text-slate-800">Compliance Summary</h2>
             {!hasContractData ? (
               <div className="flex min-h-[220px] items-center justify-center px-4 text-center text-sm text-slate-500">
@@ -2285,8 +2344,8 @@ export default function VMS2_0() {
                       <PieChart>
                         <defs>
                           <linearGradient id="complianceGradCompliant" x1="0" y1="0" x2="1" y2="1">
-                            <stop offset="0%" stopColor="#2563eb" />
-                            <stop offset="100%" stopColor="#1d4ed8" />
+                            <stop offset="0%" stopColor="#17a2b4" />
+                            <stop offset="100%" stopColor="#0f6b7a" />
                           </linearGradient>
                           <linearGradient id="complianceGradMissing" x1="0" y1="0" x2="1" y2="1">
                             <stop offset="0%" stopColor="#f59e0b" />
@@ -2323,20 +2382,14 @@ export default function VMS2_0() {
                           ))}
                         </Pie>
                         <Tooltip
-                          content={(tooltipProps) => (
-                            <ComplianceSummaryCustomTooltip {...tooltipProps} onActiveChange={handleComplianceTooltipActive} />
-                          )}
+                          content={<ComplianceSummaryCustomTooltip />}
                           wrapperStyle={{ zIndex: 1000 }}
                           offset={28}
                           allowEscapeViewBox={{ x: true, y: true }}
                         />
                       </PieChart>
                     </ResponsiveContainer>
-                    <div
-                      className={`pointer-events-none absolute inset-0 flex items-center justify-center transition-opacity duration-200 ${
-                        complianceTooltipOpen ? 'opacity-40' : 'opacity-100'
-                      }`}
-                    >
+                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                       <div className="px-2 text-center">
                         <div
                           className="text-[30px] font-semibold leading-none text-slate-800 transition-all duration-500 ease-out sm:text-[34px]"
@@ -2372,7 +2425,7 @@ export default function VMS2_0() {
                           <span className={`inline-flex min-w-0 items-center gap-2 text-slate-700 ${hidden ? 'line-through' : ''}`}>
                             <span
                               className="h-3 w-3 shrink-0 rounded-full ring-2 ring-white/80 shadow-sm"
-                              style={{ background: c.name === 'Compliant' ? 'linear-gradient(135deg,#2563eb,#1d4ed8)' : 'linear-gradient(135deg,#f59e0b,#d97706)' }}
+                              style={{ background: c.name === 'Compliant' ? 'linear-gradient(135deg,#17a2b4,#0f6b7a)' : 'linear-gradient(135deg,#f59e0b,#d97706)' }}
                             />
                             <span className="truncate font-medium">{c.name}</span>
                           </span>
@@ -2391,7 +2444,6 @@ export default function VMS2_0() {
               </>
             )}
           </div> */}
-        </div>
       </div>
     </div>
   )

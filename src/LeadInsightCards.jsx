@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
+import { PT_KPI_THEME, ptKpiCardClass } from './leadPtTheme.js'
 
-export default function LeadInsightCards({ leads, onCardClick, activeCardId }) {
+export default function LeadInsightCards({ leads, onCardClick, activeCardId, theme = 'classic' }) {
   const stats = useMemo(() => {
     const list = Array.isArray(leads) ? leads : []
     if (list.length === 0) {
@@ -39,18 +40,25 @@ export default function LeadInsightCards({ leads, onCardClick, activeCardId }) {
     { id: 'message', label: 'With message', value: stats.withMessage, sub: stats.avgMessageLen ? `${stats.avgMessageLen} chars avg` : '—', icon: 'ri-chat-3-line', gradient: 'from-sky-100 to-blue-100', iconBg: 'from-sky-500 to-blue-500', border: 'border-sky-200/70' },
   ]
 
+  const isPt = theme === 'pt'
+
   return (
     <section className="mb-0 min-w-0 w-full max-w-full">
-      <div className="flex items-center gap-4 mb-5 sm:mb-6">
-        <div className="w-12 h-12 flex items-center justify-center bg-gradient-to-br from-amber-500 to-orange-500 rounded-2xl shadow-xl shadow-amber-500/25">
-          <i className="ri-lightbulb-flash-line text-white text-xl" />
+      <div className="flex items-center gap-3 sm:gap-4 mb-5 sm:mb-6">
+        <div className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-2xl shrink-0 ${
+          isPt ? 'bg-[#1E88E5]/10 text-[#1E88E5] ring-1 ring-[#1E88E5]/20' : 'bg-gradient-to-br from-amber-500 to-orange-500 shadow-xl shadow-amber-500/25 text-white'
+        }`}>
+          <i className="ri-lightbulb-flash-line text-xl" />
         </div>
-        <h2 className="text-2xl font-bold bg-gradient-to-r from-slate-900 via-amber-900 to-orange-900 bg-clip-text text-transparent">Quick Insights</h2>
+        <h2 className={isPt ? 'text-xl sm:text-2xl font-bold text-[#0F172A]' : 'text-2xl font-bold bg-gradient-to-r from-slate-900 via-amber-900 to-orange-900 bg-clip-text text-transparent'}>
+          Quick Insights
+        </h2>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-5">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
         {cards.map((card) => {
           const clickable = typeof onCardClick === 'function'
           const active = activeCardId === card.id
+          const ptTheme = PT_KPI_THEME[card.id] || PT_KPI_THEME.total
           return (
             <div
               key={card.id}
@@ -64,16 +72,33 @@ export default function LeadInsightCards({ leads, onCardClick, activeCardId }) {
                     }
                   : undefined
               }
-              className={`rounded-2xl bg-gradient-to-br ${card.gradient} border ${card.border || 'border-white/70'} backdrop-blur-xl p-5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg ${
-                clickable ? 'cursor-pointer select-none' : ''
-              } ${active ? 'ring-2 ring-blue-500/40 ring-offset-1 ring-offset-transparent' : ''}`}
+              className={
+                isPt
+                  ? ptKpiCardClass(ptTheme, { active, clickable })
+                  : `rounded-2xl bg-gradient-to-br ${card.gradient} border ${card.border || 'border-white/70'} backdrop-blur-xl p-5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg ${
+                      clickable ? 'cursor-pointer select-none' : ''
+                    } ${active ? 'ring-2 ring-blue-500/40 ring-offset-1 ring-offset-transparent' : ''}`
+              }
             >
-              <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${card.iconBg} flex items-center justify-center text-white shadow-md mb-3`}>
-                <i className={`${card.icon} text-xl`} />
-              </div>
-              <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">{card.label}</p>
-              <p className="text-2xl font-bold text-slate-900 mt-1">{card.value}</p>
-              <p className="text-xs text-slate-600 mt-0.5">{card.sub}</p>
+              {isPt ? (
+                <>
+                  <div className={`mb-3 flex h-9 w-9 items-center justify-center rounded-xl ${ptTheme.iconWrap}`}>
+                    <i className={`${card.icon} text-lg`} />
+                  </div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{card.label}</p>
+                  <p className={`mt-1 text-2xl font-bold tabular-nums ${ptTheme.valueClass}`}>{card.value}</p>
+                  <p className="mt-0.5 text-xs font-medium text-slate-400">{card.sub}</p>
+                </>
+              ) : (
+                <>
+                  <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${card.iconBg} flex items-center justify-center text-white shadow-md mb-3`}>
+                    <i className={`${card.icon} text-xl`} />
+                  </div>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">{card.label}</p>
+                  <p className="text-2xl font-bold text-slate-900 mt-1">{card.value}</p>
+                  <p className="text-xs text-slate-600 mt-0.5">{card.sub}</p>
+                </>
+              )}
             </div>
           )
         })}

@@ -6,6 +6,7 @@ import LeadTrends from './LeadTrends.jsx'
 import LeadByDayOfWeek from './LeadByDayOfWeek.jsx'
 import LeadInsightCards from './LeadInsightCards.jsx'
 import { filterLeadsByInsightCard, LEAD_TABLE_PULSE_CLASS, useLeadTableHighlight } from './leadTableHighlight.js'
+import { PT_AVATAR, PT_PAGE_SHELL, PT_SECTION } from './leadPtTheme.js'
 import RecentLeadsCard from './RecentLeadsCard.jsx'
 import LeadsTable from './LeadsTable.jsx'
 import OpportunityFilterSheet, {
@@ -22,11 +23,11 @@ import { resolveWebsiteFromItem, leadWebsiteMatches } from './leadWebsiteResolve
 function emptyLeadDashboardFilters(lockedWebsite = '') {
   return {
     entityFilter: lockedWebsite || 'All',
-    dateRange: 'Last 30 Days',
+    dateRange: 'MTD',
     customDateStart: '',
     customDateEnd: '',
     searchQuery: '',
-    periodLabel: 'Last 30 Days',
+    periodLabel: 'MTD',
   }
 }
 
@@ -47,18 +48,33 @@ function normalizeText(value) {
 
 const ROLE_TO_WEBSITE = {
   '3isalesmanager': '3iMedtech',
+  '3isalesteam': '3iMedtech',
   'salesmanageradonis': 'Adonis',
+  'Sales Team Adonis': 'Adonis',
+  salesteamadonis: 'Adonis',
   'salesmanageranamaya': 'Anamaya',
   'salesmanagerril': 'Refex Industries Limited',
+  salesteamril: 'Refex Industries Limited',
   'salesmanagerrlfc': 'Refex Life Sciences',
+  salesteamrlfc: 'Refex Life Sciences',
   'salesmanagerrril': 'Refex Renewables',
+  salesteamrril: 'Refex Renewables',
   'salesmanagerrefexgroup': 'Refex Group',
   'salesmanagerrefexmobility': 'Refex Mobility',
+  'Sales Team Refex Mobility': 'Refex Mobility',
+  salesteamrefexmobility: 'Refex Mobility',
   'salesmanagersparzan': 'Sparzana',
   'salesmanagersparzana': 'Sparzana',
   'venwindsalesmanager': 'Venwind Refex',
+  venwindsalesteam: 'Venwind Refex',
   'Modepro Manager': 'Modepro',
   modepromanager: 'Modepro',
+  'Sales Team Modepro': 'Modepro',
+  salesteammodepro: 'Modepro',
+  'RMC Sales Manager': 'RMC',
+  rmcsalesmanager: 'RMC',
+  'RMC Sales Team': 'RMC',
+  rmcsalesteam: 'RMC',
 }
 
 function resolveWebsiteFromOptions(targetWebsite, websiteOptions) {
@@ -66,11 +82,33 @@ function resolveWebsiteFromOptions(targetWebsite, websiteOptions) {
   const targetNorm = normalizeText(targetWebsite)
   const exact = websiteOptions.find((opt) => normalizeText(opt) === targetNorm)
   if (exact) return exact
+  // Short codes like "RMC" must not fuzzy-match unrelated websites.
+  if (targetNorm.length <= 3) return targetWebsite
   const fuzzy = websiteOptions.find((opt) => {
     const norm = normalizeText(opt)
     return norm && (norm.includes(targetNorm) || targetNorm.includes(norm))
   })
   return fuzzy || targetWebsite
+}
+
+/** Collect every role / group name Kissflow may expose for website lock. */
+function collectRoleCandidates(roleName, user) {
+  const fromList = (list, pick) =>
+    (Array.isArray(list) ? list : [])
+      .map((item) => String(pick(item) || '').trim())
+      .filter(Boolean)
+
+  return [
+    roleName,
+    user?.Role?.Name,
+    stringifyKfRole(user?.Role),
+    user?._user_type,
+    ...fromList(user?.Groups, (g) => (typeof g === 'string' ? g : g?.Name ?? g?.name)),
+    ...fromList(user?.Roles, (r) => stringifyKfRole(r) || r?.Name || r?.name),
+  ]
+    .filter(Boolean)
+    .map((v) => String(v).trim())
+    .filter(Boolean)
 }
 
 function stringifyKfRole(roleLike) {
@@ -386,6 +424,11 @@ function leadInDateRange(lead, dateRange, customDateStart, customDateEnd) {
   const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1)
 
   if (dateRange === 'Today') return d >= todayStart && d <= todayEnd
+  if (dateRange === 'MTD') {
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+    return d >= monthStart && d <= todayEnd
+  }
+  if (dateRange === 'LTD') return d <= todayEnd
   if (dateRange === 'Last 7 Days') {
     const start = new Date(todayStart)
     start.setDate(start.getDate() - 7)
@@ -471,11 +514,11 @@ export default function LeadDashboardPage() {
   const adminPaths = useMemo(() => buildLeadAdminApiPaths(kfInstance), [kfInstance])
 
   const [entityFilter, setEntityFilter] = useState('All')
-  const [dateRange, setDateRange] = useState('Last 30 Days')
+  const [dateRange, setDateRange] = useState('MTD')
   const [customDateStart, setCustomDateStart] = useState('')
   const [customDateEnd, setCustomDateEnd] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
-  const [periodLabel, setPeriodLabel] = useState('Last 30 Days')
+  const [periodLabel, setPeriodLabel] = useState('MTD')
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [draftFilters, setDraftFilters] = useState(() => emptyLeadDashboardFilters())
   const [latestLeadsQuery, setLatestLeadsQuery] = useState('')
@@ -879,6 +922,7 @@ export default function LeadDashboardPage() {
 
   const websiteOptions = useMemo(function getWebsiteOptions() {
     const base = apiLeads !== null ? apiLeads : demoLeads
+    // Always include mapped websites (incl. RMC / Modepro) even when no leads exist yet.
     const set = new Set(Object.values(ROLE_TO_WEBSITE))
     base.forEach(function (lead) {
       const w = lead?.website != null && String(lead.website).trim() !== '' ? String(lead.website).trim() : null
@@ -888,16 +932,7 @@ export default function LeadDashboardPage() {
   }, [apiLeads])
 
   const lockedWebsite = useMemo(function getLockedWebsiteFromRole() {
-    const roleCandidates = [
-      roleName,
-      user?.Role?.Name,
-      user?._user_type,
-      user?.Groups?.[0]?.Name,
-      user?.Roles?.[0]?.Name,
-    ]
-      .filter(Boolean)
-      .map((v) => String(v).trim())
-      .filter(Boolean)
+    const roleCandidates = collectRoleCandidates(roleName, user)
 
     if (roleCandidates.length === 0) return null
 
@@ -918,7 +953,7 @@ export default function LeadDashboardPage() {
     for (let i = 0; i < websiteOptions.length; i += 1) {
       const website = websiteOptions[i]
       const wNorm = normalizeText(website)
-      if (!wNorm) continue
+      if (!wNorm || wNorm.length <= 3) continue
       const matched = normalizedRoles.some((rNorm) => rNorm.includes(wNorm) || wNorm.includes(rNorm))
       if (matched) return website
     }
@@ -953,7 +988,7 @@ export default function LeadDashboardPage() {
 
   const activeFilterCount =
     (!lockedWebsite && entityFilter !== 'All' ? 1 : 0) +
-    (dateRange !== 'Last 30 Days' ? 1 : 0) +
+    (dateRange !== 'MTD' ? 1 : 0) +
     (searchQuery ? 1 : 0)
 
   const openFilterSheet = () => {
@@ -1002,18 +1037,18 @@ export default function LeadDashboardPage() {
   ]
 
   return (
-    <div ref={pageRootRef} className="h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain bg-gradient-to-br from-slate-100 via-slate-50 to-slate-100 px-3 pb-8 pt-1 md:px-4 md:pb-10 md:pt-2">
+    <div ref={pageRootRef} className={`h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain ${PT_PAGE_SHELL} px-3 pb-8 pt-1 md:px-4 md:pb-10 md:pt-2`}>
       <div className="mx-auto w-full min-w-0 max-w-[1500px]">
           <div className="p-1 sm:p-2 md:p-3 flex min-w-0 w-full max-w-full flex-col gap-5 sm:gap-6 transition-smooth">
             <section className="mb-1 sm:mb-2 relative z-[120] min-w-0 w-full max-w-full">
               <div className="flex min-w-0 w-full max-w-full flex-col md:flex-row md:items-center gap-3 md:gap-4">
                   <div className="flex min-w-0 w-full items-center gap-3">
-                    <div className="h-10 w-10 shrink-0 rounded-xl bg-gradient-to-br from-indigo-500 via-brand-blue to-brand-green flex items-center justify-center text-white text-sm font-bold shadow-sm">
+                    <div className={PT_AVATAR}>
                       {(firstName || 'U').charAt(0)}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-base sm:text-lg font-semibold tracking-tight text-gray-900 break-words">{greeting}, {firstName}</p>
-                      <p className="text-xs sm:text-sm text-gray-600 break-words">Logged in as {displayRole}</p>
+                      <p className="text-base sm:text-lg font-semibold tracking-tight text-[#0F172A] break-words">{greeting}, {firstName}</p>
+                      <p className="text-xs sm:text-sm text-[#64748B] break-words">Logged in as {displayRole}</p>
                     </div>
                   </div>
 
@@ -1082,11 +1117,12 @@ export default function LeadDashboardPage() {
 
               <section
                 ref={tableSectionRef}
-                className={`scroll-mt-24 min-w-0 w-full max-w-full rounded-2xl sm:rounded-2xl border-0 sm:border sm:border-white/50 bg-transparent sm:bg-white/45 backdrop-blur-0 sm:backdrop-blur-sm shadow-none sm:shadow-sm p-0 sm:p-4 md:p-5 overflow-x-auto transition-[box-shadow,ring] duration-500 ${
+                className={`scroll-mt-24 min-w-0 w-full max-w-full overflow-visible transition-[box-shadow,ring] duration-500 ${
                   insightPulse ? LEAD_TABLE_PULSE_CLASS : ''
                 }`}
               >
                 <LeadsTable
+                  variant="pt"
                   leads={latestTableLeadsFiltered}
                   loading={apiLeadsLoading && apiLeads === null}
                   onViewDetails={openLeadPopup}
@@ -1132,21 +1168,21 @@ export default function LeadDashboardPage() {
                 />
               </section>
 
+              {/* Analytics charts are temporarily hidden. Uncomment this block when needed.
               {entityFilter === 'All' && (
-                <section className="min-w-0 w-full max-w-full overflow-x-hidden rounded-2xl border border-white/50 bg-white/45 backdrop-blur-sm shadow-sm p-3 sm:p-4 md:p-5">
-                  <LeadSourceCharts leads={displayLeads} />
+                <section className={`min-w-0 w-full max-w-full overflow-visible ${PT_SECTION}`}>
+                  <LeadSourceCharts theme="pt" leads={displayLeads} />
                 </section>
               )}
 
-              <section className="min-w-0 w-full max-w-full overflow-x-hidden rounded-2xl border border-white/50 bg-white/45 backdrop-blur-sm shadow-sm p-3 sm:p-4 md:p-5">
-                <LeadTrends leads={displayLeads} />
+              <section className={`min-w-0 w-full max-w-full overflow-visible ${PT_SECTION}`}>
+                <LeadTrends variant="pt" leads={displayLeads} />
               </section>
 
-              <section className="min-w-0 w-full max-w-full overflow-x-hidden rounded-2xl border border-white/50 bg-white/45 backdrop-blur-sm shadow-sm p-3 sm:p-4 md:p-5">
-                <LeadByDayOfWeek leads={displayLeads} />
-              </section>
+              <LeadByDayOfWeek theme="pt" leads={displayLeads} className={`min-w-0 w-full max-w-full overflow-visible ${PT_SECTION}`} />
 
-              <LeadInsightCards leads={displayLeads} onCardClick={handleCardClick} activeCardId={activeKpiCardId} />
+              <LeadInsightCards theme="pt" leads={displayLeads} onCardClick={handleCardClick} activeCardId={activeKpiCardId} />
+              */}
 
               {/* <RecentLeadsCard leads={displayLeads} onViewDetails={openLeadPopup} /> */}
             </div>

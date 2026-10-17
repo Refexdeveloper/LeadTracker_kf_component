@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 export const LEAD_TABLE_PULSE_CLASS =
-  'ring-2 ring-brand-blue ring-offset-2 ring-offset-[#edf1ff] shadow-[0_0_0_6px_rgba(40,121,182,0.12)]'
+  'ring-2 ring-[#1E88E5] ring-offset-2 ring-offset-[#edf1ff] shadow-[0_0_0_6px_rgba(30,136,229,0.12)]'
 
 export const VW_TABLE_PULSE_CLASS =
   'ring-2 ring-[#0F766E] ring-offset-2 ring-offset-[#FAFBFC] shadow-[0_0_0_6px_rgba(15,118,110,0.12)]'

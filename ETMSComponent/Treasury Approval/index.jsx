@@ -1,7 +1,7 @@
 // import { kf } from './../sdk/index.js'
 // import React, { useEffect, useMemo, useRef, useState } from 'react'
 
-// const PAGE_SIZE = 100000
+// const PAGE_SIZE = 1000
 // const MAX_ITEMS_PER_TAB = 60
 // const BATCH_SIZE = 10
 
@@ -776,7 +776,7 @@
 import { kf } from './../sdk/index.js'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 
-const PAGE_SIZE = 100000
+const PAGE_SIZE = 1000
 const MAX_ITEMS_PER_TAB = 60
 const BATCH_SIZE = 10
 

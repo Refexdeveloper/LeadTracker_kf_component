@@ -17,6 +17,8 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import P2pKpiCard, { P2pHeaderFx } from './vms/P2pKpiCard.jsx'
+import { vmsSectionShellClass } from './vms/vmsTheme.js'
 
 // PHASE 1 (YOU ARE HERE): basic dashboard only.
 // Replace these mocks with your Kissflow vendor/contract data.
@@ -38,7 +40,7 @@ const MOCK_CONTRACTS = [
   { id: 'CNT-008', title: 'Fleet Tracking Setup', vendor: 'Eco Logistics', status: 'Active', amount: 25000, startDate: '2024-04-12', endDate: '2024-08-31' },
 ]
 
-const PIE_COLORS = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', '#1d4ed8', '#0ea5e9']
+const PIE_COLORS = ['#17a2b4', '#0f6b7a', '#5fe0e6', '#5cc3cf', '#0b5361', '#bfe6ec']
 
 function money(v) {
   return new Intl.NumberFormat('en-US', {
@@ -147,21 +149,16 @@ export default function VendorManagementSystem({
   }, [filteredContracts])
 
   return (
-    <div
-      className="min-h-[100dvh] w-full flex flex-col overflow-x-hidden"
-      style={{
-        background:
-          'linear-gradient(165deg, #eef2ff 0%, #e0e7ff 25%, #f0f4f8 50%, #e2e8f0 75%, #f1f5f9 100%)',
-      }}
-    >
-      <div className="flex-1 min-w-0 overflow-auto p-4 sm:p-6 md:p-10">
+    <div className="p2p-theme min-h-[100dvh] w-full flex flex-col overflow-x-hidden font-sans text-[#0F172A]">
+      <div className="flex-1 min-w-0 overflow-auto p-4 sm:p-6 md:p-8">
         <div className="w-full max-w-[1600px] mx-auto min-w-0 space-y-6 sm:space-y-8">
           <div
-            className="glass rounded-3xl bg-white/80 backdrop-blur-xl border border-white/60 shadow-xl shadow-slate-200/40 p-5 sm:p-6 md:p-8"
+            className="p2p-header relative overflow-hidden rounded-2xl bg-white/95 border border-white/70 shadow-[0_10px_30px_rgba(20,90,120,0.08)] p-5 sm:p-6"
             data-aos="fade-down"
           >
-            <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
-              <div>
+            <P2pHeaderFx />
+            <div className="relative z-[1] flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
+              <div className="min-w-0">
                 <h1 className="text-xl sm:text-2xl md:text-3xl font-extrabold text-slate-900 tracking-tight">
                   Vendor Management System
                 </h1>
@@ -170,11 +167,11 @@ export default function VendorManagementSystem({
                 </p>
               </div>
 
-              <div className="flex flex-wrap gap-2 sm:gap-3">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                 <select
                   value={vendorFilter}
                   onChange={(e) => setVendorFilter(e.target.value)}
-                  className="min-h-[44px] px-3 py-2.5 text-sm font-medium text-slate-700 bg-slate-100/90 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                  className="min-h-[44px] px-3 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#17a2b4] focus:border-transparent"
                 >
                   {vendorNames.map((v) => (
                     <option key={v} value={v}>
@@ -186,7 +183,7 @@ export default function VendorManagementSystem({
                 <select
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
-                  className="min-h-[44px] px-3 py-2.5 text-sm font-medium text-slate-700 bg-slate-100/90 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                  className="min-h-[44px] px-3 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#17a2b4] focus:border-transparent"
                 >
                   {['All Status', 'Active', 'Pending', 'Expired'].map((s) => (
                     <option key={s} value={s}>
@@ -198,7 +195,7 @@ export default function VendorManagementSystem({
                 <select
                   value={quarterFilter}
                   onChange={(e) => setQuarterFilter(e.target.value)}
-                  className="min-h-[44px] px-3 py-2.5 text-sm font-medium text-slate-700 bg-slate-100/90 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                  className="min-h-[44px] px-3 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#17a2b4] focus:border-transparent"
                 >
                   {['All Quarters', 'Q1', 'Q2', 'Q3', 'Q4'].map((q) => (
                     <option key={q} value={q}>
@@ -210,28 +207,29 @@ export default function VendorManagementSystem({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+          <div className="tfx-kpis-row grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
             {[
-              { label: 'Total Vendors', value: metrics.totalVendors, tone: 'text-blue-600' },
-              { label: 'Active Contracts', value: metrics.activeContracts, tone: 'text-indigo-600' },
-              { label: 'Total Spend', value: money(metrics.totalSpend), tone: 'text-emerald-600' },
+              { label: 'Total Vendors', value: metrics.totalVendors, variant: 'payments', subtitle: metrics.totalVendors ? 'In this view' : 'No vendors yet' },
+              { label: 'Active Contracts', value: metrics.activeContracts, variant: 'approved', subtitle: metrics.activeContracts ? 'Currently active' : 'None active yet' },
+              { label: 'Total Spend', value: metrics.totalSpend, variant: 'ready', displayValue: money(metrics.totalSpend), subtitle: 'Across filtered contracts', footText: 'Filtered spend', percent: 100 },
             ].map((m, i) => (
-              <div
+              <P2pKpiCard
                 key={m.label}
-                className="glass rounded-2xl bg-white border border-white/60 shadow-lg p-4 sm:p-5"
-                data-aos="fade-up"
-                data-aos-delay={i * 80}
-              >
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">
-                  {m.label}
-                </p>
-                <p className={`text-2xl sm:text-3xl font-bold ${m.tone}`}>{m.value}</p>
-              </div>
+                label={m.label}
+                value={m.value}
+                variant={m.variant}
+                index={i}
+                total={m.label === 'Total Spend' ? 1 : m.label === 'Total Vendors' ? metrics.totalVendors : filteredContracts.length}
+                subtitle={m.subtitle}
+                displayValue={m.displayValue}
+                footText={m.footText}
+                percent={m.percent}
+              />
             ))}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-            <div className="glass rounded-2xl bg-white border border-white/60 shadow-lg p-4 sm:p-6" data-aos="zoom-in">
+            <div className={`${vmsSectionShellClass()} p-4 sm:p-6`} data-aos="zoom-in">
               <h3 className="text-sm font-bold text-slate-800 mb-4">Contracts per Vendor</h3>
               <div className="h-[270px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
@@ -240,13 +238,13 @@ export default function VendorManagementSystem({
                     <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={-10} textAnchor="end" height={52} />
                     <YAxis tick={{ fontSize: 11 }} />
                     <Tooltip formatter={(v) => [v, 'Contracts']} />
-                    <Bar dataKey="contracts" fill="#2563eb" radius={[8, 8, 0, 0]} />
+                    <Bar dataKey="contracts" fill="#17a2b4" radius={[8, 8, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </div>
 
-            <div className="glass rounded-2xl bg-white border border-white/60 shadow-lg p-4 sm:p-6" data-aos="zoom-in" data-aos-delay={100}>
+            <div className={`${vmsSectionShellClass()} p-4 sm:p-6`} data-aos="zoom-in" data-aos-delay={100}>
               <h3 className="text-sm font-bold text-slate-800 mb-4">Spend per Vendor</h3>
               <div className="h-[270px] w-full flex flex-col sm:flex-row items-center gap-4">
                 <div className="w-full sm:w-1/2 h-[200px]">
@@ -274,7 +272,7 @@ export default function VendorManagementSystem({
               </div>
             </div>
 
-            <div className="glass rounded-2xl bg-white border border-white/60 shadow-lg p-4 sm:p-6" data-aos="zoom-in" data-aos-delay={200}>
+            <div className={`${vmsSectionShellClass()} p-4 sm:p-6`} data-aos="zoom-in" data-aos-delay={200}>
               <h3 className="text-sm font-bold text-slate-800 mb-4">Contract Trends</h3>
               <div className="h-[270px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
@@ -285,26 +283,26 @@ export default function VendorManagementSystem({
                     <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} />
                     <Tooltip formatter={(v, key) => [key === 'spend' ? money(v) : v, key]} />
                     <Legend />
-                    <Area yAxisId="right" type="monotone" dataKey="spend" fill="#bfdbfe" stroke="#60a5fa" fillOpacity={0.35} name="Spend" />
-                    <Line yAxisId="left" type="monotone" dataKey="contracts" stroke="#1d4ed8" strokeWidth={2.5} dot={{ r: 3 }} name="Contracts" />
+                    <Area yAxisId="right" type="monotone" dataKey="spend" fill="#bfe6ec" stroke="#17a2b4" fillOpacity={0.35} name="Spend" />
+                    <Line yAxisId="left" type="monotone" dataKey="contracts" stroke="#0f6b7a" strokeWidth={2.5} dot={{ r: 3 }} name="Contracts" />
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
             </div>
           </div>
 
-          <div className="glass rounded-2xl bg-white border border-white/60 shadow-lg p-4 sm:p-6" data-aos="fade-up">
+          <div className={`${vmsSectionShellClass()} p-4 sm:p-6`} data-aos="fade-up">
             <div className="flex items-center justify-between gap-3 mb-4">
               <h3 className="text-sm font-bold text-slate-800">Recent Contracts</h3>
               <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
                 <button
-                  className={`px-3 py-1.5 text-xs rounded-lg ${recentView === 'table' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600'}`}
+                  className={`px-3 py-1.5 text-xs rounded-lg ${recentView === 'table' ? 'bg-white text-[#0f6b7a] shadow-sm' : 'text-slate-600'}`}
                   onClick={() => setRecentView('table')}
                 >
                   Table View
                 </button>
                 <button
-                  className={`px-3 py-1.5 text-xs rounded-lg ${recentView === 'card' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600'}`}
+                  className={`px-3 py-1.5 text-xs rounded-lg ${recentView === 'card' ? 'bg-white text-[#0f6b7a] shadow-sm' : 'text-slate-600'}`}
                   onClick={() => setRecentView('card')}
                 >
                   Card View
@@ -316,12 +314,12 @@ export default function VendorManagementSystem({
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b border-slate-200 text-slate-500 text-left">
-                      <th className="py-2 pr-2">Contract</th>
-                      <th className="py-2 pr-2">Vendor</th>
-                      <th className="py-2 pr-2">Amount</th>
-                      <th className="py-2 pr-2">Status</th>
-                      <th className="py-2">Duration</th>
+                    <tr className="border-b border-[#e9f0f3] bg-[#f3f8fb] text-xs font-semibold text-[#6b7684] text-left">
+                      <th className="py-2 pr-2"><span className="inline-flex items-center gap-1.5"><i className="ri-file-paper-2-line text-[#17a2b4]" aria-hidden />Contract</span></th>
+                      <th className="py-2 pr-2"><span className="inline-flex items-center gap-1.5"><i className="ri-building-2-line text-[#17a2b4]" aria-hidden />Vendor</span></th>
+                      <th className="py-2 pr-2"><span className="inline-flex items-center gap-1.5"><i className="ri-money-rupee-circle-line text-[#17a2b4]" aria-hidden />Amount</span></th>
+                      <th className="py-2 pr-2"><span className="inline-flex items-center gap-1.5"><i className="ri-flag-line text-[#17a2b4]" aria-hidden />Status</span></th>
+                      <th className="py-2"><span className="inline-flex items-center gap-1.5"><i className="ri-calendar-check-line text-[#17a2b4]" aria-hidden />Duration</span></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -331,7 +329,7 @@ export default function VendorManagementSystem({
                         <td className="py-3 pr-2 text-slate-700">{c.vendor}</td>
                         <td className="py-3 pr-2 font-semibold text-slate-900">{money(c.amount)}</td>
                         <td className="py-3 pr-2">
-                          <span className="inline-flex px-2.5 py-1 rounded-full border text-xs font-semibold bg-blue-50 border-blue-200 text-blue-700">
+                          <span className="inline-flex px-2.5 py-1 rounded-full border text-xs font-semibold bg-[#e6f6f8] border-[#bfe6ec] text-[#0f6b7a]">
                             {c.status}
                           </span>
                         </td>
@@ -349,7 +347,7 @@ export default function VendorManagementSystem({
                   <div key={c.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                     <p className="font-semibold text-slate-900">{c.title}</p>
                     <p className="text-sm text-slate-600 mt-1">{c.vendor}</p>
-                    <p className="text-base font-bold text-blue-700 mt-2">{money(c.amount)}</p>
+                    <p className="text-base font-bold text-[#0f6b7a] mt-2">{money(c.amount)}</p>
                     <p className="text-xs text-slate-500 mt-1">
                       {c.startDate} to {c.endDate}
                     </p>

@@ -3,7 +3,7 @@ import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis
 import { useMediaQuery } from '../hooks/useMediaQuery.js'
 import { formatInrCr, uniqueSorted } from './salesOpportunityMap.js'
 
-const COLORS = ['#0ea5e9', '#6366f1', '#10b981', '#f59e0b', '#ec4899', '#14b8a6', '#8b5cf6', '#f97316', '#64748b']
+const COLORS = ['#2B5AED', '#0084AD', '#22C55E', '#F97316', '#8B5CF6', '#0F766E', '#EF4444', '#D946EF', '#1E88E5']
 const MOBILE_CHART_MAX = 767
 
 function countBy(list, key) {
@@ -23,10 +23,10 @@ function ChartCard({ title, icon, iconClass, children }) {
   return (
     <section className="mb-0 min-w-0 overflow-hidden">
       <div className="flex items-center gap-3 mb-5">
-        <div className={`w-10 h-10 flex items-center justify-center rounded-2xl shrink-0 ${iconClass}`}>
-          <i className={`${icon} text-white text-lg`} />
+        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ring-1 ${iconClass}`}>
+          <i className={`${icon} text-lg`} />
         </div>
-        <h3 className="text-base sm:text-lg font-bold text-slate-900">{title}</h3>
+        <h3 className="text-base sm:text-lg font-bold text-[#0F172A]">{title}</h3>
       </div>
       {children}
     </section>
@@ -68,7 +68,7 @@ export default function OpportunityMixCharts({ rows }) {
   return (
     <div className="space-y-8 sm:space-y-10">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8">
-        <ChartCard title="Pipeline by Product" icon="ri-pulse-line" iconClass="bg-gradient-to-br from-sky-500 to-blue-600 shadow-lg shadow-sky-500/25">
+        <ChartCard title="Pipeline by Product" icon="ri-pulse-line" iconClass="bg-[#2B5AED]/10 text-[#2B5AED] ring-[#2B5AED]/20">
           {canRenderCharts ? (
             <div className="h-[200px] sm:h-[260px] w-full min-w-0">
               <ResponsiveContainer width="100%" height="100%">
@@ -96,7 +96,7 @@ export default function OpportunityMixCharts({ rows }) {
           </div>
         </ChartCard>
 
-        <ChartCard title="Modality Mix" icon="ri-hospital-line" iconClass="bg-gradient-to-br from-emerald-500 to-teal-600 shadow-lg shadow-emerald-500/25">
+        <ChartCard title="Modality Mix" icon="ri-hospital-line" iconClass="bg-[#0084AD]/10 text-[#0084AD] ring-[#0084AD]/20">
           {canRenderCharts ? (
             <div className="h-[200px] sm:h-[260px] w-full min-w-0">
               <ResponsiveContainer width="100%" height="100%">
@@ -117,7 +117,7 @@ export default function OpportunityMixCharts({ rows }) {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8">
-        <ChartCard title="Site Readiness" icon="ri-building-4-line" iconClass="bg-gradient-to-br from-amber-500 to-orange-600 shadow-lg shadow-amber-500/25">
+        <ChartCard title="Site Readiness" icon="ri-building-4-line" iconClass="bg-[#F97316]/10 text-[#F97316] ring-[#F97316]/20">
           {canRenderCharts ? (
             <div className="h-[180px] sm:h-[230px] w-full min-w-0">
               <ResponsiveContainer width="100%" height="100%">
@@ -136,7 +136,7 @@ export default function OpportunityMixCharts({ rows }) {
           ) : fallback}
         </ChartCard>
 
-        <ChartCard title="Funding Status" icon="ri-bank-line" iconClass="bg-gradient-to-br from-violet-500 to-fuchsia-600 shadow-lg shadow-violet-500/25">
+        <ChartCard title="Funding Status" icon="ri-bank-line" iconClass="bg-[#8B5CF6]/10 text-[#8B5CF6] ring-[#8B5CF6]/20">
           {canRenderCharts ? (
             <div className="h-[180px] sm:h-[230px] w-full min-w-0">
               <ResponsiveContainer width="100%" height="100%">
@@ -156,7 +156,7 @@ export default function OpportunityMixCharts({ rows }) {
         </ChartCard>
       </div>
 
-      <ChartCard title="Top Locations" icon="ri-map-pin-2-line" iconClass="bg-gradient-to-br from-rose-500 to-orange-500 shadow-lg shadow-rose-500/25">
+      <ChartCard title="Top Locations" icon="ri-map-pin-2-line" iconClass="bg-[#EF4444]/10 text-[#EF4444] ring-[#EF4444]/20">
         {canRenderCharts ? (
           <div className="w-full min-w-0" style={{ height: Math.min(320, Math.max(180, locationData.length * 48 + 48)) }}>
             <ResponsiveContainer width="100%" height="100%">

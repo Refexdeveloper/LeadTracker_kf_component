@@ -1,23 +1,27 @@
 import { Fragment, useMemo, useState, useEffect } from 'react'
 import { useMediaQuery } from '../hooks/useMediaQuery.js'
 import { formatCompactDate, formatInrCr } from './salesOpportunityMap.js'
+import { TableColumnHeader, distinctFilterOptions, toggleSortState, compareText, compareNumber, compareDateValue } from '../components/TableColumnHeaders.jsx'
+import TablePaginationBar from '../components/TablePaginationBar.jsx'
+import PtStatusBadge from '../components/PtStatusBadge.jsx'
+import { PT_THEAD_ROW } from '../leadPtTheme.js'
 
 const PAGE_SIZE = 10
 const COL_COUNT = 8
 
 function stageChipClass(stageId) {
-  if (stageId === 'IV') return 'bg-emerald-50 text-emerald-800 border-emerald-200'
-  if (stageId === 'III') return 'bg-indigo-50 text-indigo-800 border-indigo-200'
-  if (stageId === 'II') return 'bg-sky-50 text-sky-800 border-sky-200'
-  if (stageId === 'I') return 'bg-slate-100 text-slate-700 border-slate-200'
-  if (stageId === 'Lost') return 'bg-rose-50 text-rose-800 border-rose-200'
-  return 'bg-amber-50 text-amber-800 border-amber-200'
+  if (stageId === 'IV') return 'bg-green-50 text-[#43A047]'
+  if (stageId === 'III') return 'bg-[#0084AD]/10 text-[#0084AD]'
+  if (stageId === 'II') return 'bg-[#2B5AED]/10 text-[#2B5AED]'
+  if (stageId === 'I') return 'bg-blue-50 text-[#1E88E5]'
+  if (stageId === 'Lost') return 'bg-red-50 text-[#E53935]'
+  return 'bg-orange-50 text-[#FB8C00]'
 }
 
 function statusChipClass(row) {
-  if (row?.won) return 'bg-teal-50 text-teal-800 border-teal-200'
-  if (row?.lost) return 'bg-rose-50 text-rose-700 border-rose-200'
-  return 'bg-white text-slate-700 border-slate-200'
+  if (row?.won) return 'bg-green-50 text-[#43A047]'
+  if (row?.lost) return 'bg-red-50 text-[#E53935]'
+  return 'bg-blue-50 text-[#1E88E5]'
 }
 
 function displayValue(value) {
@@ -75,12 +79,14 @@ function OpportunityAccordionPanel({ row }) {
           <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 min-w-0">
             <h3 className="text-sm font-semibold text-slate-900 min-w-0 break-words">{row.customer || 'Opportunity details'}</h3>
             <div className="flex flex-wrap items-center gap-2">
-              <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${stageChipClass(row.stageId)}`}>
+              <span className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-semibold ${stageChipClass(row.stageId)}`}>
+                <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
                 {row.stageLabel || 'Unstaged'}
               </span>
-              <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusChipClass(row)}`}>
-                {row.status || (row.lost ? 'Lost' : 'Open')}
-              </span>
+              <PtStatusBadge
+                status={row.status || (row.lost ? 'Lost' : row.won ? 'Booked' : 'Open')}
+                label={row.status || (row.lost ? 'Lost' : 'Open')}
+              />
             </div>
           </div>
         </div>
@@ -105,20 +111,71 @@ function OpportunityAccordionPanel({ row }) {
 export default function OpportunityTable({ rows, loading, headerRight = null, title = 'Opportunities' }) {
   const [page, setPage] = useState(1)
   const [expandedId, setExpandedId] = useState('')
+  const [sortKey, setSortKey] = useState('customer')
+  const [sortDir, setSortDir] = useState('asc')
+  const [stageFilter, setStageFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
   const isDesktop = useMediaQuery('(min-width: 768px)')
   const list = Array.isArray(rows) ? rows : []
+
+  const stageOptions = useMemo(
+    () => distinctFilterOptions(list, (row) => row.stageLabel || 'Unstaged', { allLabel: 'All Stages' }),
+    [list],
+  )
+  const statusOptions = useMemo(
+    () => distinctFilterOptions(list, (row) => row.status || (row.lost ? 'Lost' : 'Open'), { allLabel: 'All Status' }),
+    [list],
+  )
+
+  const filtered = useMemo(() => {
+    return list.filter((row) => {
+      if (stageFilter !== 'all' && (row.stageLabel || 'Unstaged') !== stageFilter) return false
+      if (statusFilter !== 'all' && (row.status || (row.lost ? 'Lost' : 'Open')) !== statusFilter) return false
+      return true
+    })
+  }, [list, stageFilter, statusFilter])
+
+  const sorted = useMemo(() => {
+    const dir = sortDir === 'asc' ? 1 : -1
+    return [...filtered].sort((a, b) => {
+      if (sortKey === 'valueLacs') return compareNumber(a.valueLacs, b.valueLacs, dir)
+      if (sortKey === 'closureDate') return compareDateValue(a.closureDate, b.closureDate, dir, sortDir)
+      return compareText(a[sortKey], b[sortKey], dir)
+    })
+  }, [filtered, sortKey, sortDir])
 
   useEffect(() => {
     setPage(1)
     setExpandedId('')
-  }, [rows])
+  }, [rows, stageFilter, statusFilter, sortKey, sortDir])
 
-  const pageCount = Math.max(1, Math.ceil(list.length / PAGE_SIZE))
+  const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE))
   const safePage = Math.min(page, pageCount)
   const pageRows = useMemo(() => {
     const start = (safePage - 1) * PAGE_SIZE
-    return list.slice(start, start + PAGE_SIZE)
-  }, [list, safePage])
+    return sorted.slice(start, start + PAGE_SIZE)
+  }, [sorted, safePage])
+
+  const handleSort = (key) => {
+    const next = toggleSortState(sortKey, sortDir, key)
+    setSortKey(next.sortKey)
+    setSortDir(next.sortDir)
+  }
+
+  const oppColumns = [
+    { key: '_expand', label: '' },
+    { key: 'customer', label: 'Customer' },
+    { key: 'location', label: 'Location' },
+    { key: 'product', label: 'Product' },
+    { key: 'valueLacs', label: 'Value' },
+    { key: 'stageLabel', label: 'Stage', filter: 'stage' },
+    { key: 'status', label: 'Status', filter: 'status' },
+    { key: 'closureDate', label: 'Closure' },
+  ]
+  const oppFilters = {
+    stage: { filterValue: stageFilter, filterOptions: stageOptions, onFilterChange: setStageFilter },
+    status: { filterValue: statusFilter, filterOptions: statusOptions, onFilterChange: setStatusFilter },
+  }
 
   const toggle = (row) => {
     const id = String(row.id || row._id || '')
@@ -129,12 +186,12 @@ export default function OpportunityTable({ rows, loading, headerRight = null, ti
     <section className="min-w-0">
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-5">
         <div className="flex items-center gap-3 min-w-0 flex-1">
-          <div className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl shadow-lg shrink-0">
-            <i className="ri-table-line text-white text-lg sm:text-xl" />
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#1E88E5]/10 text-[#1E88E5] ring-1 ring-[#1E88E5]/20 sm:h-12 sm:w-12">
+            <i className="ri-table-line text-lg sm:text-xl" />
           </div>
           <div className="min-w-0">
-            <h2 className="text-base sm:text-xl md:text-2xl font-bold text-slate-900">{title}</h2>
-            <p className="text-xs sm:text-sm text-slate-600">{list.length} matching rows</p>
+            <h2 className="text-base sm:text-xl md:text-2xl font-bold text-[#0F172A]">{title}</h2>
+            <p className="text-xs sm:text-sm text-[#64748B]">{filtered.length} of {list.length} matching rows</p>
           </div>
         </div>
         {headerRight}
@@ -149,16 +206,24 @@ export default function OpportunityTable({ rows, loading, headerRight = null, ti
           {isDesktop ? (
             <div className="hidden md:block w-full max-w-full min-w-0 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden rounded-2xl border border-slate-200/80 bg-white/80">
               <table className="w-full min-w-[880px] table-fixed text-sm">
-                <thead className="bg-slate-50/90 text-left text-[11px] uppercase tracking-wide text-slate-500">
-                  <tr>
-                    <th className="w-12 px-3 py-3.5" />
-                    <th className="px-4 py-3.5 font-semibold w-[20%]">Customer</th>
-                    <th className="px-4 py-3.5 font-semibold w-[12%]">Location</th>
-                    <th className="px-4 py-3.5 font-semibold w-[18%]">Product</th>
-                    <th className="px-4 py-3.5 font-semibold w-[10%]">Value</th>
-                    <th className="px-4 py-3.5 font-semibold w-[12%]">Stage</th>
-                    <th className="px-4 py-3.5 font-semibold w-[16%]">Status</th>
-                    <th className="px-4 py-3.5 font-semibold w-[12%]">Closure</th>
+                <thead>
+                  <tr className={PT_THEAD_ROW}>
+                    {oppColumns.map((col) => {
+                      if (col.key === '_expand') return <th key={col.key} className="w-12 px-3 py-3" />
+                      const filterCfg = col.filter ? oppFilters[col.filter] : null
+                      return (
+                        <TableColumnHeader
+                          key={col.key}
+                          col={col}
+                          sortKey={sortKey}
+                          sortDir={sortDir}
+                          onSort={handleSort}
+                          filterValue={filterCfg?.filterValue}
+                          filterOptions={filterCfg?.filterOptions}
+                          onFilterChange={filterCfg?.onFilterChange}
+                        />
+                      )
+                    })}
                   </tr>
                 </thead>
                 <tbody>
@@ -169,7 +234,7 @@ export default function OpportunityTable({ rows, loading, headerRight = null, ti
                       <Fragment key={id}>
                         <tr
                           className={`border-t border-slate-100 cursor-pointer transition-colors ${
-                            open ? 'bg-indigo-50/50' : 'hover:bg-slate-50/80'
+                            open ? 'bg-slate-50/70' : 'hover:bg-blue-50/40'
                           }`}
                           onClick={() => toggle(row)}
                         >
@@ -195,14 +260,16 @@ export default function OpportunityTable({ rows, loading, headerRight = null, ti
                           <td className="px-4 py-3.5 align-middle text-slate-700 break-words">{row.product || '—'}</td>
                           <td className="px-4 py-3.5 align-middle font-semibold text-slate-900 whitespace-nowrap">{formatInrCr(row.valueLacs, { compact: true })}</td>
                           <td className="px-4 py-3.5 align-middle">
-                            <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold whitespace-nowrap ${stageChipClass(row.stageId)}`}>
+                            <span className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-semibold whitespace-nowrap ${stageChipClass(row.stageId)}`}>
+                              <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
                               {row.stageLabel || 'Unstaged'}
                             </span>
                           </td>
                           <td className="px-4 py-3.5 align-middle">
-                            <span className={`inline-flex max-w-full rounded-full border px-2.5 py-1 text-[11px] font-semibold leading-snug ${statusChipClass(row)}`} title={row.status || ''}>
-                              {row.status || (row.lost ? 'Lost' : 'Open')}
-                            </span>
+                            <PtStatusBadge
+                              status={row.status || (row.lost ? 'Lost' : row.won ? 'Booked' : 'Open')}
+                              label={row.status || (row.lost ? 'Lost' : 'Open')}
+                            />
                           </td>
                           <td className="px-4 py-3.5 align-middle text-slate-600 whitespace-nowrap">{row.closureLabel || formatCompactDate(row.closureDate) || '—'}</td>
                         </tr>
@@ -266,29 +333,12 @@ export default function OpportunityTable({ rows, loading, headerRight = null, ti
             </div>
           )}
 
-          {pageCount > 1 ? (
-            <div className="mt-4 flex items-center justify-between gap-3">
-              <button
-                type="button"
-                disabled={safePage <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="min-h-[40px] rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 disabled:opacity-40"
-              >
-                Previous
-              </button>
-              <p className="text-xs sm:text-sm text-slate-500">
-                Page {safePage} of {pageCount}
-              </p>
-              <button
-                type="button"
-                disabled={safePage >= pageCount}
-                onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
-                className="min-h-[40px] rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 disabled:opacity-40"
-              >
-                Next
-              </button>
-            </div>
-          ) : null}
+          <TablePaginationBar
+            total={sorted.length}
+            page={safePage}
+            onPageChange={setPage}
+            pageSize={PAGE_SIZE}
+          />
         </>
       )}
     </section>

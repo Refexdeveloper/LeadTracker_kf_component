@@ -8,7 +8,9 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 // 7 distinct colors (no repeat) for each day of the week
 const BAR_COLORS = ['#2879B6', '#7DC244', '#EE6A31', '#8b5cf6', '#06b6d4', '#f59e0b', '#ec4899']
 
-export default function LeadByDayOfWeek({ leads }) {
+const PT_BAR_COLORS = ['#2B5AED', '#0084AD', '#22C55E', '#F97316', '#8B5CF6', '#0F766E', '#EF4444']
+
+export default function LeadByDayOfWeek({ leads, theme = 'classic', className = '' }) {
   const canRenderCharts = typeof window !== 'undefined' && typeof window.ResizeObserver !== 'undefined'
   const isMobile = useMediaQuery(`(max-width: ${MOBILE_CHART_MAX}px)`)
   const data = useMemo(() => {
@@ -18,19 +20,26 @@ export default function LeadByDayOfWeek({ leads }) {
       const d = lead?.createdDate ? new Date(lead.createdDate) : null
       if (d && !isNaN(d.getTime())) counts[d.getDay()] = (counts[d.getDay()] || 0) + 1
     })
-    return DAYS.map((day, i) => ({ day, leads: counts[i] || 0, fill: BAR_COLORS[i] }))
-  }, [leads])
+    const palette = theme === 'pt' ? PT_BAR_COLORS : BAR_COLORS
+    return DAYS.map((day, i) => ({ day, leads: counts[i] || 0, fill: palette[i] }))
+  }, [leads, theme])
 
   const total = data.reduce((s, d) => s + d.leads, 0)
   if (total === 0) return null
 
   return (
-    <section className="mb-0 w-full max-w-full overflow-visible min-w-0" data-aos="fade-up">
+    <section className={`mb-0 w-full max-w-full overflow-visible min-w-0 ${className}`.trim()} {...(theme === 'pt' ? {} : { 'data-aos': 'fade-up' })}>
       <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-5">
-        <div className="w-12 h-12 flex items-center justify-center bg-gradient-to-br from-indigo-600 to-fuchsia-600 rounded-2xl shadow-xl shadow-fuchsia-500/30 shrink-0">
-          <i className="ri-bar-chart-box-line text-white text-xl" />
+        <div className={`w-12 h-12 flex items-center justify-center rounded-2xl shrink-0 ${
+          theme === 'pt'
+            ? 'bg-[#1E88E5]/10 text-[#1E88E5] ring-1 ring-[#1E88E5]/20'
+            : 'bg-gradient-to-br from-indigo-600 to-fuchsia-600 shadow-xl shadow-fuchsia-500/30'
+        }`}>
+          <i className={`ri-bar-chart-box-line text-xl ${theme === 'pt' ? '' : 'text-white'}`} />
         </div>
-        <h2 className="text-lg sm:text-xl md:text-2xl font-bold bg-gradient-to-r from-slate-900 via-violet-900 to-purple-900 bg-clip-text text-transparent">
+        <h2 className={`text-lg sm:text-xl md:text-2xl font-bold ${
+          theme === 'pt' ? 'text-[#0F172A]' : 'bg-gradient-to-r from-slate-900 via-violet-900 to-purple-900 bg-clip-text text-transparent'
+        }`}>
           Leads by Day of Week
         </h2>
       </div>

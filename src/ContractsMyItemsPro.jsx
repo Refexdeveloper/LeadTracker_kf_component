@@ -12,6 +12,39 @@ import {
 } from './kfContractPaths.js'
 import { mapKfContractItem, contractStatusPillClass, resolveContractSlaDeadlineRaw } from './kfContractItemMap.js'
 import { useSlaDeadlineMeta, slaDeadlineTitle } from './slaMeta.js'
+import SlaCell from './SlaCell.jsx'
+import {
+  vmsPageClass,
+  vmsPageInnerClass,
+  vmsSectionShellClass,
+  vmsSectionHeaderClass,
+  vmsSearchInputClass,
+  vmsGhostBtnClass,
+  vmsPrimaryBtnClass,
+  vmsSecondaryBtnClass,
+  vmsDangerBtnClass,
+  vmsIconBtnClass,
+  vmsSegmentBtnClass,
+  vmsChipBtnClass,
+  vmsSelectClass,
+  vmsTableHeadClass,
+  vmsTableHeadCellClass,
+  vmsTableRowClass,
+  vmsTableDivideClass,
+  vmsExpandBtnClass,
+  vmsPaginationBarClass,
+  vmsPaginationBtnClass,
+  vmsAccordionShellClass,
+  vmsWorkflowStepClass,
+  vmsHeaderShellClass,
+  vmsAvatarClass,
+  vmsRoleAccentClass,
+  vmsBrandProgressBarClass,
+  vmsContractTypeIcon,
+  vmsTypeChipClass,
+  vmsColIconClass,
+} from './vms/vmsTheme.js'
+import P2pKpiCard, { P2pHeaderFx } from './vms/P2pKpiCard.jsx'
 import AOS from 'aos'
 
 // ============= Helper Functions (same as original, kept for brevity) =============
@@ -194,7 +227,7 @@ function getStatusBadgeClass(status) {
   if (s.includes('withdrawn')) return 'bg-slate-50 text-slate-600 border-slate-200'
   if (s.includes('expired')) return 'bg-stone-50 text-stone-600 border-stone-200'
   if (s.includes('draft')) return 'bg-gray-50 text-gray-600 border-gray-200'
-  return 'bg-blue-50 text-blue-700 border-blue-200'
+  return 'bg-[#e6f6f8] text-[#0f6b7a] border-[#bfe6ec]'
 }
 
 function resolveStatusFromItem(item, listUrlSegment) {
@@ -473,7 +506,7 @@ function rowCreatedByMatchesUser(row, user) {
 function buildMyItemsPath(contractPaths, statusFilter, pageNumber, pageSize) {
   const segment = STATUS_TO_SEGMENT[statusFilter] || 'draft'
   const pn = Math.max(1, Number(pageNumber) || 1)
-  const ps = Math.min(100000, Math.max(1, Number(pageSize) || 100000))
+  const ps = Math.min(1000, Math.max(1, Number(pageSize) || 1000))
   return `/process/2/${contractPaths.accountId}/${contractPaths.processId}/myitems/${segment}?apply_preference=true&page_number=${pn}&page_size=${ps}&skip_aggregation=true&_application_id=${encodeURIComponent(contractPaths.applicationId)}`
 }
 
@@ -486,23 +519,23 @@ const DEMO_ITEMS = [
 ]
 
 const ITEMS_COLUMNS = [
-  { id: 'vendor', label: 'Vendor Name', width: 'min-w-[180px]' },
-  { id: 'contractCategory', label: 'Category', width: 'min-w-[100px]' },
-  { id: 'createdAt', label: 'Date Created', width: 'min-w-[140px]' },
-  { id: 'valueDisplay', label: 'Value', width: 'min-w-[120px]' },
-  { id: 'status', label: 'Status', width: 'min-w-[100px]' },
-  { id: 'sla', label: 'SLA', width: 'min-w-[110px]' },
-  { id: 'endDate', label: 'End Date', width: 'min-w-[100px]' },
+  { id: 'vendor', label: 'Vendor Name', width: 'min-w-[180px]', icon: 'ri-building-2-line' },
+  { id: 'contractCategory', label: 'Category', width: 'min-w-[100px]', icon: 'ri-price-tag-3-line' },
+  { id: 'createdAt', label: 'Date Created', width: 'min-w-[140px]', icon: 'ri-calendar-line' },
+  { id: 'valueDisplay', label: 'Value', width: 'min-w-[120px]', icon: 'ri-money-rupee-circle-line' },
+  { id: 'status', label: 'Status', width: 'min-w-[100px]', icon: 'ri-flag-line' },
+  { id: 'sla', label: 'SLA', width: 'min-w-[110px]', icon: 'ri-timer-flash-line' },
+  { id: 'endDate', label: 'End Date', width: 'min-w-[100px]', icon: 'ri-calendar-close-line' },
 ]
 
 const TASKS_COLUMNS = [
-  { id: 'vendor', label: 'Vendor Name', width: 'min-w-[180px]' },
-  { id: 'contractCategory', label: 'Category', width: 'min-w-[100px]' },
-  { id: 'createdAt', label: 'Date Created', width: 'min-w-[140px]' },
-  { id: 'valueDisplay', label: 'Value', width: 'min-w-[120px]' },
-  { id: 'status', label: 'Status', width: 'min-w-[100px]' },
-  { id: 'sla', label: 'SLA', width: 'min-w-[110px]' },
-  { id: 'endDate', label: 'End Date', width: 'min-w-[100px]' },
+  { id: 'vendor', label: 'Vendor Name', width: 'min-w-[180px]', icon: 'ri-building-2-line' },
+  { id: 'contractCategory', label: 'Category', width: 'min-w-[100px]', icon: 'ri-price-tag-3-line' },
+  { id: 'createdAt', label: 'Date Created', width: 'min-w-[140px]', icon: 'ri-calendar-line' },
+  { id: 'valueDisplay', label: 'Value', width: 'min-w-[120px]', icon: 'ri-money-rupee-circle-line' },
+  { id: 'status', label: 'Status', width: 'min-w-[100px]', icon: 'ri-flag-line' },
+  { id: 'sla', label: 'SLA', width: 'min-w-[110px]', icon: 'ri-timer-flash-line' },
+  { id: 'endDate', label: 'End Date', width: 'min-w-[100px]', icon: 'ri-calendar-close-line' },
 ]
 
 const DEFAULT_VISIBLE_ITEMS = Object.fromEntries(ITEMS_COLUMNS.map((c) => [c.id, true]))
@@ -558,7 +591,7 @@ function StarRatingDock({ value }) {
           <span
             key={idx}
             onMouseEnter={() => setHoveredIdx(idx)}
-            className={`select-none text-base leading-none transition-transform duration-150 ease-out sm:text-[1.3rem] ${filledStar ? 'text-[#0565FF]' : 'text-sky-200'}`}
+            className={`select-none text-base leading-none transition-transform duration-150 ease-out sm:text-[1.3rem] ${filledStar ? 'text-[#17a2b4]' : 'text-[#bfe6ec]'}`}
             style={{ transform: `scale(${scale})`, transformOrigin: 'bottom center' }}
           >
             ★
@@ -575,7 +608,7 @@ function ItemVendorNameCell({ item, vendorCellLoadingById }) {
   if (isLoading) {
     return (
       <span className="inline-flex items-center gap-1.5 text-slate-400">
-        <motion.span className="h-3 w-3 rounded-full border-2 border-blue-300 border-t-blue-600" animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 0.8, ease: 'linear' }} />
+        <motion.span className="h-3 w-3 rounded-full border-2 border-[#bfe6ec] border-t-[#17a2b4]" animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 0.8, ease: 'linear' }} />
         <span className="text-xs">Loading…</span>
       </span>
     )
@@ -605,131 +638,418 @@ function isDocAvailable(val) {
   return !!s
 }
 
-// ============= Beautiful Accordion Component =============
-function ElegantContractAccordion({ item, onViewDetails, onClose, index, flash }) {
-  if (!item) return null
-  const accordionId = item?.id ? `contract-accordion-${item.id}` : undefined
-  
-  function DocBadge({ available, label }) {
-    return (
-      <div className="flex items-center justify-between border-b border-slate-200 py-1.5 last:border-0 sm:py-2">
-        <span className="text-[10px] text-slate-500 sm:text-xs">{label} Available</span>
-        <span
-          className={`rounded-full px-2 py-0.5 text-[10px] font-medium sm:text-xs ${
-            available ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-600'
-          }`}
-        >
-          {available ? 'Yes' : 'No'}
+function formatContractStepStatusLabel(raw) {
+  const t = String(raw || '').trim()
+  if (!t) return '—'
+  if (/not\s*started/i.test(t)) return 'Not started'
+  if (/in\s*progress/i.test(t)) return 'In progress'
+  return t.charAt(0).toUpperCase() + t.slice(1)
+}
+
+function contractStepStatusBadgeClass(status) {
+  const s = String(status || '').toLowerCase()
+  if (s.includes('completed')) return 'bg-emerald-600 text-white'
+  if (s.includes('in progress')) return 'bg-[#17a2b4] text-white'
+  if (s.includes('rejected')) return 'bg-rose-600 text-white'
+  if (s.includes('withdrawn')) return 'bg-orange-500 text-white'
+  return 'bg-slate-400 text-white'
+}
+
+function contractStatusTrackerSteps(item) {
+  const status = String(formatStatusForDisplay(item?.status) || item?.status || '').toLowerCase()
+  const endRaw = item?.endDate || item?.endDateDisplay
+  const endDate = endRaw ? parseDateSafe(endRaw) : null
+  const hasExpiredDate = !!endDate && startOfDay(endDate) < startOfDay(new Date())
+
+  if (status.includes('rejected')) {
+    return [
+      { title: 'Drafted', status: 'Completed' },
+      { title: 'Review', status: 'Completed' },
+      { title: 'Rejected', status: 'Rejected' },
+      { title: 'Closed', status: 'Not Started' },
+    ]
+  }
+  if (status.includes('withdrawn')) {
+    return [
+      { title: 'Drafted', status: 'Completed' },
+      { title: 'Review', status: 'Completed' },
+      { title: 'Withdrawn', status: 'Withdrawn' },
+      { title: 'Closed', status: 'Not Started' },
+    ]
+  }
+  if (status.includes('completed')) {
+    return [
+      { title: 'Drafted', status: 'Completed' },
+      { title: 'Review', status: 'Completed' },
+      { title: 'Active', status: 'Completed' },
+      { title: 'Closed', status: 'Completed' },
+    ]
+  }
+  if (status.includes('draft')) {
+    return [
+      { title: 'Drafted', status: 'In Progress' },
+      { title: 'Review', status: 'Not Started' },
+      { title: 'Active', status: 'Not Started' },
+      { title: 'Closure', status: 'Not Started' },
+    ]
+  }
+  if (hasExpiredDate || status.includes('expired')) {
+    return [
+      { title: 'Drafted', status: 'Completed' },
+      { title: 'Review', status: 'Completed' },
+      { title: 'Active', status: 'Completed' },
+      { title: 'Expired', status: 'Completed' },
+    ]
+  }
+  return [
+    { title: 'Drafted', status: 'Completed' },
+    { title: 'Review', status: 'Completed' },
+    { title: 'Active', status: 'In Progress' },
+    { title: 'Closure', status: 'Not Started' },
+  ]
+}
+
+function contractWorkflowProgress(steps) {
+  const done = steps.filter((s) => String(s.status).toLowerCase().includes('completed')).length
+  return Math.round((done / Math.max(1, steps.length)) * 100)
+}
+
+function flattenProgressSteps(progress) {
+  const apiSteps = Array.isArray(progress?.Steps) ? progress.Steps : []
+  if (!apiSteps.length) return []
+  const out = []
+  apiSteps.forEach((s) => {
+    const title = s?.Name || s?.Id || 'Step'
+    const status = formatStatusForDisplay(s?._status || s?.Status || '')
+    out.push({ title, status: status || 'In Progress' })
+    const nestedProcesses = Array.isArray(s?.Process) ? s.Process : []
+    nestedProcesses.forEach((p) => {
+      const nestedSteps = Array.isArray(p?.Steps) ? p.Steps : []
+      nestedSteps.forEach((n) => {
+        const nTitle = n?.Name || n?.Id || p?.ProcessName || 'Step'
+        const nStatus = formatStatusForDisplay(n?._status || n?.Status || '')
+        out.push({ title: nTitle, status: nStatus || 'In Progress' })
+      })
+    })
+  })
+  return out
+}
+
+async function fetchContractProgressResponse(kfInstance, paths, instanceId) {
+  if (!paths?.accountId || !paths?.processId || !instanceId) return null
+  const sdk = kfInstance
+  const progressPath = `/process/2/${paths.accountId}/${paths.processId}/${encodeURIComponent(String(instanceId))}/progress`
+  if (sdk?.api) {
+    const resp = await sdk.api(progressPath, { method: 'GET', headers: { Accept: 'application/json' } })
+    return resp?.data ?? resp ?? null
+  }
+  const res = await fetch(getApiBase() + progressPath, {
+    method: 'GET',
+    credentials: 'include',
+    headers: { Accept: 'application/json' },
+  })
+  if (!res.ok) throw new Error(`Progress HTTP ${res.status}`)
+  return await res.json()
+}
+
+function AccordionDetailTile({ label, value, icon, highlight = false, className = '' }) {
+  return (
+    <div
+      className={`rounded-xl px-3 py-2.5 ring-1 ${
+        highlight
+          ? 'bg-[#e6f6f8]/80 ring-[#bfe6ec]'
+          : 'bg-slate-50/80 ring-slate-100/90'
+      } ${className}`}
+    >
+      <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+        {icon ? <i className={`${icon} text-xs text-[#17a2b4]`} aria-hidden /> : null}
+        {label}
+      </p>
+      <p className="text-sm font-semibold text-slate-900 break-words [overflow-wrap:anywhere]">{value || '—'}</p>
+    </div>
+  )
+}
+
+function DocChip({ label, available }) {
+  return (
+    <div
+      className={`inline-flex min-w-[5.5rem] flex-1 items-center gap-2 rounded-xl border px-2.5 py-2 ${
+        available
+          ? 'border-emerald-200/80 bg-emerald-50/70 text-emerald-800'
+          : 'border-slate-200/80 bg-slate-50/70 text-slate-500'
+      }`}
+    >
+      <span
+        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${
+          available ? 'bg-emerald-500 text-white shadow-sm' : 'bg-slate-200 text-slate-500'
+        }`}
+      >
+        <i className={`${available ? 'ri-check-line' : 'ri-close-line'} text-sm`} aria-hidden />
+      </span>
+      <span className="text-xs font-semibold">{label}</span>
+    </div>
+  )
+}
+
+function ContractWorkflowTimeline({ steps, loading = false, item = null }) {
+  const fallbackSteps = item ? contractStatusTrackerSteps(item) : []
+  const displaySteps = loading ? [] : (steps?.length ? steps : fallbackSteps)
+  const progress = contractWorkflowProgress(displaySteps)
+  const isLive = !loading && steps?.length > 0
+
+  return (
+    <div className={`${vmsAccordionShellClass()} p-3 sm:p-4`}>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <p className="inline-flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-800">
+          <i className="ri-route-line text-[#17a2b4]" aria-hidden />
+          Workflow Progress
+        </p>
+        <span className="shrink-0 text-xs font-semibold tabular-nums text-[#0f6b7a]">
+          {loading ? 'Loading…' : `${progress}%`}
         </span>
       </div>
-    )
-  }
+      {loading ? (
+        <div className="py-6 text-center text-xs text-slate-500">
+          <i className="ri-loader-4-line animate-spin mr-1.5 text-[#17a2b4]" aria-hidden />
+          Fetching live workflow progress…
+        </div>
+      ) : (
+        <>
+      <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-slate-200/80">
+        <motion.div
+          className={vmsBrandProgressBarClass()}
+          initial={{ width: 0 }}
+          animate={{ width: `${progress}%` }}
+          transition={{ type: 'spring', stiffness: 120, damping: 20 }}
+        />
+      </div>
+      {!isLive && displaySteps.length > 0 ? (
+        <p className="mb-2 text-[10px] text-slate-400">Showing estimated progress from contract status.</p>
+      ) : null}
+      <div className="space-y-2.5">
+        {displaySteps.map((step, idx) => {
+          const isLast = idx === displaySteps.length - 1
+          const isDone = String(step.status).toLowerCase().includes('completed')
+          const isActive = String(step.status).toLowerCase().includes('in progress')
+          return (
+            <div key={`${step.title}-${idx}`} className="relative flex items-start gap-3 pl-1 min-w-0">
+              <div className="relative mt-0.5 flex w-5 shrink-0 justify-center">
+                {!isLast ? (
+                  <span
+                    className={`absolute top-6 bottom-[-10px] left-1/2 -translate-x-1/2 border-l-2 ${
+                      isDone ? 'border-emerald-300' : 'border-dashed border-slate-300'
+                    }`}
+                  />
+                ) : null}
+                <div
+                  className={`relative z-10 flex h-5 w-5 items-center justify-center rounded-full ${
+                    isDone
+                      ? 'bg-emerald-500 text-white shadow-sm'
+                      : isActive
+                        ? 'border-2 border-[#17a2b4] bg-[#e6f6f8] text-[#0f6b7a]'
+                        : 'border border-slate-300 bg-white text-slate-500'
+                  }`}
+                >
+                  {isDone ? (
+                    <i className="ri-check-line text-[10px]" aria-hidden />
+                  ) : (
+                    <span className="text-[9px] font-bold">{idx + 1}</span>
+                  )}
+                </div>
+              </div>
+              <div className={`min-w-0 flex-1 ${vmsWorkflowStepClass()}`}>
+                <div className="flex items-start justify-between gap-2 min-w-0">
+                  <p className="min-w-0 text-sm font-medium text-slate-800 break-words">{step.title}</p>
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-snug ${contractStepStatusBadgeClass(step.status)}`}
+                  >
+                    {formatContractStepStatusLabel(step.status)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ============= Beautiful Accordion Component =============
+function ElegantContractAccordion({ item, onViewDetails, onClose, flash, workflowSteps, workflowLoading = false }) {
+  const getSlaMeta = useSlaDeadlineMeta()
+  if (!item) return null
+
+  const accordionId = item?.id ? `contract-accordion-${item.id}` : undefined
+  const liveSteps = Array.isArray(workflowSteps) ? workflowSteps : []
+  const workflowProgress = contractWorkflowProgress(
+    workflowLoading ? [] : (liveSteps.length ? liveSteps : contractStatusTrackerSteps(item)),
+  )
+  const slaMeta = item.id ? getSlaMeta(item.id, item.slaDeadline) : null
+  const vendorInitial = (item.vendor || item.name || '?').charAt(0).toUpperCase()
+  const description = item.contractDescription || item.message || '—'
+
+  const detailFields = [
+    { label: 'Vendor', value: item.vendor, icon: 'ri-building-2-line' },
+    { label: 'Contract Type', value: item.contractType, icon: vmsContractTypeIcon(item.contractType) },
+    { label: 'Category', value: item.contractCategory, icon: 'ri-price-tag-3-line' },
+    { label: 'Contract Value', value: item.valueDisplay, icon: 'ri-money-rupee-circle-line', highlight: true },
+    { label: 'Start Date', value: item.startDateDisplay, icon: 'ri-calendar-check-line' },
+    { label: 'End Date', value: item.endDateDisplay || item.endDate, icon: 'ri-calendar-close-line' },
+    { label: 'Created', value: item.createdDate ? formatDateTime(item.createdDate) : '—', icon: 'ri-time-line' },
+    { label: 'Payment Type', value: item.paymentType, icon: 'ri-bank-card-line' },
+  ]
 
   return (
     <motion.div
       id={accordionId}
-      initial={{ opacity: 0, y: -10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -10 }}
-      transition={{ duration: 0.2, ease: 'easeOut' }}
-      className={`mx-0 mb-3 mt-2 rounded-xl overflow-hidden border bg-white transition-colors sm:mx-4 sm:mb-4 sm:mt-3 sm:rounded-2xl ${
-        flash ? 'border-[#0565FF]/55 ring-2 ring-[#0565FF]/15' : 'border-slate-200/80'
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: 'auto' }}
+      exit={{ opacity: 0, height: 0 }}
+      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+      className={`mx-2 mb-3 mt-2 overflow-hidden sm:mx-4 sm:mb-4 sm:mt-3 ${
+        flash ? 'ring-2 ring-[#5cc3cf]/70 ring-offset-2 ring-offset-white' : ''
       }`}
     >
-      {/* Accordion header */}
-      <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-slate-200/60 bg-gradient-to-b from-slate-50 via-white to-white sm:gap-3 sm:px-5 sm:py-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <div
-            className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0 ring-2 ring-white shadow-[0_1px_0_rgba(15,23,42,0.06)]"
-            style={{ background: 'linear-gradient(135deg, #0565FF, #045CE6)' }}
-          >
-            {(item.vendor || item.name || '?').charAt(0).toUpperCase()}
-          </div>
-          <div className="min-w-0">
-            <p className="text-xs font-semibold text-slate-800 truncate sm:text-sm">{item.name || '—'}</p>
-            <p className="text-[10px] text-slate-400 sm:text-xs">Updated · {item.createdDate ? formatDateTime(item.createdDate) : '—'}</p>
-          </div>
-        </div>
-        <span className={`shrink-0 text-[10px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap border sm:text-xs sm:px-2.5 sm:py-1 ${getStatusBadgeClass(item.status)}`}>
-          {formatStatusForDisplay(item.status) || '—'}
-        </span>
-      </div>
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+        {/* Hero header */}
+        <div className="relative overflow-hidden border-b border-gray-200 bg-white px-4 py-4 sm:px-5">
+          <div className="relative flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className={`shrink-0 ${vmsAvatarClass()}`}>
+                {vendorInitial}
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-[#17a2b4]/90">Contract Overview</p>
+                <h3 className="mt-0.5 text-base font-bold leading-snug text-slate-900 break-words [overflow-wrap:anywhere] sm:text-lg">
+                  {item.name || '—'}
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  {item.vendor || '—'}
+                  {item.createdDate ? ` · Updated ${formatDateTime(item.createdDate)}` : ''}
+                </p>
+              </div>
+            </div>
 
-      {/* Accordion body */}
-      <div className="flex flex-col bg-gradient-to-b from-white to-slate-50/30 lg:flex-row">
-        {/* LEFT: Contract details (70%) */}
-        <div className="flex-1 border-b border-slate-200/60 px-4 py-3 min-w-0 sm:px-5 sm:py-4 lg:border-b-0 lg:border-r">
-          <div className="mb-3 grid grid-cols-1 gap-x-6 gap-y-2.5 sm:mb-4 sm:grid-cols-2 sm:gap-x-8 sm:gap-y-3">
+            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+              <span className={`inline-flex px-2.5 py-1 text-xs font-semibold rounded-full border ${getStatusBadgeClass(item.status)}`}>
+                {formatStatusForDisplay(item.status) || '—'}
+              </span>
+              {slaMeta?.label ? (
+                <span
+                  className={`inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-full border ${slaMeta.pill}`}
+                  title={slaDeadlineTitle(item.slaDeadline)}
+                >
+                  {slaMeta.icon ? <span aria-hidden="true">{slaMeta.icon}</span> : null}
+                  <span>SLA · {slaMeta.label}</span>
+                </span>
+              ) : null}
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close details"
+                className={vmsIconBtnClass(false)}
+              >
+                <i className="ri-close-line text-base" />
+              </button>
+            </div>
+          </div>
+
+          <div className="relative mt-3 grid grid-cols-3 gap-2">
             {[
-              { label: 'Contract Title', value: item.name || '—' },
-              { label: 'Vendor', value: item.vendor || '—' },
-              { label: 'Contract Type', value: item.contractType || '—' },
-              { label: 'Contract Category', value: item.contractCategory || '—' },
-              { label: 'Contract Value', value: item.valueDisplay || '—' },
-              { label: 'Start Date', value: item.startDateDisplay || '—' },
-              { label: 'End Date', value: item.endDateDisplay || item.endDate || '—' },
-            ].map(({ label, value }) => (
-              <div key={label} className="flex min-w-0 flex-col gap-0.5">
-                <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500 sm:text-[11px]">{label}</span>
-                <span className="truncate text-xs font-medium text-slate-800 sm:text-sm">{value}</span>
+              { label: 'Value', value: item.valueDisplay || '—', icon: 'ri-money-rupee-circle-line' },
+              { label: 'Type', value: item.contractType || '—', icon: vmsContractTypeIcon(item.contractType) },
+              { label: 'Progress', value: `${workflowProgress}%`, icon: 'ri-pulse-line' },
+            ].map(({ label, value, icon }) => (
+              <div key={label} className="rounded-xl border border-white/80 bg-white/70 px-2.5 py-2 shadow-sm backdrop-blur-sm">
+                <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  <i className={`${icon} text-[#17a2b4]`} aria-hidden />
+                  {label}
+                </p>
+                <p className="mt-0.5 truncate text-sm font-bold text-slate-900">{value}</p>
               </div>
             ))}
-            <div className="flex flex-col gap-0.5 sm:col-span-2">
-              <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500 sm:text-[11px]">Description</span>
-              <span className="whitespace-pre-wrap text-xs leading-relaxed text-slate-700 sm:text-sm">
-                {item.contractDescription || item.message || '—'}
-              </span>
-            </div>
-          </div>
-
-          <div className="border-t border-slate-200/60 pt-2.5 sm:pt-3">
-            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500 sm:mb-2.5 sm:text-xs">Vendor Performance</p>
-            <div className="flex flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:gap-x-6 sm:gap-y-2">
-              {[
-                { label: 'Rating', value: item.ratingOverall },
-                { label: 'TAT', value: item.ratingTat },
-                { label: 'Service', value: item.ratingService },
-                { label: 'Response', value: item.ratingResponse },
-                { label: 'PM', value: item.ratingPm },
-              ].map(({ label, value }) => (
-                <div key={label} className="flex items-center justify-between gap-2 sm:justify-start">
-                  <span className="w-12 shrink-0 text-[10px] text-slate-500 sm:w-14 sm:text-xs">{label}</span>
-                  <StarRatingDock value={value} />
-                </div>
-              ))}
-            </div>
           </div>
         </div>
 
-        {/* RIGHT: Documents + Actions (30%) */}
-        <div className="flex flex-col gap-3 px-4 py-3 sm:gap-4 sm:px-5 sm:py-4 lg:w-64 xl:w-72">
-          <div className="rounded-xl border border-slate-200/70 bg-white/70 p-2.5 sm:p-3">
-            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500 sm:text-[11px]">Documents</p>
-            <DocBadge available={isDocAvailable(item.sow)} label="SOW" />
-            <DocBadge available={isDocAvailable(item.nda)} label="NDA" />
-            <DocBadge available={isDocAvailable(item.msa)} label="MSA" />
+        {/* Body */}
+        <div className="grid grid-cols-1 gap-3 p-3 sm:p-4 xl:grid-cols-[1.55fr_1fr]">
+          {/* Contract details */}
+          <div className={`${vmsAccordionShellClass()} p-3 sm:p-4`}>
+            <p className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-[#17a2b4]/80">Contract Details</p>
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3">
+              {detailFields.map(({ label, value, icon, highlight }) => (
+                <AccordionDetailTile key={label} label={label} value={value} icon={icon} highlight={highlight} />
+              ))}
+            </div>
+            <div className="mt-3">
+              <AccordionDetailTile
+                label="Description"
+                value={description}
+                icon="ri-align-left"
+                className="min-h-[4.5rem]"
+              />
+            </div>
+
+            <div className="mt-4 border-t border-slate-200/70 pt-4">
+              <p className="mb-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-[#17a2b4]/80">
+                <i className="ri-star-smile-line text-[#17a2b4]" aria-hidden />
+                Vendor Performance
+              </p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+                {[
+                  { label: 'Overall', value: item.ratingOverall },
+                  { label: 'TAT', value: item.ratingTat },
+                  { label: 'Service', value: item.ratingService },
+                  { label: 'Response', value: item.ratingResponse },
+                  { label: 'PM', value: item.ratingPm },
+                ].map(({ label, value }) => (
+                  <div
+                    key={label}
+                    className="rounded-xl border border-slate-200/70 bg-white/80 px-2.5 py-2 text-center shadow-sm"
+                  >
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+                    <div className="mt-1 flex justify-center">
+                      <StarRatingDock value={value} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2 text-[10px] text-slate-400 sm:text-xs">
-            <i className="ri-time-line shrink-0"></i>
-            <span className="min-w-0">Last updated {item.createdDate ? formatDateTime(item.createdDate) : '—'}</span>
-          </div>
+          {/* Sidebar */}
+          <div className="flex flex-col gap-3">
+            <ContractWorkflowTimeline steps={liveSteps} loading={workflowLoading} item={item} />
 
-          <div className="mt-auto flex flex-col gap-2">
-            <button
-              type="button"
-              onClick={onViewDetails}
-              className="min-h-[44px] w-full cursor-pointer rounded-lg bg-[#0565FF] py-2.5 text-xs font-semibold text-white ring-1 ring-[#0565FF]/20 transition-colors hover:bg-[#045CE6] touch-manipulation sm:min-h-0 sm:py-2 sm:whitespace-nowrap"
-            >
-              View Full Details
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="min-h-[44px] w-full cursor-pointer rounded-lg border border-slate-200 bg-white py-2.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 touch-manipulation sm:min-h-0 sm:py-2 sm:whitespace-nowrap"
-            >
-              Close
-            </button>
+            <div className={`${vmsAccordionShellClass()} p-3 sm:p-4`}>
+              <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800">
+                <i className="ri-folder-open-line text-[#17a2b4]" aria-hidden />
+                Documents
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <DocChip label="SOW" available={isDocAvailable(item.sow)} />
+                <DocChip label="NDA" available={isDocAvailable(item.nda)} />
+                <DocChip label="MSA" available={isDocAvailable(item.msa)} />
+              </div>
+              <p className="mt-3 flex items-center gap-1.5 text-[11px] text-slate-500">
+                <i className="ri-information-line shrink-0" aria-hidden />
+                Green chips indicate uploaded documents on file.
+              </p>
+            </div>
+
+            <div className={`${vmsAccordionShellClass()} flex flex-col gap-2 p-3 sm:p-4`}>
+              <button type="button" onClick={onViewDetails} className={vmsPrimaryBtnClass()}>
+                <i className="ri-external-link-line" aria-hidden />
+                View Full Details
+              </button>
+              <button type="button" onClick={onClose} className={vmsSecondaryBtnClass()}>
+                <i className="ri-arrow-up-s-line" aria-hidden />
+                Collapse
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -851,33 +1171,15 @@ const createOverviewCards = (kpis) => [
     key: 'total',
     label: 'Total Contracts',
     value: kpis.total,
-    icon: 'ri-file-paper-2-line',
-    accent: {
-      borderClass: 'border border-blue-200/70',
-      washClass:
-        'bg-gradient-to-br from-white from-[14%] via-white via-[48%] to-blue-100/48',
-      radialWash:
-        'bg-[radial-gradient(155%_118%_at_88%_88%,rgba(59,130,246,0.22)_0%,transparent_72%)]',
-      iconGradient: 'from-blue-500 to-blue-600',
-      valueClass: 'text-blue-600',
-      watermarkColor: 'text-blue-600',
-    },
+    icon: 'ri-file-copy-2-line',
+    variant: 'all',
   },
   {
     key: 'active',
     label: 'Active Contracts',
     value: kpis.active,
-    icon: 'ri-shield-check-line',
-    accent: {
-      borderClass: 'border border-emerald-200/70',
-      washClass:
-        'bg-gradient-to-br from-white from-[14%] via-white via-[48%] to-emerald-100/44',
-      radialWash:
-        'bg-[radial-gradient(155%_118%_at_88%_88%,rgba(16,185,129,0.20)_0%,transparent_72%)]',
-      iconGradient: 'from-emerald-500 to-emerald-600',
-      valueClass: 'text-emerald-600',
-      watermarkColor: 'text-emerald-600',
-    },
+    icon: 'ri-file-check-line',
+    variant: 'approved',
   },
   {
     key: 'expiring',
@@ -885,191 +1187,71 @@ const createOverviewCards = (kpis) => [
     value: kpis.expiringSoon,
     segmented: true,
     icon: 'ri-calendar-schedule-line',
-    accent: {
-      borderClass: 'border border-violet-200/70',
-      washClass:
-        'bg-gradient-to-br from-white from-[14%] via-white via-[48%] to-violet-100/44',
-      radialWash:
-        'bg-[radial-gradient(155%_118%_at_88%_88%,rgba(139,92,246,0.20)_0%,transparent_72%)]',
-      iconGradient: 'from-violet-500 to-violet-600',
-      valueClass: 'text-violet-600',
-      watermarkColor: 'text-violet-600',
-    },
+    variant: 'overdue',
+    live: true,
   },
   {
     key: 'expired',
     label: 'Expired',
     value: kpis.expired,
-    icon: 'ri-time-line',
-    accent: {
-      borderClass: 'border border-rose-200/70',
-      washClass:
-        'bg-gradient-to-br from-white from-[14%] via-white via-[48%] to-rose-100/44',
-      radialWash:
-        'bg-[radial-gradient(155%_118%_at_88%_88%,rgba(244,63,94,0.19)_0%,transparent_72%)]',
-      iconGradient: 'from-rose-500 to-rose-600',
-      valueClass: 'text-rose-600',
-      watermarkColor: 'text-rose-600',
-    },
+    icon: 'ri-calendar-close-line',
+    variant: 'rejected',
   },
   {
     key: 'nda',
     label: 'NDA Missing',
     value: kpis.ndaMiss,
-    icon: 'ri-file-warning-line',
-    accent: {
-      borderClass: 'border border-fuchsia-200/70',
-      washClass:
-        'bg-gradient-to-br from-white from-[14%] via-white via-[48%] to-fuchsia-100/42',
-      radialWash:
-        'bg-[radial-gradient(155%_118%_at_88%_88%,rgba(217,70,239,0.19)_0%,transparent_72%)]',
-      iconGradient: 'from-fuchsia-500 to-fuchsia-600',
-      valueClass: 'text-fuchsia-600',
-      watermarkColor: 'text-fuchsia-600',
-    },
+    icon: 'ri-lock-2-line',
+    variant: 'draft',
   },
   {
     key: 'msa',
     label: 'MSA Missing',
     value: kpis.msaMiss,
-    icon: 'ri-shield-line',
-    accent: {
-      borderClass: 'border border-orange-200/70',
-      washClass:
-        'bg-gradient-to-br from-white from-[14%] via-white via-[48%] to-orange-100/42',
-      radialWash:
-        'bg-[radial-gradient(155%_118%_at_88%_88%,rgba(249,115,22,0.19)_0%,transparent_72%)]',
-      iconGradient: 'from-orange-500 to-orange-600',
-      valueClass: 'text-orange-600',
-      watermarkColor: 'text-orange-600',
-    },
+    icon: 'ri-stack-line',
+    variant: 'returned',
   },
   {
     key: 'sow',
     label: 'SOW Missing',
     value: kpis.sowMiss,
     icon: 'ri-clipboard-line',
-    accent: {
-      borderClass: 'border border-sky-200/70',
-      washClass:
-        'bg-gradient-to-br from-white from-[14%] via-white via-[48%] to-sky-100/47',
-      radialWash:
-        'bg-[radial-gradient(155%_118%_at_88%_88%,rgba(14,165,233,0.20)_0%,transparent_72%)]',
-      iconGradient: 'from-sky-500 to-sky-600',
-      valueClass: 'text-sky-600',
-      watermarkColor: 'text-sky-600',
-    },
+    variant: 'pending_approval',
   },
   {
     key: 'vendors',
     label: 'Total Vendors',
     value: kpis.vendors,
-    icon: 'ri-team-line',
-    accent: {
-      borderClass: 'border border-indigo-200/70',
-      washClass:
-        'bg-gradient-to-br from-white from-[14%] via-white via-[48%] to-indigo-100/44',
-      radialWash:
-        'bg-[radial-gradient(155%_118%_at_88%_88%,rgba(79,70,229,0.20)_0%,transparent_72%)]',
-      iconGradient: 'from-indigo-600 to-indigo-700',
-      valueClass: 'text-indigo-600',
-      watermarkColor: 'text-indigo-600',
-    },
+    icon: 'ri-handshake-line',
+    variant: 'payments',
   },
 ]
 
-function KpiCardWatermark({ iconClass, colorClass }) {
+function KpiOverviewCard({ card, index, total = 0, expiringWindow = '90', onExpiringWindowChange }) {
   return (
-    <div
-      className="pointer-events-none absolute inset-0 z-[2] overflow-hidden rounded-2xl"
-      aria-hidden
-    >
-      {/* Inset BR watermark — dock-style zoom on card hover only; clipped by rounded card */}
-      <div className="absolute bottom-2 right-2 origin-bottom-right transition-transform duration-[380ms] ease-[cubic-bezier(0.34,1.56,0.64,1)] will-change-transform group-hover:scale-[1.22] md:bottom-2.5 md:right-2.5">
-        <i
-          className={`${iconClass} ${colorClass} block text-[4.35rem] leading-none opacity-[0.13] transition-opacity duration-300 ease-out select-none group-hover:opacity-[0.18] md:text-[4.85rem]`}
-        />
-      </div>
-    </div>
-  )
-}
-
-function KpiOverviewCard({ card, index, expiringWindow = '90', onExpiringWindowChange }) {
-  const valueDisplay = card?.value ?? 0
-  const a = card?.accent || {}
-  const borderClass = a.borderClass || 'border border-slate-200/70'
-  const washClass = a.washClass || 'bg-gradient-to-br from-white via-white to-slate-50/40'
-  const radialWash = a.radialWash || ''
-  const iconGradient = a.iconGradient || 'from-slate-500 to-slate-600'
-  const valueCls = a.valueClass || 'text-slate-700'
-  const wmColor = a.watermarkColor || 'text-slate-400'
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.05, type: 'spring', stiffness: 400, damping: 38 }}
-      className={`group relative min-h-[96px] overflow-hidden rounded-2xl bg-white shadow-[0_1px_0_rgba(15,23,42,0.04),0_1px_3px_rgba(15,23,42,0.07)] md:min-h-[108px] ${borderClass}`}
-    >
-      <div className="pointer-events-none absolute inset-0 z-0 bg-white" aria-hidden />
-      <div
-        className={`pointer-events-none absolute inset-0 z-[1] ${washClass}`}
-        aria-hidden
-      />
-      {radialWash ? (
-        <div
-          className={`pointer-events-none absolute inset-0 z-[1] opacity-[0.76] ${radialWash}`}
-          aria-hidden
-        />
+    <P2pKpiCard
+      label={card.label}
+      value={card?.value ?? 0}
+      icon={card.icon}
+      variant={card.variant}
+      live={card.live}
+      total={card.key === 'vendors' ? (card?.value ?? 0) : total}
+      index={index}
+      extra={card.segmented ? (
+        <div className="tfx-kpi-windows">
+          {['30', '60', '90'].map((w) => (
+            <button
+              key={w}
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onExpiringWindowChange?.(w) }}
+              className={expiringWindow === w ? 'is-on' : ''}
+            >
+              {w}d
+            </button>
+          ))}
+        </div>
       ) : null}
-
-      <KpiCardWatermark iconClass={card.icon} colorClass={wmColor} />
-
-      <div className="relative z-10 flex min-h-[96px] flex-col p-2.5 md:min-h-[108px] md:p-3">
-        <div
-          className={`relative z-10 inline-flex h-9 w-9 shrink-0 cursor-default items-center justify-center rounded-lg bg-gradient-to-br md:h-7 md:w-7 ${iconGradient} shadow-sm ring-1 ring-black/[0.06]`}
-        >
-          <i className={`${card.icon} text-lg leading-none text-white md:text-sm`} />
-        </div>
-
-        <div className="mt-2 min-w-0 flex-1">
-          <p className="text-[10px] font-semibold uppercase leading-snug tracking-[0.12em] text-slate-500 md:text-[11px] md:tracking-wide">
-            {card.label}
-          </p>
-
-          {card.segmented ? (
-            <div className="mt-1 flex h-[62px] flex-col justify-between">
-              <div className="inline-flex w-fit max-w-full overflow-hidden rounded-md border border-violet-200/60 bg-white p-0.5 shadow-sm">
-                {['30', '60', '90'].map((w) => (
-                  <button
-                    key={w}
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); onExpiringWindowChange?.(w) }}
-                    className={`rounded px-1 py-0.5 text-[9px] font-semibold transition-colors md:px-1 ${
-                      expiringWindow === w ? 'bg-violet-600 text-white shadow-sm' : 'text-slate-600 hover:bg-violet-50'
-                    }`}
-                  >
-                    {w}d
-                  </button>
-                ))}
-              </div>
-              <div className="flex flex-col items-start">
-                <p className={`text-[26px] font-bold leading-none tabular-nums tracking-tight md:text-[28px] ${valueCls}`}>
-                  {valueDisplay}
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="mt-2 flex h-[48px] items-end md:mt-3 md:h-[54px]">
-              <div>
-                <p className={`text-3xl font-bold leading-none tabular-nums tracking-tight ${valueCls}`}>
-                  {valueDisplay}
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </motion.div>
+    />
   )
 }
 
@@ -1081,7 +1263,7 @@ function CompactMetricCard({ label, value, icon, color, index, onClick }) {
       transition={{ delay: index * 0.05, type: 'spring', stiffness: 400, damping: 26 }}
       whileHover={{ y: -1, scale: 1.01 }}
       onClick={onClick}
-      className={`bg-white rounded-xl border border-slate-200 p-3 shadow-sm hover:shadow-md transition-all duration-200 ${onClick ? 'cursor-pointer hover:border-[#0565FF]/40' : ''}`}
+      className={`bg-white rounded-2xl border border-slate-200/80 p-3 shadow-sm hover:shadow-md transition-all duration-200 ${onClick ? 'cursor-pointer hover:border-[#bfe6ec]' : ''}`}
     >
       <div className="flex items-center justify-between">
         <div>
@@ -1129,7 +1311,7 @@ function TableEmptyState({ title, subtitle, primaryActionLabel, onPrimaryAction,
             <button
               type="button"
               onClick={onPrimaryAction}
-              className="min-h-[44px] px-4 py-2 rounded-xl bg-gradient-to-r from-[#0565FF] to-[#045CE6] text-white text-sm font-medium hover:shadow-lg transition-all"
+              className={vmsPrimaryBtnClass()}
             >
               {primaryActionLabel}
             </button>
@@ -1138,7 +1320,7 @@ function TableEmptyState({ title, subtitle, primaryActionLabel, onPrimaryAction,
             <button
               type="button"
               onClick={onSecondaryAction}
-              className="min-h-[44px] px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 text-sm font-medium hover:bg-slate-50 transition-all"
+              className={vmsSecondaryBtnClass()}
             >
               {secondaryActionLabel}
             </button>
@@ -1194,6 +1376,9 @@ export default function ContractsMyItems() {
   const [accordionFlashId, setAccordionFlashId] = useState(null)
   const [itemDetailsById, setItemDetailsById] = useState({})
   const [taskDetailsById, setTaskDetailsById] = useState({})
+  const [progressByContractId, setProgressByContractId] = useState({})
+  const [progressLoadingId, setProgressLoadingId] = useState(null)
+  const progressFetchInFlightRef = useRef(null)
   const [itemVendorCellLoadingById, setItemVendorCellLoadingById] = useState({})
   const [deletingDrafts, setDeletingDrafts] = useState(false)
   const [watchParamsTick, setWatchParamsTick] = useState(0)
@@ -1477,7 +1662,7 @@ export default function ContractsMyItems() {
     const kf = kfInstance
     let cancelled = false
     setItemsLoading(true)
-    const path = buildMyItemsPath(contractPaths, statusFilter, 1, 100000)
+    const path = buildMyItemsPath(contractPaths, statusFilter, 1, 1000)
     const segment = STATUS_TO_SEGMENT[statusFilter] || 'draft'
     async function run() {
       try {
@@ -1510,7 +1695,7 @@ export default function ContractsMyItems() {
     let cancelled = false
     async function run() {
       try {
-        const path = adminPaths.getContractItemsPath(1, 100000)
+        const path = adminPaths.getContractItemsPath(1, 1000)
         let response
         if (kf?.api) {
           const resp = await kf.api(path, { method: 'GET', headers: { Accept: 'application/json' } })
@@ -1561,7 +1746,7 @@ export default function ContractsMyItems() {
     function mapVendor(item) { if (!item || typeof item !== 'object') return null; const name = String(item.Vendor_Name || item.Name || '').trim(); if (!name) return null; return { id: item._id || '', name, raw: item } }
     async function run() {
       try {
-        const path = vendorMasterPaths.getVendorItemsPath(1, 100000)
+        const path = vendorMasterPaths.getVendorItemsPath(1, 1000)
         let response
         if (kf?.api) {
           const resp = await kf.api(path, { method: 'GET', headers: { Accept: 'application/json' } })
@@ -1747,6 +1932,49 @@ export default function ContractsMyItems() {
     run()
     return () => { cancelled = true }
   }, [expandedTaskId, contractPaths, kfInstance, tasksFromApi, taskDetailsById, currentActivityId])
+
+  const expandedContractId = expandedItemId || expandedTaskId
+
+  useEffect(() => {
+    if (!expandedContractId || !contractPaths) {
+      setProgressLoadingId(null)
+      return
+    }
+    if (Object.prototype.hasOwnProperty.call(progressByContractId, expandedContractId)) {
+      setProgressLoadingId(null)
+      return
+    }
+    if (progressFetchInFlightRef.current === expandedContractId) return
+
+    let cancelled = false
+    progressFetchInFlightRef.current = expandedContractId
+    setProgressLoadingId(expandedContractId)
+
+    async function run() {
+      try {
+        const response = await fetchContractProgressResponse(kfInstance, contractPaths, expandedContractId)
+        if (!cancelled) {
+          setProgressByContractId((prev) => ({ ...prev, [expandedContractId]: response }))
+        }
+      } catch (e) {
+        console.warn('Contract progress fetch failed:', e?.message || e)
+        if (!cancelled) {
+          setProgressByContractId((prev) => ({ ...prev, [expandedContractId]: null }))
+        }
+      } finally {
+        if (!cancelled) {
+          setProgressLoadingId((cur) => (cur === expandedContractId ? null : cur))
+        }
+        if (progressFetchInFlightRef.current === expandedContractId) {
+          progressFetchInFlightRef.current = null
+        }
+      }
+    }
+    run()
+    return () => {
+      cancelled = true
+    }
+  }, [expandedContractId, contractPaths, kfInstance, progressByContractId])
 
   useEffect(function scrollAndFlashAccordion() {
     const targetId = scrollToAccordionId
@@ -1999,36 +2227,36 @@ export default function ContractsMyItems() {
   const overviewCards = createOverviewCards(contractKpis)
 
   return (
-    <div className="min-h-screen bg-slate-100 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-0">
-      <div className="mx-auto max-w-[1600px] px-3 py-4 sm:px-6 sm:py-6 lg:px-8">
-        
+    <div className={`${vmsPageClass} pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:pb-4`}>
+      <div className={vmsPageInnerClass}>
+        <div className="p-1 sm:p-2 md:p-0 max-md:space-y-4 space-y-5 sm:space-y-6">
+
         {/* Header Section */}
-        <motion.div 
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-          className="mb-5 flex flex-col gap-3 sm:mb-8 sm:flex-row sm:items-center sm:gap-4"
-        >
-          <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-r from-[#0565FF] to-[#045CE6] text-sm font-bold text-white shadow-lg sm:h-12 sm:w-12 sm:text-base">
+        <section className={vmsHeaderShellClass()} data-aos="fade-down">
+          <P2pHeaderFx />
+          <div className="relative z-[1] flex min-w-0 items-center gap-3 sm:gap-4">
+            <div className={vmsAvatarClass()}>
               {(firstName || 'U').charAt(0)}
             </div>
             <div className="min-w-0">
-              <p className="truncate text-base font-semibold tracking-tight text-slate-800 sm:text-lg">
+              <p className="truncate text-base font-semibold tracking-tight text-slate-900 sm:text-xl">
                 {greeting}, {firstName}
               </p>
-              <p className="truncate text-xs text-slate-500 sm:text-sm">{roleLabel}</p>
+              <p className="truncate text-xs text-slate-500 sm:text-sm">
+                Logged in as <span className={vmsRoleAccentClass()}>{roleLabel}</span>
+              </p>
             </div>
           </div>
-        </motion.div>
+        </section>
 
         {/* KPI Cards (match ContractsMyItems.jsx) */}
-        <div className="mb-4 grid grid-cols-1 gap-2.5 sm:mb-6 sm:grid-cols-2 sm:gap-3 lg:grid-cols-4 xl:grid-cols-8">
+        <div className="tfx-kpis-row grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3 lg:grid-cols-4 xl:grid-cols-8">
           {overviewCards.map((card, idx) => (
             <KpiOverviewCard
               key={card.key}
               card={card}
               index={idx}
+              total={contractKpis.total}
               expiringWindow={expiringWindow}
               onExpiringWindowChange={setExpiringWindow}
             />
@@ -2040,70 +2268,57 @@ export default function ContractsMyItems() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
-          className="overflow-hidden rounded-xl border border-slate-200/90 bg-white shadow-[0_1px_3px_rgba(15,23,42,0.06),0_8px_28px_rgba(15,23,42,0.06)] sm:rounded-2xl"
+          className={vmsSectionShellClass()}
         >
           {/* Toolbar */}
-          <div className="flex flex-col gap-2.5 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-4 sm:py-3">
-            <div className="flex gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
+          <div className={`flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3 ${vmsSectionHeaderClass('brand')}`}>
+            <div className="flex gap-1 rounded-full border border-slate-200 bg-white p-1 shadow-sm">
+              <button
+                type="button"
                 onClick={() => setActiveTab('tasks')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  activeTab === 'tasks'
-                    ? 'bg-gradient-to-r from-[#0565FF] to-[#045CE6] text-white shadow-md'
-                    : 'text-slate-600 hover:bg-slate-100'
-                }`}
+                className={vmsSegmentBtnClass(activeTab === 'tasks')}
               >
                 My Tasks
-                <span className="ml-2 text-xs opacity-80">{totalTasksCount}</span>
-              </motion.button>
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
+                <span className="opacity-80">{totalTasksCount}</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setActiveTab('items')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  activeTab === 'items'
-                    ? 'bg-gradient-to-r from-[#0565FF] to-[#045CE6] text-white shadow-md'
-                    : 'text-slate-600 hover:bg-slate-100'
-                }`}
+                className={vmsSegmentBtnClass(activeTab === 'items')}
               >
                 My Items
-                <span className="ml-2 text-xs opacity-80">{filteredItems.length}</span>
-              </motion.button>
+                <span className="opacity-80">{filteredItems.length}</span>
+              </button>
             </div>
 
             <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
               {activeTab === 'items' && statusFilter === 'Draft' && selectedItemIds.size > 0 && (
-                <motion.button
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
+                <button
+                  type="button"
                   onClick={handleDeleteSelectedDrafts}
                   disabled={deletingDrafts}
-                  className="px-3 py-2 rounded-lg bg-rose-50 text-rose-600 text-sm font-medium hover:bg-rose-100 transition-all disabled:opacity-50 flex items-center gap-1.5"
+                  className={vmsDangerBtnClass()}
                 >
                   <i className="ri-delete-bin-line"></i>
                   {deletingDrafts ? 'Deleting...' : `Delete (${selectedItemIds.size})`}
-                </motion.button>
+                </button>
               )}
               
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
+              <button
+                type="button"
                 onClick={handleNewItem}
-                className="min-h-[34px] min-w-[124px] px-3 py-1.5 rounded-lg bg-gradient-to-r from-[#0565FF] to-[#045CE6] text-white text-xs font-medium transition-all flex items-center justify-center gap-1.5 whitespace-nowrap touch-manipulation"
+                className={vmsPrimaryBtnClass()}
               >
                 <i className="ri-add-line"></i>
                 New Contract
-              </motion.button>
+              </button>
 
               <div className="relative" ref={filterPopoverRef}>
                 <button
+                  type="button"
                   onClick={() => { setFilterPopoverOpen(!filterPopoverOpen); setColumnsPopoverOpen(false); }}
                   aria-label="Open filters"
-                  className={`p-1.5 rounded-lg border transition-all ${filterPopoverOpen ? 'bg-blue-50 border-blue-300 text-blue-600' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                  className={vmsIconBtnClass(filterPopoverOpen)}
                 >
                   <i className="ri-filter-3-line text-sm"></i>
                 </button>
@@ -2146,7 +2361,7 @@ export default function ContractsMyItems() {
                               const iso = formatDateToIso(dt)
                               const isSelected = selectedIsoForCalendar === iso
                               return (
-                                <button key={iso} type="button" onClick={() => selectCalendarDate(dt)} className={`h-9 rounded-xl text-sm transition-all ${isSelected ? 'bg-blue-600 text-white shadow-sm' : 'hover:bg-slate-100 text-slate-700'}`}>
+                                <button key={iso} type="button" onClick={() => selectCalendarDate(dt)} className={`h-9 rounded-xl text-sm transition-all ${isSelected ? 'bg-[#17a2b4] text-white shadow-sm' : 'hover:bg-slate-100 text-slate-700'}`}>
                                   {dt.getDate()}
                                 </button>
                               )
@@ -2156,8 +2371,8 @@ export default function ContractsMyItems() {
                       )}
                     </div>
                     <div className="flex gap-2 mt-4">
-                      <button type="button" onClick={() => { setFilterFromDate(''); setFilterToDate(''); setFilterPopoverOpen(false); }} className="flex-1 min-h-[44px] px-3 py-2 text-sm border border-slate-200 rounded-xl hover:bg-slate-50">Clear</button>
-                      <button type="button" onClick={() => setFilterPopoverOpen(false)} className="flex-1 min-h-[44px] px-3 py-2 text-sm bg-blue-600 text-white rounded-xl hover:bg-blue-700">Apply</button>
+                      <button type="button" onClick={() => { setFilterFromDate(''); setFilterToDate(''); setFilterPopoverOpen(false); }} className={`flex-1 ${vmsSecondaryBtnClass()}`}>Clear</button>
+                      <button type="button" onClick={() => setFilterPopoverOpen(false)} className={`flex-1 ${vmsPrimaryBtnClass()}`}>Apply</button>
                     </div>
                   </div>,
                   document.body
@@ -2166,9 +2381,10 @@ export default function ContractsMyItems() {
 
               <div className="relative" ref={columnsPopoverRef}>
                 <button
+                  type="button"
                   onClick={() => { setColumnsPopoverOpen(!columnsPopoverOpen); setFilterPopoverOpen(false); }}
                   aria-label="Choose visible columns"
-                  className={`p-1.5 rounded-lg border transition-all ${columnsPopoverOpen ? 'bg-blue-50 border-blue-300 text-blue-600' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                  className={vmsIconBtnClass(columnsPopoverOpen)}
                 >
                   <i className="ri-eye-line text-sm"></i>
                 </button>
@@ -2186,7 +2402,7 @@ export default function ContractsMyItems() {
                           <input type="checkbox" checked={activeTab === 'items' ? visibleColumnsItems[col.id] : visibleColumnsTasks[col.id]} onChange={() => {
                             if (activeTab === 'items') setVisibleColumnsItems(prev => ({ ...prev, [col.id]: !prev[col.id] }));
                             else setVisibleColumnsTasks(prev => ({ ...prev, [col.id]: !prev[col.id] }));
-                          }} className="rounded border-slate-300 text-blue-600" />
+                          }} className="rounded border-slate-300 text-[#17a2b4]" />
                           <span className="text-sm text-slate-700">{col.label}</span>
                         </label>
                       ))}
@@ -2197,22 +2413,22 @@ export default function ContractsMyItems() {
               </div>
 
               <div className="relative order-last min-w-0 w-full basis-full sm:order-none sm:basis-auto sm:min-w-[200px] sm:flex-1">
-                <i className="ri-search-line pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-slate-400"></i>
+                <i className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-lg text-slate-400"></i>
                 <input
                   type="text"
                   placeholder="Search contracts..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="min-h-[40px] w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-9 text-xs transition-all focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100 touch-manipulation sm:min-h-[34px] sm:py-1.5"
+                  className={vmsSearchInputClass()}
                 />
                 {search ? (
                   <button
                     type="button"
                     aria-label="Clear search"
                     onClick={() => setSearch('')}
-                    className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg hover:bg-slate-100 text-slate-500"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 h-9 w-9 rounded-full text-slate-500 hover:bg-[#e6f6f8] transition-colors flex items-center justify-center"
                   >
-                    <i className="ri-close-circle-line text-sm" />
+                    <i className="ri-close-line text-lg" />
                   </button>
                 ) : null}
               </div>
@@ -2229,7 +2445,7 @@ export default function ContractsMyItems() {
                   <select
                     value={statusFilter}
                     onChange={(e) => { setStatusFilter(e.target.value); setItemsPage(1) }}
-                    className="min-h-[40px] w-[220px] max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100 touch-manipulation"
+                    className={`${vmsSelectClass()} w-[220px] max-w-full`}
                   >
                     {STATUS_OPTIONS.map((status) => (
                       <option key={status} value={status}>
@@ -2241,22 +2457,17 @@ export default function ContractsMyItems() {
               </div>
 
               {/* Desktop/tablet: existing chips */}
-              <div className="-mx-3 hidden flex-nowrap gap-1.5 overflow-x-auto border-b border-slate-200 bg-white px-3 py-2 sm:mx-0 sm:flex sm:flex-wrap sm:px-4">
+              <div className="-mx-3 hidden flex-nowrap gap-1.5 overflow-x-auto border-b border-slate-100/90 bg-white/50 px-3 py-2.5 sm:mx-0 sm:flex sm:flex-wrap sm:px-4">
                 {STATUS_OPTIONS.map(status => (
-                  <motion.button
+                  <button
                     key={status}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
+                    type="button"
                     onClick={() => { setStatusFilter(status); setItemsPage(1); }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                      statusFilter === status
-                        ? 'bg-gradient-to-r from-[#0565FF] to-[#045CE6] text-white shadow-sm'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
+                    className={vmsChipBtnClass(statusFilter === status)}
                   >
                     {status}
-                    <span className="ml-1.5 text-xs opacity-80">{statusTabCounts[status] || 0}</span>
-                  </motion.button>
+                    <span className="ml-1.5 opacity-80">{statusTabCounts[status] || 0}</span>
+                  </button>
                 ))}
               </div>
             </>
@@ -2280,7 +2491,7 @@ export default function ContractsMyItems() {
                       setTotalTasksCount(activity.Count ?? 0)
                       setTasksPage(1)
                     }}
-                    className="min-h-[40px] w-[220px] max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100 touch-manipulation"
+                    className={`${vmsSelectClass()} w-[220px] max-w-full`}
                   >
                     {activityTabs.map((activity) => (
                       <option key={activity._id} value={activity._id}>
@@ -2292,30 +2503,22 @@ export default function ContractsMyItems() {
               </div>
 
               {/* Desktop/tablet: existing chips */}
-              <div className="-mx-3 hidden flex-nowrap gap-1.5 overflow-x-auto border-b border-slate-200 bg-white px-3 py-2 sm:mx-0 sm:flex sm:flex-wrap sm:px-4">
-                {activityTabs.map((activity, idx) => (
-                  <motion.button
+              <div className="-mx-3 hidden flex-nowrap gap-1.5 overflow-x-auto border-b border-slate-100/90 bg-white/50 px-3 py-2.5 sm:mx-0 sm:flex sm:flex-wrap sm:px-4">
+                {activityTabs.map((activity) => (
+                  <button
                     key={activity._id}
-                    initial={{ opacity: 0, scale: 0.98 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    transition={{ delay: idx * 0.03 }}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
+                    type="button"
                     onClick={() => {
                       setCurrentActivityId(activity._id)
                       setCurrentStepName(activity.StepName || 'Review contract')
                       setTotalTasksCount(activity.Count ?? 0)
                       setTasksPage(1)
                     }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                      currentActivityId === activity._id
-                        ? 'bg-gradient-to-r from-[#0565FF] to-[#045CE6] text-white shadow-sm'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
+                    className={vmsChipBtnClass(currentActivityId === activity._id)}
                   >
                     {activity.StepName || 'Activity'}
-                    <span className="ml-1.5 text-xs opacity-80">{activity.Count ?? 0}</span>
-                  </motion.button>
+                    <span className="ml-1.5 opacity-80">{activity.Count ?? 0}</span>
+                  </button>
                 ))}
               </div>
             </>
@@ -2355,7 +2558,7 @@ export default function ContractsMyItems() {
                     itemsPaginated.map((item, idx) => {
                       const itemView = itemDetailsById[item.id] || item
                       return (
-                        <div key={item.id} className={expandedItemId === item.id ? 'bg-[#0565FF]/5' : ''}>
+                        <div key={item.id} className={expandedItemId === item.id ? 'bg-[#17a2b4]/[0.06]' : ''}>
                           <div className="touch-manipulation px-3 py-3">
                             <div className="flex gap-2">
                               {showItemBulkCheckboxes && (
@@ -2366,10 +2569,10 @@ export default function ContractsMyItems() {
                               <button
                                 type="button"
                                 aria-label={expandedItemId === item.id ? 'Collapse' : 'Expand'}
-                                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100"
+                                className={vmsExpandBtnClass(expandedItemId === item.id, true)}
                                 onClick={() => { setExpandedItemId((prev) => (prev === item.id ? null : item.id)); setScrollToAccordionId(item.id) }}
                               >
-                                <motion.i animate={{ rotate: expandedItemId === item.id ? 90 : 0 }} className="ri-arrow-right-s-line text-lg" />
+                                <i className={`${expandedItemId === item.id ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-lg`} />
                               </button>
                               <button
                                 type="button"
@@ -2402,11 +2605,7 @@ export default function ContractsMyItems() {
                                         {(() => {
                                           const iv = itemDetailsById[item.id] || item
                                           const meta = getSlaMeta(item.id, iv.slaDeadline)
-                                          return (
-                                            <span className={`inline-flex px-2.5 py-1 text-[11px] font-semibold rounded-full border ${meta.pill}`} title={slaDeadlineTitle(iv.slaDeadline)}>
-                                              {meta.label}
-                                            </span>
-                                          )
+                                          return <SlaCell meta={meta} title={slaDeadlineTitle(iv.slaDeadline)} compact />
                                         })()}
                                       </dd>
                                     </div>
@@ -2421,7 +2620,21 @@ export default function ContractsMyItems() {
                           <AnimatePresence>
                             {expandedItemId === item.id && (
                               <div className="border-t border-slate-200 bg-slate-50/40">
-                                <ElegantContractAccordion item={itemView} onViewDetails={() => openContractPopup(itemView)} onClose={() => setExpandedItemId(null)} index={idx} flash={accordionFlashId === item.id} />
+                                <ElegantContractAccordion
+                                  item={itemView}
+                                  onViewDetails={() => openContractPopup(itemView)}
+                                  onClose={() => setExpandedItemId(null)}
+                                  flash={accordionFlashId === item.id}
+                                  workflowSteps={
+                                    Object.prototype.hasOwnProperty.call(progressByContractId, item.id)
+                                      ? flattenProgressSteps(progressByContractId[item.id])
+                                      : []
+                                  }
+                                  workflowLoading={
+                                    progressLoadingId === item.id ||
+                                    !Object.prototype.hasOwnProperty.call(progressByContractId, item.id)
+                                  }
+                                />
                               </div>
                             )}
                           </AnimatePresence>
@@ -2461,16 +2674,16 @@ export default function ContractsMyItems() {
                     tasksPaginated.map((task, idx) => {
                       const taskView = taskDetailsById[task.id] || task
                       return (
-                        <div key={task.id} className={expandedTaskId === task.id ? 'bg-[#0565FF]/5' : ''}>
+                        <div key={task.id} className={expandedTaskId === task.id ? 'bg-[#17a2b4]/[0.06]' : ''}>
                           <div className="touch-manipulation px-3 py-3">
                             <div className="flex gap-2">
                               <button
                                 type="button"
                                 aria-label={expandedTaskId === task.id ? 'Collapse' : 'Expand'}
-                                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100"
+                                className={vmsExpandBtnClass(expandedTaskId === task.id, true)}
                                 onClick={() => { setExpandedTaskId((prev) => (prev === task.id ? null : task.id)); setScrollToAccordionId(task.id) }}
                               >
-                                <motion.i animate={{ rotate: expandedTaskId === task.id ? 90 : 0 }} className="ri-arrow-right-s-line text-lg" />
+                                <i className={`${expandedTaskId === task.id ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-lg`} />
                               </button>
                               <button
                                 type="button"
@@ -2500,11 +2713,7 @@ export default function ContractsMyItems() {
                                       <dd className="mt-0.5">
                                         {(() => {
                                           const meta = getSlaMeta(task.id, taskView.slaDeadline)
-                                          return (
-                                            <span className={`inline-flex px-2.5 py-1 text-[11px] font-semibold rounded-full border ${meta.pill}`} title={slaDeadlineTitle(taskView.slaDeadline)}>
-                                              {meta.label}
-                                            </span>
-                                          )
+                                          return <SlaCell meta={meta} title={slaDeadlineTitle(taskView.slaDeadline)} compact />
                                         })()}
                                       </dd>
                                     </div>
@@ -2519,7 +2728,21 @@ export default function ContractsMyItems() {
                           <AnimatePresence>
                             {expandedTaskId === task.id && (
                               <div className="border-t border-slate-200 bg-slate-50/40">
-                                <ElegantContractAccordion item={taskView} onViewDetails={() => openContractPopup(taskView)} onClose={() => setExpandedTaskId(null)} index={idx} flash={accordionFlashId === task.id} />
+                                <ElegantContractAccordion
+                                  item={taskView}
+                                  onViewDetails={() => openContractPopup(taskView)}
+                                  onClose={() => setExpandedTaskId(null)}
+                                  flash={accordionFlashId === task.id}
+                                  workflowSteps={
+                                    Object.prototype.hasOwnProperty.call(progressByContractId, task.id)
+                                      ? flattenProgressSteps(progressByContractId[task.id])
+                                      : []
+                                  }
+                                  workflowLoading={
+                                    progressLoadingId === task.id ||
+                                    !Object.prototype.hasOwnProperty.call(progressByContractId, task.id)
+                                  }
+                                />
                               </div>
                             )}
                           </AnimatePresence>
@@ -2532,7 +2755,7 @@ export default function ContractsMyItems() {
             </AnimatePresence>
           </div>
 
-          <div className="hidden overflow-auto sm:block">
+          <div className="hidden overflow-auto border border-slate-200/80 sm:block">
             <AnimatePresence mode="wait">
               {activeTab === 'items' ? (
                 <motion.table
@@ -2543,11 +2766,11 @@ export default function ContractsMyItems() {
                   transition={{ duration: 0.2 }}
                   className="w-full text-sm"
                 >
-                  <thead className="bg-gradient-to-b from-[#0565FF]/12 via-[#0565FF]/8 to-white border-b border-[#0565FF]/15">
+                  <thead className={vmsTableHeadClass()}>
                     <tr>
-                      {showItemBulkCheckboxes && <th className="w-8 px-3 py-3"><input type="checkbox" checked={itemsPaginated.length > 0 && itemsPaginated.every(i => selectedItemIds.has(i.id))} onChange={(e) => selectAllItems(e.target.checked)} className="rounded border-slate-300" /></th>}
-                      <th className="w-8 px-2 py-3"></th>
-                      {ITEMS_COLUMNS.map(col => visibleColumnsItems[col.id] && (<th key={col.id} className={`text-left px-3 py-3 text-xs font-semibold text-slate-600 uppercase tracking-wide ${col.width}`}>{col.label}</th>))}
+                      {showItemBulkCheckboxes && <th className={`${vmsTableHeadCellClass()} w-8`}><input type="checkbox" checked={itemsPaginated.length > 0 && itemsPaginated.every(i => selectedItemIds.has(i.id))} onChange={(e) => selectAllItems(e.target.checked)} className="rounded border-slate-300" /></th>}
+                      <th className={`${vmsTableHeadCellClass()} w-8 px-2`}></th>
+                      {ITEMS_COLUMNS.map(col => visibleColumnsItems[col.id] && (<th key={col.id} className={`${vmsTableHeadCellClass()} ${col.width}`}><span className="inline-flex items-center gap-1.5">{col.icon ? <i className={`${col.icon} ${vmsColIconClass()}`} aria-hidden /> : null}{col.label}</span></th>))}
                     </tr>
                   </thead>
                   {itemsLoading && itemList.length === 0 ? (
@@ -2568,7 +2791,7 @@ export default function ContractsMyItems() {
                       </tr>
                     </tbody>
                   ) : (
-                    <tbody className="divide-y divide-slate-200">
+                    <tbody className={`${vmsTableDivideClass()} divide-slate-200/80`}>
                       {itemsPaginated.map((item, idx) => {
                         const itemView = itemDetailsById[item.id] || item
                         return (
@@ -2577,8 +2800,7 @@ export default function ContractsMyItems() {
                               initial={{ opacity: 0, y: 10 }}
                               animate={{ opacity: 1, y: 0 }}
                               transition={{ delay: idx * 0.03 }}
-                              whileHover={{ backgroundColor: 'rgba(241, 245, 249, 0.6)' }}
-                              className={`transition-colors ${expandedItemId === item.id ? 'bg-[#0565FF]/5 shadow-[inset_3px_0_0_0_rgba(5,101,255,0.35)]' : ''}`}
+                              className={`${vmsTableRowClass(expandedItemId === item.id)} ${expandedItemId === item.id ? 'shadow-[inset_3px_0_0_0_rgba(0,134,201,0.35)]' : ''}`}
                             >
                               {showItemBulkCheckboxes && (
                                 <td className="px-3 py-3" onClick={e => e.stopPropagation()}>
@@ -2594,12 +2816,9 @@ export default function ContractsMyItems() {
                                     setExpandedItemId((prev) => (prev === item.id ? null : item.id))
                                     setScrollToAccordionId(item.id)
                                   }}
-                                  className="h-7 w-7 inline-flex items-center justify-center rounded-lg hover:bg-slate-100 transition-colors"
+                                  className={vmsExpandBtnClass(expandedItemId === item.id, true)}
                                 >
-                                  <motion.i
-                                    animate={{ rotate: expandedItemId === item.id ? 90 : 0 }}
-                                    className="ri-arrow-right-s-line transition-all"
-                                  ></motion.i>
+                                  <i className={`${expandedItemId === item.id ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-base`} />
                                 </button>
                               </td>
                               {visibleColumnsItems.vendor && (
@@ -2618,7 +2837,14 @@ export default function ContractsMyItems() {
                                   </button>
                                 </td>
                               )}
-                              {visibleColumnsItems.contractCategory && <td className="px-3 py-3 text-slate-600">{item.contractType || '—'}</td>}
+                              {visibleColumnsItems.contractCategory && (
+                                <td className="px-3 py-3 text-slate-600">
+                                  <span className={vmsTypeChipClass()}>
+                                    <i className={`${vmsContractTypeIcon(item.contractType)} text-[12px]`} aria-hidden />
+                                    {item.contractType || '—'}
+                                  </span>
+                                </td>
+                              )}
                               {visibleColumnsItems.createdAt && <td className="px-3 py-3 text-slate-500 text-xs">{formatDateTime(item.createdDate)}</td>}
                               {visibleColumnsItems.valueDisplay && <td className="px-3 py-3 font-semibold text-slate-700">{item.valueDisplay || '—'}</td>}
                               {visibleColumnsItems.status && (
@@ -2632,14 +2858,7 @@ export default function ContractsMyItems() {
                                 <td className="px-3 py-3 whitespace-nowrap">
                                   {(() => {
                                     const meta = getSlaMeta(item.id, itemView.slaDeadline)
-                                    return (
-                                      <span
-                                        className={`inline-flex px-2.5 py-1 text-[11px] font-semibold rounded-full border ${meta.pill}`}
-                                        title={slaDeadlineTitle(itemView.slaDeadline)}
-                                      >
-                                        {meta.label}
-                                      </span>
-                                    )
+                                    return <SlaCell meta={meta} title={slaDeadlineTitle(itemView.slaDeadline)} />
                                   })()}
                                 </td>
                               )}
@@ -2648,7 +2867,21 @@ export default function ContractsMyItems() {
                             <AnimatePresence>
                               {expandedItemId === item.id && (
                                 <tr><td colSpan={itemsTableLeadingCols + ITEMS_COLUMNS.length} className="p-0">
-                                  <ElegantContractAccordion item={itemView} onViewDetails={() => openContractPopup(itemView)} onClose={() => setExpandedItemId(null)} index={idx} flash={accordionFlashId === item.id} />
+                                  <ElegantContractAccordion
+                                  item={itemView}
+                                  onViewDetails={() => openContractPopup(itemView)}
+                                  onClose={() => setExpandedItemId(null)}
+                                  flash={accordionFlashId === item.id}
+                                  workflowSteps={
+                                    Object.prototype.hasOwnProperty.call(progressByContractId, item.id)
+                                      ? flattenProgressSteps(progressByContractId[item.id])
+                                      : []
+                                  }
+                                  workflowLoading={
+                                    progressLoadingId === item.id ||
+                                    !Object.prototype.hasOwnProperty.call(progressByContractId, item.id)
+                                  }
+                                />
                                 </td></tr>
                               )}
                             </AnimatePresence>
@@ -2667,10 +2900,10 @@ export default function ContractsMyItems() {
                   transition={{ duration: 0.2 }}
                   className="w-full text-sm"
                 >
-                  <thead className="bg-gradient-to-b from-[#0565FF]/12 via-[#0565FF]/8 to-white border-b border-[#0565FF]/15">
+                  <thead className={vmsTableHeadClass()}>
                     <tr>
-                      <th className="w-8 px-2 py-3"></th>
-                      {TASKS_COLUMNS.map(col => visibleColumnsTasks[col.id] && (<th key={col.id} className={`text-left px-3 py-3 text-xs font-semibold text-slate-600 uppercase tracking-wide ${col.width}`}>{col.label}</th>))}
+                      <th className={`${vmsTableHeadCellClass()} w-8 px-2`}></th>
+                      {TASKS_COLUMNS.map(col => visibleColumnsTasks[col.id] && (<th key={col.id} className={`${vmsTableHeadCellClass()} ${col.width}`}><span className="inline-flex items-center gap-1.5">{col.icon ? <i className={`${col.icon} ${vmsColIconClass()}`} aria-hidden /> : null}{col.label}</span></th>))}
                     </tr>
                   </thead>
                   {tasksLoading && tasksFromApi === null ? (
@@ -2691,7 +2924,7 @@ export default function ContractsMyItems() {
                       </tr>
                     </tbody>
                   ) : (
-                    <tbody className="divide-y divide-slate-200">
+                    <tbody className={`${vmsTableDivideClass()} divide-slate-200/80`}>
                       {tasksPaginated.map((task, idx) => {
                         const taskView = taskDetailsById[task.id] || task
                         return (
@@ -2700,8 +2933,7 @@ export default function ContractsMyItems() {
                               initial={{ opacity: 0, y: 10 }}
                               animate={{ opacity: 1, y: 0 }}
                               transition={{ delay: idx * 0.03 }}
-                              whileHover={{ backgroundColor: 'rgba(241, 245, 249, 0.6)' }}
-                              className={`transition-colors ${expandedTaskId === task.id ? 'bg-[#0565FF]/5 shadow-[inset_3px_0_0_0_rgba(5,101,255,0.35)]' : ''}`}
+                              className={`${vmsTableRowClass(expandedTaskId === task.id)} ${expandedTaskId === task.id ? 'shadow-[inset_3px_0_0_0_rgba(0,134,201,0.35)]' : ''}`}
                             >
                               <td className="px-2 py-3 text-slate-400">
                                 <button
@@ -2712,12 +2944,9 @@ export default function ContractsMyItems() {
                                     setExpandedTaskId((prev) => (prev === task.id ? null : task.id))
                                     setScrollToAccordionId(task.id)
                                   }}
-                                  className="h-7 w-7 inline-flex items-center justify-center rounded-lg hover:bg-slate-100 transition-colors"
+                                  className={vmsExpandBtnClass(expandedTaskId === task.id, true)}
                                 >
-                                  <motion.i
-                                    animate={{ rotate: expandedTaskId === task.id ? 90 : 0 }}
-                                    className="ri-arrow-right-s-line transition-all"
-                                  ></motion.i>
+                                  <i className={`${expandedTaskId === task.id ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-base`} />
                                 </button>
                               </td>
                               {visibleColumnsTasks.vendor && (
@@ -2736,7 +2965,14 @@ export default function ContractsMyItems() {
                                   </button>
                                 </td>
                               )}
-                              {visibleColumnsTasks.contractCategory && <td className="px-3 py-3 text-slate-600">{taskView.contractType || '—'}</td>}
+                              {visibleColumnsTasks.contractCategory && (
+                                <td className="px-3 py-3 text-slate-600">
+                                  <span className={vmsTypeChipClass()}>
+                                    <i className={`${vmsContractTypeIcon(taskView.contractType)} text-[12px]`} aria-hidden />
+                                    {taskView.contractType || '—'}
+                                  </span>
+                                </td>
+                              )}
                               {visibleColumnsTasks.createdAt && <td className="px-3 py-3 text-slate-500 text-xs">{formatDateTime(taskView.createdDate)}</td>}
                               {visibleColumnsTasks.valueDisplay && <td className="px-3 py-3 font-semibold text-slate-700">{taskView.valueDisplay || '—'}</td>}
                               {visibleColumnsTasks.status && (
@@ -2750,14 +2986,7 @@ export default function ContractsMyItems() {
                                 <td className="px-3 py-3 whitespace-nowrap">
                                   {(() => {
                                     const meta = getSlaMeta(task.id, taskView.slaDeadline)
-                                    return (
-                                      <span
-                                        className={`inline-flex px-2.5 py-1 text-[11px] font-semibold rounded-full border ${meta.pill}`}
-                                        title={slaDeadlineTitle(taskView.slaDeadline)}
-                                      >
-                                        {meta.label}
-                                      </span>
-                                    )
+                                    return <SlaCell meta={meta} title={slaDeadlineTitle(taskView.slaDeadline)} />
                                   })()}
                                 </td>
                               )}
@@ -2766,7 +2995,21 @@ export default function ContractsMyItems() {
                             <AnimatePresence>
                               {expandedTaskId === task.id && (
                                 <tr><td colSpan={tasksTableLeadingCols + TASKS_COLUMNS.length} className="p-0">
-                                  <ElegantContractAccordion item={taskView} onViewDetails={() => openContractPopup(taskView)} onClose={() => setExpandedTaskId(null)} index={idx} flash={accordionFlashId === task.id} />
+                                  <ElegantContractAccordion
+                                  item={taskView}
+                                  onViewDetails={() => openContractPopup(taskView)}
+                                  onClose={() => setExpandedTaskId(null)}
+                                  flash={accordionFlashId === task.id}
+                                  workflowSteps={
+                                    Object.prototype.hasOwnProperty.call(progressByContractId, task.id)
+                                      ? flattenProgressSteps(progressByContractId[task.id])
+                                      : []
+                                  }
+                                  workflowLoading={
+                                    progressLoadingId === task.id ||
+                                    !Object.prototype.hasOwnProperty.call(progressByContractId, task.id)
+                                  }
+                                />
                                 </td></tr>
                               )}
                             </AnimatePresence>
@@ -2781,38 +3024,38 @@ export default function ContractsMyItems() {
           </div>
 
           {/* Pagination */}
-          <div className="flex flex-col items-center justify-between gap-3 border-t border-slate-200 bg-gradient-to-r from-slate-50/50 to-white px-3 py-2.5 text-xs sm:flex-row sm:px-4 sm:py-3 sm:text-sm">
+          <div className={vmsPaginationBarClass()}>
             <div className="flex w-full items-center justify-between gap-2 sm:w-auto sm:justify-start">
-              <span className="text-slate-500">Rows per page:</span>
-              <select value={rowsPerPage} onChange={(e) => { setRowsPerPage(Number(e.target.value)); setItemsPage(1); setTasksPage(1); }} className="px-2 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:border-blue-300">
+              <span className="text-xs text-slate-500">Rows per page:</span>
+              <select value={rowsPerPage} onChange={(e) => { setRowsPerPage(Number(e.target.value)); setItemsPage(1); setTasksPage(1); }} className={`${vmsSelectClass()} py-1`}>
                 {[5, 10, 25, 50].map(n => <option key={n} value={n}>{n}</option>)}
               </select>
             </div>
             <div className="flex items-center gap-3">
-              <span className="text-slate-500 text-xs">
+              <span className="text-xs text-slate-500">
                 {activeTab === 'items' 
                   ? `${(itemsPage - 1) * rowsPerPage + 1}-${Math.min(itemsPage * rowsPerPage, filteredItems.length)} of ${filteredItems.length}`
                   : `${(tasksPage - 1) * rowsPerPage + 1}-${Math.min(tasksPage * rowsPerPage, filteredTasks.length)} of ${filteredTasks.length}`}
               </span>
               <div className="flex gap-1">
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
+                <button
+                  type="button"
                   onClick={() => activeTab === 'items' ? setItemsPage(p => Math.max(1, p-1)) : setTasksPage(p => Math.max(1, p-1))}
                   disabled={activeTab === 'items' ? itemsPage <= 1 : tasksPage <= 1}
-                  className="p-2 rounded-lg border border-slate-200 bg-white disabled:opacity-50 hover:bg-slate-50 transition-all"
+                  className={vmsPaginationBtnClass(false)}
+                  aria-label="Previous page"
                 >
                   <i className="ri-arrow-left-s-line"></i>
-                </motion.button>
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
+                </button>
+                <button
+                  type="button"
                   onClick={() => activeTab === 'items' ? setItemsPage(p => Math.min(totalItemsPages, p+1)) : setTasksPage(p => Math.min(totalTasksPages, p+1))}
                   disabled={activeTab === 'items' ? itemsPage >= totalItemsPages : tasksPage >= totalTasksPages}
-                  className="p-2 rounded-lg border border-slate-200 bg-white disabled:opacity-50 hover:bg-slate-50 transition-all"
+                  className={vmsPaginationBtnClass(false)}
+                  aria-label="Next page"
                 >
                   <i className="ri-arrow-right-s-line"></i>
-                </motion.button>
+                </button>
               </div>
             </div>
           </div>
@@ -2853,6 +3096,7 @@ export default function ContractsMyItems() {
             </motion.div>
           )}
         </AnimatePresence>
+        </div>
       </div>
 
       {/* Add custom animation keyframes */}

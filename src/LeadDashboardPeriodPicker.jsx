@@ -16,6 +16,8 @@ const MODE_TYPES = [
 
 export const LEAD_DASHBOARD_PERIOD_PRESETS = [
   { key: 'Today', kind: 'preset', label: 'Today', sub: 'Created today' },
+  { key: 'MTD', kind: 'preset', label: 'MTD', sub: 'Month to date' },
+  { key: 'LTD', kind: 'preset', label: 'LTD', sub: 'Life to date' },
   { key: 'Last 7 Days', kind: 'preset', label: 'Last 7 days', sub: 'Rolling 7 days' },
   { key: 'Last 30 Days', kind: 'preset', label: 'Last 30 days', sub: 'Default' },
 ]
@@ -577,6 +579,25 @@ export default function LeadDashboardPeriodPicker({
                           if (opt.key === 'weekly') {
                             const now = new Date()
                             setWeekMonthCursor({ year: now.getFullYear(), monthIndex: now.getMonth() })
+                            const monday = getMonday(now)
+                            const range = getWeekRange(monday)
+                            applyCustomRange(
+                              range.from,
+                              range.to,
+                              `Current week · Mon ${formatShortDate(monday)} → Today`,
+                              { closePanel: false },
+                            )
+                          }
+                          if (opt.key === 'monthly') {
+                            const now = new Date()
+                            setMonthYear(now.getFullYear())
+                            const range = getMonthRange(now.getFullYear(), now.getMonth())
+                            applyCustomRange(
+                              range.from,
+                              range.to,
+                              `${formatMonthLabel(now.getFullYear(), now.getMonth())} · MTD`,
+                              { closePanel: false },
+                            )
                           }
                           if (opt.key === 'custom') {
                             setDraftFrom(customDateStart || '')

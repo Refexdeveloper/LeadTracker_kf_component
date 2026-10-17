@@ -3,6 +3,9 @@ import { fetchProcessReportJson, normalizeProcessReportResponse } from './kfRepo
 import { buildMyTeamReportPath } from './kfLeadPaths.js'
 
 /** Known Column Id → FieldId fallbacks (report row keys when Columns meta is missing). */
+/** Process-report reference column holding manager alignment (L1 / L2 emails). */
+const MANAGER_ALIGNMENT_COLUMN_ID = 'Column_7POw7oRFxZ'
+
 const COLUMN_ID_TO_FIELD = {
   Column_jrm32FXyQg: 'Untitled_Field',
   Column_VavBACr7yg: 'Email_Id',
@@ -71,6 +74,78 @@ function buildFieldMapFromColumns(columns) {
     }
   }
   return { fieldToColumnId, columnIdToField }
+}
+
+function normalizeEmailForMatch(email) {
+  return String(email || '').trim().toLowerCase()
+}
+
+/** Extract email from Kissflow user ref, plain string, or mixed manager alignment cells. */
+function readEmailFromManagerField(val) {
+  if (val == null || val === '') return ''
+  if (typeof val === 'string') {
+    const s = val.trim()
+    return s.includes('@') ? normalizeEmailForMatch(s) : ''
+  }
+  if (typeof val === 'object' && !Array.isArray(val)) {
+    const candidates = [val.Email, val.email, val.Value, val.value, val.Name, val.name]
+    for (const c of candidates) {
+      const s = String(c || '').trim()
+      if (s.includes('@')) return normalizeEmailForMatch(s)
+    }
+  }
+  return ''
+}
+
+function collectManagerEmailsFromAlignment(alignment) {
+  if (!alignment || typeof alignment !== 'object') return []
+  const keys = ['L1_Manager', 'L2_Manager_Email', 'Sales_Person_Email', 'Escalation_Email']
+  const out = new Set()
+  for (const k of keys) {
+    const e = readEmailFromManagerField(alignment[k])
+    if (e) out.add(e)
+  }
+  return [...out]
+}
+
+function findManagerAlignmentColumnId(columns) {
+  for (const col of columns || []) {
+    if (col?.Id === MANAGER_ALIGNMENT_COLUMN_ID) return col.Id
+    const nested = Array.isArray(col?.Columns) ? col.Columns : []
+    const hasManagerFields = nested.some(
+      (c) => c?.FieldId === 'L1_Manager' || c?.FieldId === 'L2_Manager_Email',
+    )
+    if (hasManagerFields && col?.Id) return col.Id
+  }
+  return MANAGER_ALIGNMENT_COLUMN_ID
+}
+
+/** Reference cell: { L1_Manager, L2_Manager_Email, Escalation_Email, Sales_Person_Email, ... } */
+export function readManagerAlignmentFromRow(row, columns) {
+  if (!row || typeof row !== 'object') return null
+  const colId = findManagerAlignmentColumnId(columns)
+  const fromKnown = row[colId]
+  if (fromKnown && typeof fromKnown === 'object' && !Array.isArray(fromKnown)) return fromKnown
+
+  for (const key of Object.keys(row)) {
+    if (!key.startsWith('Column_')) continue
+    const val = row[key]
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      if (val.L1_Manager != null || val.L2_Manager_Email != null) return val
+    }
+  }
+  return null
+}
+
+/** Show row when logged-in email matches a manager alignment email (case-insensitive). */
+export function rowMatchesLoggedInManager(row, columns, loggedInEmail) {
+  const me = normalizeEmailForMatch(loggedInEmail)
+  if (!me) return true
+  const alignment = readManagerAlignmentFromRow(row, columns)
+  if (!alignment) return true
+  const emails = collectManagerEmailsFromAlignment(alignment)
+  if (emails.length === 0) return true
+  return emails.includes(me)
 }
 
 function readRowField(row, fieldId, fieldToColumnId, columnIdToField) {
@@ -187,10 +262,26 @@ export function mapMyTeamReportRowToLead(row, columns) {
   }
 }
 
-export function mapMyTeamReportResponse(response) {
+export function mapMyTeamReportResponse(response, options = {}) {
   const normalized = normalizeProcessReportResponse(response) || response
   const columns = Array.isArray(normalized?.Columns) ? normalized.Columns : []
-  const data = Array.isArray(normalized?.Data) ? normalized.Data : []
+  const rawData = Array.isArray(normalized?.Data) ? normalized.Data : []
+  const loggedInEmail = options?.loggedInEmail
+  // Commented out local L1/L2 manager filtering as the API itself comes with inbuilt filter applied
+  // const shouldFilterByManager = loggedInEmail != null && String(loggedInEmail).trim()
+  // const data = shouldFilterByManager
+  //   ? rawData.filter((row) => rowMatchesLoggedInManager(row, columns, loggedInEmail))
+  //   : rawData
+  const data = rawData
+  /*
+  const shouldFilterByManager = loggedInEmail != null && String(loggedInEmail).trim()
+  if (shouldFilterByManager && rawData.length > 0 && data.length === 0) {
+    console.warn(
+      `My Team report: ${rawData.length} row(s) from API but 0 after manager filter for ${String(loggedInEmail).trim()}. ` +
+        'Check Manager Alignment (L1/L2/Sales Person emails) on report rows.',
+    )
+  }
+  */
   const leads = data
     .map((row) => mapMyTeamReportRowToLead(row, columns))
     .filter((lead) => lead && (lead.id || lead.fullName || lead.emailId || lead.phoneNumber))
@@ -201,19 +292,28 @@ export function mapMyTeamReportResponse(response) {
  * Fetch My Team report via kf.api only inside Kissflow (no cross-origin fetch → no CORS).
  * Tries minimal URL first (…/My_Team_A00?), then paginated full query.
  */
-export async function fetchMyTeamReportLeads(kf, reportIds = null) {
+export async function fetchMyTeamReportLeads(kf, reportIds = null, options = {}) {
   const idOpts = reportIds && typeof reportIds === 'object' ? reportIds : {}
-  const pathCandidates = [
-    buildMyTeamReportPath(kf, 1, 100000, { minimal: true, ...idOpts }),
-    buildMyTeamReportPath(kf, 1, 100000, { minimal: false, ...idOpts }),
-  ].filter(Boolean)
+  const loggedInEmail = String(options?.loggedInEmail || options?.managerEmail || '').trim()
+  const pathCandidates = []
+  if (loggedInEmail) {
+    pathCandidates.push(
+      buildMyTeamReportPath(kf, 1, 1000, { minimal: true, managerEmail: loggedInEmail, ...idOpts }),
+      buildMyTeamReportPath(kf, 1, 1000, { minimal: false, managerEmail: loggedInEmail, ...idOpts }),
+    )
+  }
+  pathCandidates.push(
+    buildMyTeamReportPath(kf, 1, 1000, { minimal: true, ...idOpts }),
+    buildMyTeamReportPath(kf, 1, 1000, { minimal: false, ...idOpts }),
+  )
+  const uniquePaths = [...new Set(pathCandidates.filter(Boolean))]
 
   let lastError = null
 
-  for (const path of pathCandidates) {
+  for (const path of uniquePaths) {
     try {
       const raw = await fetchProcessReportJson(kf, path)
-      const mapped = mapMyTeamReportResponse(raw)
+      const mapped = mapMyTeamReportResponse(raw, options)
       if (mapped.leads.length > 0) return mapped
       if (Array.isArray(raw?.Data) && raw.Columns) return mapped
     } catch (e) {
@@ -223,5 +323,5 @@ export async function fetchMyTeamReportLeads(kf, reportIds = null) {
   }
 
   if (lastError) throw lastError
-  return mapMyTeamReportResponse({ Columns: [], Data: [] })
+  return mapMyTeamReportResponse({ Columns: [], Data: [] }, options)
 }

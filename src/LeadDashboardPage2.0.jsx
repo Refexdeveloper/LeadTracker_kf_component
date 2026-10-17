@@ -53,17 +53,33 @@ function normalizeText(value) {
 
 const ROLE_TO_WEBSITE = {
   '3isalesmanager': '3iMedtech',
+  '3isalesteam': '3iMedtech',
   'salesmanageradonis': 'Adonis',
+  'Sales Team Adonis': 'Adonis',
+  salesteamadonis: 'Adonis',
   'salesmanageranamaya': 'Anamaya',
   'salesmanagerril': 'Refex Industries Limited',
+  salesteamril: 'Refex Industries Limited',
   'salesmanagerrlfc': 'Refex Life Sciences',
+  salesteamrlfc: 'Refex Life Sciences',
   'salesmanagerrril': 'Refex Renewables',
+  salesteamrril: 'Refex Renewables',
   'salesmanagerrefexgroup': 'Refex Group',
   'salesmanagerrefexmobility': 'Refex Mobility',
+  'Sales Team Refex Mobility': 'Refex Mobility',
+  salesteamrefexmobility: 'Refex Mobility',
   'salesmanagersparzan': 'Sparzana',
   'salesmanagersparzana': 'Sparzana',
   'venwindsalesmanager': 'Venwind Refex',
+  venwindsalesteam: 'Venwind Refex',
   'Modepro Manager': 'Modepro',
+  modepromanager: 'Modepro',
+  'Sales Team Modepro': 'Modepro',
+  salesteammodepro: 'Modepro',
+  'RMC Sales Manager': 'RMC',
+  rmcsalesmanager: 'RMC',
+  'RMC Sales Team': 'RMC',
+  rmcsalesteam: 'RMC',
 }
 
 function resolveWebsiteFromOptions(targetWebsite, websiteOptions) {
@@ -71,11 +87,32 @@ function resolveWebsiteFromOptions(targetWebsite, websiteOptions) {
   const targetNorm = normalizeText(targetWebsite)
   const exact = websiteOptions.find((opt) => normalizeText(opt) === targetNorm)
   if (exact) return exact
+  // Short codes like "RMC" must not fuzzy-match unrelated websites.
+  if (targetNorm.length <= 3) return targetWebsite
   const fuzzy = websiteOptions.find((opt) => {
     const norm = normalizeText(opt)
     return norm && (norm.includes(targetNorm) || targetNorm.includes(norm))
   })
   return fuzzy || targetWebsite
+}
+
+function collectRoleCandidates(roleName, user) {
+  const fromList = (list, pick) =>
+    (Array.isArray(list) ? list : [])
+      .map((item) => String(pick(item) || '').trim())
+      .filter(Boolean)
+
+  return [
+    roleName,
+    user?.Role?.Name,
+    stringifyKfRole(user?.Role),
+    user?._user_type,
+    ...fromList(user?.Groups, (g) => (typeof g === 'string' ? g : g?.Name ?? g?.name)),
+    ...fromList(user?.Roles, (r) => stringifyKfRole(r) || r?.Name || r?.name),
+  ]
+    .filter(Boolean)
+    .map((v) => String(v).trim())
+    .filter(Boolean)
 }
 
 function stringifyKfRole(roleLike) {
@@ -793,7 +830,8 @@ export default function LeadDashboardPage() {
 
   const websiteOptions = useMemo(function getWebsiteOptions() {
     const base = apiLeads !== null ? apiLeads : demoLeads
-    const set = new Set()
+    // Always include mapped websites (incl. RMC / Modepro) even when no leads exist yet.
+    const set = new Set(Object.values(ROLE_TO_WEBSITE))
     base.forEach(function (lead) {
       const w = lead?.website != null && String(lead.website).trim() !== '' ? String(lead.website).trim() : null
       if (w) set.add(w)
@@ -802,18 +840,9 @@ export default function LeadDashboardPage() {
   }, [apiLeads])
 
   const lockedWebsite = useMemo(function getLockedWebsiteFromRole() {
-    const roleCandidates = [
-      roleName,
-      user?.Role?.Name,
-      user?._user_type,
-      user?.Groups?.[0]?.Name,
-      user?.Roles?.[0]?.Name,
-    ]
-      .filter(Boolean)
-      .map((v) => String(v).trim())
-      .filter(Boolean)
+    const roleCandidates = collectRoleCandidates(roleName, user)
 
-    if (roleCandidates.length === 0 || websiteOptions.length === 0) return null
+    if (roleCandidates.length === 0) return null
 
     const normalizedRoles = roleCandidates.map(normalizeText).filter(Boolean)
 
@@ -821,14 +850,18 @@ export default function LeadDashboardPage() {
       const rawRole = roleCandidates[i]
       const mappedWebsite = ROLE_TO_WEBSITE[rawRole] || ROLE_TO_WEBSITE[normalizeText(rawRole)]
       if (mappedWebsite) {
-        return resolveWebsiteFromOptions(mappedWebsite, websiteOptions)
+        return websiteOptions.length
+          ? resolveWebsiteFromOptions(mappedWebsite, websiteOptions)
+          : mappedWebsite
       }
     }
+
+    if (websiteOptions.length === 0) return null
 
     for (let i = 0; i < websiteOptions.length; i += 1) {
       const website = websiteOptions[i]
       const wNorm = normalizeText(website)
-      if (!wNorm) continue
+      if (!wNorm || wNorm.length <= 3) continue
       const matched = normalizedRoles.some((rNorm) => rNorm.includes(wNorm) || wNorm.includes(rNorm))
       if (matched) return website
     }

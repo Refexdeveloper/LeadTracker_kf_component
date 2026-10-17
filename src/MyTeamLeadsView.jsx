@@ -6,6 +6,7 @@ import { useMediaQuery } from './hooks/useMediaQuery.js'
 import { getApiBase } from './apiBase.js'
 import { buildLeadAdminApiPaths, buildLeadProcessApiPaths, resolveMyTeamReportIds } from './kfLeadPaths.js'
 import { fetchMyTeamReportLeads } from './myTeamReport.js'
+import { PT_CARD } from './leadPtTheme.js'
 
 export default function MyTeamLeadsView({ leadPaths: leadPathsFromHub = null, loggedInUserEmail = '' } = {}) {
   const { kf: kfInstance, sdkReady } = useContext(KissflowSDKContext)
@@ -125,8 +126,9 @@ export default function MyTeamLeadsView({ leadPaths: leadPathsFromHub = null, lo
       ) : null}
 
       {isDesktop ? (
-        <section className="rounded-2xl border border-white/50 bg-white/45 backdrop-blur-sm shadow-sm p-0 sm:p-4 md:p-5">
+        <section className="overflow-visible">
           <LeadsTable
+            variant="pt"
             title="My Team's Leads"
             leads={leads}
             loading={loading && leads.length === 0}
@@ -139,7 +141,7 @@ export default function MyTeamLeadsView({ leadPaths: leadPathsFromHub = null, lo
           />
         </section>
       ) : (
-        <section className="rounded-2xl border border-white/50 bg-white/45 backdrop-blur-sm shadow-sm overflow-hidden min-w-0">
+        <section className={`${PT_CARD} overflow-hidden min-w-0`}>
           <div className="px-3 pt-4 pb-2 sm:px-4 border-b border-slate-200/50">
             <h2 className="text-lg font-bold text-gray-900 mb-3">My Team&apos;s Leads</h2>
             <div className="relative">

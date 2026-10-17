@@ -359,7 +359,7 @@ async function fetchProjectDashboardData(kfInstance) {
 /** Loads subtask tracker items from Project_Sub_Task_A01. */
 async function fetchSubtaskTrackerData(kfInstance) {
   const path =
-    '/process/2/AcCMptp3yqcn/admin/Project_Sub_Task_A01/item?page_number=1&page_size=100000&apply_preference=1';
+    '/process/2/AcCMptp3yqcn/admin/Project_Sub_Task_A01/item?page_number=1&page_size=1000&apply_preference=1';
   const fullUrl = `https://development-refexgroup.kissflow.com${path}`;
   const payload = await fetchJson(kfInstance, path, fullUrl);
   const rows = Array.isArray(payload?.Data) ? payload.Data : [];

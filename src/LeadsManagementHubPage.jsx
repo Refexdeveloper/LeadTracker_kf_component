@@ -4,6 +4,7 @@ import { getApiBase } from './apiBase.js'
 import { buildLeadProcessApiPaths } from './kfLeadPaths.js'
 import LeadsManagementPage from './LeadsManagementPage.jsx'
 import MyTeamLeadsView from './MyTeamLeadsView.jsx'
+import { PT_AVATAR, PT_PAGE_SHELL } from './leadPtTheme.js'
 
 function getTimeGreeting() {
   const h = new Date().getHours()
@@ -205,20 +206,20 @@ export default function LeadsManagementHubPage() {
   }, [canViewMyTeam, scope])
 
   return (
-    <div className="bg-[#f6f8fb] min-h-screen overflow-hidden">
+    <div className={`h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain ${PT_PAGE_SHELL}`}>
       <div className="mx-auto max-w-[1500px] min-w-0">
         <div className="p-2 sm:p-3 md:p-4 space-y-5 sm:space-y-6">
           <section className="mb-1 sm:mb-2" data-aos="fade-down">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
               <div className="flex items-center gap-3 min-w-0">
-                <div className="h-10 w-10 shrink-0 rounded-xl bg-gradient-to-br from-indigo-500 via-brand-blue to-brand-green flex items-center justify-center text-white text-sm font-bold shadow-sm">
+                <div className={PT_AVATAR}>
                   {(firstName || 'U').charAt(0)}
                 </div>
                 <div className="min-w-0">
-                  <p className="text-base sm:text-lg font-semibold tracking-tight text-gray-900 truncate">
+                  <p className="text-base sm:text-lg font-semibold tracking-tight text-[#0F172A] truncate">
                     {greeting}, {firstName}
                   </p>
-                  <p className="text-xs sm:text-sm text-gray-600 truncate">Logged in as {displayRole}</p>
+                  <p className="text-xs sm:text-sm text-[#64748B] truncate">Logged in as {displayRole}</p>
                 </div>
               </div>
               {canViewMyTeam ? <ScopeToggle scope={scope} setScope={setScope} /> : null}

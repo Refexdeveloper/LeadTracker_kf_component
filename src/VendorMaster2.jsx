@@ -1,6 +1,29 @@
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react'
+import AOS from 'aos'
+import { P2pHeaderFx } from './vms/P2pKpiCard.jsx'
 import { kf, KissflowSDKContext } from './sdk/index.js'
 import { getApiBase } from './apiBase.js'
+import {
+  vmsPageClass,
+  vmsPageInnerClass,
+  vmsSectionShellClass,
+  vmsSectionHeaderClass,
+  vmsSearchInputClass,
+  vmsPrimaryBtnClass,
+  vmsSecondaryBtnClass,
+  vmsTableHeadClass,
+  vmsTableHeadCellClass,
+  vmsTableRowClass,
+  vmsTableDivideClass,
+  vmsExpandBtnClass,
+  vmsPaginationBarClass,
+  vmsPaginationBtnClass,
+  vmsAccordionShellClass,
+  vmsHeaderShellClass,
+  vmsAvatarClass,
+  vmsRoleAccentClass,
+  vmsColIconClass,
+} from './vms/vmsTheme.js'
 
 function envVite(name, fallback = '') {
   try {
@@ -139,7 +162,7 @@ function InfoField({ label, value, icon }) {
     <div className="min-w-0 py-2.5">
       <div className="flex items-start gap-2.5">
         {icon ? (
-          <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center text-[#0565FF]">
+          <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center text-[#17a2b4]">
             {icon}
           </span>
         ) : null}
@@ -202,23 +225,21 @@ function VendorExpandedRow({ vendor, colSpan, isExpanded, onViewDetails, flash }
         >
           <div
             id={vendor?.id ? `vendor-accordion-${vendor.id}` : undefined}
-            className={`mx-3 mb-3 mt-1 sm:mx-4 sm:mb-4 rounded-2xl overflow-hidden border bg-white transition-colors ${
-              flash ? 'border-[#0565FF]/55 ring-2 ring-[#0565FF]/15' : 'border-slate-200/80'
-            } scroll-mt-24`}
+            className={`mx-3 mb-3 mt-1 scroll-mt-24 sm:mx-4 sm:mb-4 overflow-hidden rounded-2xl ${
+              flash ? 'ring-2 ring-[#5cc3cf]/70 ring-offset-2 ring-offset-white' : ''
+            }`}
           >
-            {/* Header (inspired by ContractsMyItemsPro accordion) */}
-            <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-5 border-b border-slate-200/60 bg-gradient-to-b from-slate-50 via-white to-white">
+            <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+            {/* Header */}
+            <div className={`flex items-center justify-between gap-3 px-4 py-3 sm:px-5 ${vmsSectionHeaderClass('brand')}`}>
               <div className="flex items-center gap-3 min-w-0">
-                <div
-                  className="h-8 w-8 shrink-0 rounded-full text-white text-xs font-bold flex items-center justify-center ring-2 ring-white shadow-[0_1px_0_rgba(15,23,42,0.06)]"
-                  style={{ background: 'linear-gradient(135deg, #0565FF, #045CE6)' }}
-                  aria-hidden
-                >
+                <div className={`shrink-0 ${vmsAvatarClass()}`} aria-hidden>
                   {(vendor?.name || 'V').charAt(0).toUpperCase()}
                 </div>
                 <div className="min-w-0">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-[#17a2b4]/90">Vendor Details</p>
                   <p className="truncate text-sm font-semibold text-slate-800">{vendor?.name || 'Unknown Vendor'}</p>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-slate-500">
                     Registered · {formatRegistrationDisplay(vendor?.registrationDate)}
                   </p>
                 </div>
@@ -230,7 +251,7 @@ function VendorExpandedRow({ vendor, colSpan, isExpanded, onViewDetails, flash }
                     e.stopPropagation()
                     onViewDetails()
                   }}
-                  className="inline-flex min-h-[34px] items-center gap-2 rounded-lg border border-[#0565FF]/20 bg-gradient-to-r from-[#0565FF] to-[#045CE6] px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-[0.98] whitespace-nowrap"
+                  className={vmsPrimaryBtnClass()}
                 >
                   <i className="ri-external-link-line" aria-hidden />
                   View Details
@@ -239,14 +260,15 @@ function VendorExpandedRow({ vendor, colSpan, isExpanded, onViewDetails, flash }
             </div>
 
             {/* Body */}
-            <div className="px-4 py-3 sm:px-5 sm:py-4 bg-gradient-to-b from-white to-slate-50/30">
-              <div className="grid grid-cols-1 gap-x-6 divide-y divide-slate-200/70 sm:grid-cols-2 sm:divide-y-0 sm:gap-y-1">
+            <div className="px-4 py-3 sm:px-5 sm:py-4">
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3">
               {items.map((it) => (
-                <div key={it.label} className="min-w-0 sm:py-2">
+                <div key={it.label} className="min-w-0 rounded-xl bg-slate-50/80 px-3 py-2.5 ring-1 ring-slate-100/90">
                   <InfoField label={it.label} value={it.value} icon={it.icon} />
                 </div>
               ))}
               </div>
+            </div>
             </div>
           </div>
         </div>
@@ -277,8 +299,8 @@ function MobileVendorCard({ vendor, isExpanded, onToggle, onViewDetails }) {
       <div
         className={`overflow-hidden rounded-2xl border transition-all duration-200 ${
           isExpanded 
-            ? 'border-[#0565FF]/25 bg-gradient-to-b from-white to-slate-50 shadow-sm' 
-            : 'border-slate-200 bg-white shadow-sm hover:shadow-sm'
+            ? 'border-[#bfe6ec] bg-white shadow-md ring-1 ring-[#17a2b4]/20' 
+            : 'border-slate-200/80 bg-white shadow-sm hover:shadow-md'
         }`}
       >
         {/* Card Header - Clickable Area */}
@@ -306,11 +328,11 @@ function MobileVendorCard({ vendor, isExpanded, onToggle, onViewDetails }) {
               </div>
               
               {/* GST Chip - elegant pill design */}
-              <div className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 border border-slate-200">
-                <svg className="w-3.5 h-3.5 text-[#0565FF]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-[#bfe6ec] bg-[#e6f6f8] px-3 py-1">
+                <svg className="w-3.5 h-3.5 text-[#17a2b4]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
                 </svg>
-                <span className="text-xs font-medium text-[#0565FF]">
+                <span className="text-xs font-medium text-[#17a2b4]">
                   {vendor.gstNo || 'GST not available'}
                 </span>
               </div>
@@ -330,8 +352,8 @@ function MobileVendorCard({ vendor, isExpanded, onToggle, onViewDetails }) {
             
             {/* Expand/Collapse Icon */}
             <div className="shrink-0 mt-1">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 ${
-                isExpanded ? 'bg-[#0565FF]/10 text-[#0565FF]' : 'bg-slate-100 text-slate-500'
+              <div className={`shrink-0 mt-1 flex h-8 w-8 items-center justify-center rounded-xl transition-all duration-200 ${
+                isExpanded ? 'bg-[#17a2b4] text-white shadow-sm' : 'bg-[#e6f6f8] text-[#0f6b7a]'
               }`}>
                 <svg
                   className={`w-4 h-4 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}
@@ -357,7 +379,7 @@ function MobileVendorCard({ vendor, isExpanded, onToggle, onViewDetails }) {
               {/* Phone */}
               <div className="flex items-start gap-3">
                 <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
-                  <svg className="w-4 h-4 text-[#0565FF]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-4 h-4 text-[#17a2b4]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
                   </svg>
                 </div>
@@ -372,7 +394,7 @@ function MobileVendorCard({ vendor, isExpanded, onToggle, onViewDetails }) {
               {/* Contact Person */}
               <div className="flex items-start gap-3">
                 <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
-                  <svg className="w-4 h-4 text-[#0565FF]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-4 h-4 text-[#17a2b4]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                   </svg>
                 </div>
@@ -388,7 +410,7 @@ function MobileVendorCard({ vendor, isExpanded, onToggle, onViewDetails }) {
               {vendor.registeredAddress && (
                 <div className="flex items-start gap-3">
                   <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
-                    <svg className="w-4 h-4 text-[#0565FF]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg className="w-4 h-4 text-[#17a2b4]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                     </svg>
@@ -404,7 +426,7 @@ function MobileVendorCard({ vendor, isExpanded, onToggle, onViewDetails }) {
               {vendor.registrationDate && (
                 <div className="flex items-start gap-3">
                   <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
-                    <svg className="w-4 h-4 text-[#0565FF]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg className="w-4 h-4 text-[#17a2b4]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                     </svg>
                   </div>
@@ -422,7 +444,7 @@ function MobileVendorCard({ vendor, isExpanded, onToggle, onViewDetails }) {
                     e.stopPropagation()
                     onViewDetails()
                   }}
-                  className="mt-4 w-full min-h-[44px] rounded-xl border border-slate-200 bg-white text-sm font-semibold text-[#0565FF] shadow-sm transition-all hover:bg-slate-50 touch-manipulation"
+                  className={`mt-4 w-full ${vmsSecondaryBtnClass()}`}
                 >
                   <span className="inline-flex items-center justify-center gap-2">
                     <i className="ri-external-link-line text-base" aria-hidden />
@@ -441,12 +463,12 @@ function MobileVendorCard({ vendor, isExpanded, onToggle, onViewDetails }) {
 const ROWS_OPTIONS = [5, 10, 15, 20]
 
 const TABLE_COLUMNS = [
-  { label: 'Vendor', key: 'name', width: '20%' },
-  { label: 'Email', key: 'email', width: '20%' },
-  { label: 'Phone', key: 'officePhone', width: '15%' },
-  { label: 'Contact', key: 'contactName', width: '15%' },
-  { label: 'Product', key: 'product', width: '15%' },
-  { label: 'GST', key: 'gstNo', width: '15%' },
+  { label: 'Vendor', key: 'name', width: '20%', icon: 'ri-building-2-line' },
+  { label: 'Email', key: 'email', width: '20%', icon: 'ri-mail-line' },
+  { label: 'Phone', key: 'officePhone', width: '15%', icon: 'ri-phone-line' },
+  { label: 'Contact', key: 'contactName', width: '15%', icon: 'ri-user-line' },
+  { label: 'Product', key: 'product', width: '15%', icon: 'ri-box-3-line' },
+  { label: 'GST', key: 'gstNo', width: '15%', icon: 'ri-file-text-line' },
 ]
 
 export default function VendorMaster2() {
@@ -458,6 +480,10 @@ export default function VendorMaster2() {
   const formId = envVite('VITE_KF_VENDOR_MASTER_FORM_ID', 'Vendor_Master_A02')
 
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    AOS.init({ duration: 700, once: true, offset: 24, easing: 'ease-out-cubic' })
+  }, [])
   const [apiRows, setApiRows] = useState([])
 
   const [search, setSearch] = useState('')
@@ -473,7 +499,7 @@ export default function VendorMaster2() {
   useEffect(() => {
     if (!accountId || !formId) return
     let cancelled = false
-    const path = `/form/2/${accountId}/${formId}/list?page_number=1&page_size=100000&apply_preference=1`
+    const path = `/form/2/${accountId}/${formId}/list?page_number=1&page_size=1000&apply_preference=1`
     setLoading(true)
 
     async function run() {
@@ -683,12 +709,13 @@ export default function VendorMaster2() {
   }
 
   return (
-    <div className="min-h-screen w-full min-w-0 overflow-x-hidden bg-gradient-to-br from-slate-50 via-white to-slate-50/80 p-2.5 transition-all duration-200 ease-in-out sm:p-3 md:p-4">
-      <main className="relative mx-auto max-w-[1600px] min-w-0">
-        <section className="mb-5 sm:mb-6">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+    <div className={vmsPageClass}>
+      <main className={vmsPageInnerClass}>
+        <section className={vmsHeaderShellClass()} data-aos="fade-down">
+          <P2pHeaderFx />
+          <div className="relative z-[1] flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex min-w-0 items-start gap-3 sm:items-center">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-r from-[#0565FF] to-[#045CE6] text-xs font-bold text-white shadow-sm sm:h-11 sm:w-11 sm:text-sm">
+              <div className={vmsAvatarClass()}>
                 <svg className="h-4 w-4 sm:h-5 sm:w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
                   <path
                     strokeLinecap="round"
@@ -699,35 +726,34 @@ export default function VendorMaster2() {
                 </svg>
               </div>
               <div className="min-w-0">
-                <h1 className="text-base font-semibold leading-tight tracking-tight sm:text-xl text-slate-900">
+                <h1 className="text-base font-semibold leading-tight tracking-tight text-slate-900 sm:text-xl">
                   Vendor Master
                 </h1>
                 <p className="mt-0.5 text-xs leading-snug text-slate-500 sm:text-sm">
-                  <span className="font-semibold text-slate-700">{filtered.length}</span> vendors registered
+                  <span className={vmsRoleAccentClass()}>{filtered.length}</span> vendors registered
                 </p>
               </div>
             </div>
 
-            {/* Search + CTA (single row on desktop) */}
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center lg:justify-end lg:gap-3">
               <div className="relative w-full sm:w-[22rem] lg:w-[26rem]">
-              <svg className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 sm:left-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-              <input
-                value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value)
-                  setPage(1)
-                }}
-                placeholder="Search vendors…"
-                className="min-h-[40px] w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs text-slate-800 shadow-sm outline-none placeholder:text-slate-400 focus:border-[#0565FF]/35 focus:ring-2 focus:ring-[#0565FF]/20 touch-manipulation sm:min-h-[42px] sm:text-sm"
-              />
+                <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value)
+                    setPage(1)
+                  }}
+                  placeholder="Search vendors…"
+                  className={vmsSearchInputClass()}
+                />
               </div>
               <button
                 type="button"
                 onClick={handleNewVendor}
-                className="inline-flex min-h-[40px] w-full shrink-0 touch-manipulation items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#0565FF] to-[#045CE6] px-3 py-2 text-xs font-semibold text-white shadow-sm transition-all duration-200 ease-in-out hover:opacity-95 sm:min-h-[42px] sm:w-auto sm:px-4 sm:text-sm"
+                className={vmsPrimaryBtnClass()}
               >
                 <svg className="h-4 w-4 sm:h-5 sm:w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -738,7 +764,7 @@ export default function VendorMaster2() {
           </div>
         </section>
 
-        <div className="relative z-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-2.5 shadow-xl transition-all duration-200 ease-in-out sm:p-6">
+        <div className={`relative z-0 ${vmsSectionShellClass()} p-2.5 sm:p-4 md:p-5`} data-aos="fade-up">
           {/* WEB VIEW - unchanged */}
           <div className="hidden min-w-0 sm:block overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
             <table className="w-full min-w-[900px] table-fixed border-separate border-spacing-0">
@@ -748,27 +774,28 @@ export default function VendorMaster2() {
                   <col key={col.key} className={col.width} />
                 ))}
               </colgroup>
-              <thead>
-                <tr className="border-b border-[#0565FF]/25 bg-gradient-to-b from-[#0565FF]/12 via-[#0565FF]/10 to-slate-100/85 shadow-[inset_0_-1px_0_rgba(5,101,255,0.08)] backdrop-blur-sm">
-                  <th className="w-12 rounded-tl-lg px-2 py-3.5 align-middle">
+              <thead className={vmsTableHeadClass()}>
+                <tr>
+                  <th className={`${vmsTableHeadCellClass()} w-12 rounded-tl-lg`}>
                     <span className="sr-only">Expand</span>
                   </th>
-                  {TABLE_COLUMNS.map(({ label, key }) => (
+                  {TABLE_COLUMNS.map(({ label, key, icon }) => (
                     <th
                       key={key}
                       onClick={() => handleSort(key)}
-                      className={`group cursor-pointer select-none px-3 py-3.5 text-left text-[11px] font-bold uppercase leading-tight tracking-[0.07em] text-slate-600 antialiased transition-colors duration-150 last:rounded-tr-lg hover:text-[#0565FF] ${
-                        sortKey === key ? 'text-[#0565FF]' : ''
+                      className={`group cursor-pointer select-none ${vmsTableHeadCellClass()} transition-colors duration-150 last:rounded-tr-lg hover:text-[#17a2b4] ${
+                        sortKey === key ? 'text-[#17a2b4]' : ''
                       }`}
                     >
                       <div className="flex items-center gap-1">
+                        {icon ? <i className={`${icon} ${vmsColIconClass()}`} aria-hidden /> : null}
                         <span className="truncate">{label}</span>
                         <span className="flex shrink-0 flex-col leading-none opacity-70 transition-opacity group-hover:opacity-100">
-                          <svg className={`h-2 w-2 ${sortKey === key && sortDir === 'asc' ? 'text-[#0565FF]' : 'text-slate-300'}`} fill="currentColor" viewBox="0 0 24 24" aria-hidden>
+                          <svg className={`h-2 w-2 ${sortKey === key && sortDir === 'asc' ? 'text-[#17a2b4]' : 'text-slate-300'}`} fill="currentColor" viewBox="0 0 24 24" aria-hidden>
                             <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z"/>
                           </svg>
                           <svg
-                            className={`-mt-0.5 h-2 w-2 ${sortKey === key && sortDir === 'desc' ? 'text-[#0565FF]' : 'text-slate-300'}`}
+                            className={`-mt-0.5 h-2 w-2 ${sortKey === key && sortDir === 'desc' ? 'text-[#17a2b4]' : 'text-slate-300'}`}
                             fill="currentColor"
                             viewBox="0 0 24 24"
                             aria-hidden
@@ -782,14 +809,14 @@ export default function VendorMaster2() {
                 </tr>
               </thead>
 
-              <tbody className="divide-y divide-slate-100/80">
+              <tbody className={vmsTableDivideClass()}>
                 {loading ? (
                   <tr>
                     <td colSpan={7} className="py-20 text-center">
                       <div className="flex flex-col items-center gap-3">
                         <div className="relative">
-                          <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#0565FF]/25 border-t-[#0565FF]" />
-                          <div className="absolute inset-0 h-10 w-10 animate-pulse rounded-full bg-[#0565FF]/10 blur-md" />
+                          <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#17a2b4]/25 border-t-[#17a2b4]" />
+                          <div className="absolute inset-0 h-10 w-10 animate-pulse rounded-full bg-[#17a2b4]/10 blur-md" />
                         </div>
                         <p className="text-sm text-slate-500">Loading vendors...</p>
                       </div>
@@ -813,8 +840,8 @@ export default function VendorMaster2() {
                       <React.Fragment key={vendor.id}>
                         <tr
                           onClick={() => handleRowClick(vendor.id)}
-                          className={`group cursor-pointer transition-all duration-200 ease-in-out hover:bg-slate-50 [&>td]:border-b [&>td]:border-slate-200/70 last:[&>td]:border-b-0 ${
-                            isExpanded ? 'bg-[#0565FF]/5 shadow-[inset_3px_0_0_0_rgba(5,101,255,0.25)]' : ''
+                          className={`group cursor-pointer [&>td]:border-b [&>td]:border-slate-200/70 last:[&>td]:border-b-0 ${vmsTableRowClass(isExpanded)} ${
+                            isExpanded ? 'shadow-[inset_3px_0_0_0_rgba(0,134,201,0.35)]' : ''
                           }`}
                         >
                           <td className="w-12 px-2 py-3 align-middle">
@@ -824,12 +851,10 @@ export default function VendorMaster2() {
                                 e.stopPropagation()
                                 handleRowClick(vendor.id)
                               }}
-                              className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-white/80"
+                              className={vmsExpandBtnClass(isExpanded, true)}
                               aria-label={isExpanded ? 'Collapse row' : 'Expand row'}
                             >
-                              <svg className={`h-4 w-4 transition-transform duration-200 ease-out motion-reduce:transition-none ${isExpanded ? 'rotate-90 text-[#0565FF]' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
-                              </svg>
+                              <i className={`${isExpanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-base`} />
                             </button>
                           </td>
 
@@ -841,7 +866,7 @@ export default function VendorMaster2() {
                                   e.stopPropagation()
                                 handleRowClick(vendor.id)
                                 }}
-                                className="block w-full truncate text-left text-sm font-semibold tracking-tight text-slate-800 transition-colors hover:text-[#0565FF] hover:underline focus:outline-none"
+                                className="block w-full truncate text-left text-sm font-semibold tracking-tight text-slate-800 transition-colors hover:text-[#17a2b4] hover:underline focus:outline-none"
                                 title={vendor.name || 'Unknown Vendor'}
                               >
                                 {vendor.name || 'Unknown Vendor'}
@@ -885,7 +910,7 @@ export default function VendorMaster2() {
 
                           <td className="px-3 py-3 align-middle">
                             <span
-                              className="inline-flex max-w-full items-center rounded-md bg-[#0565FF]/10 px-1.5 py-0.5 text-[10px] font-semibold leading-snug text-[#0565FF] sm:px-2 sm:py-1 sm:text-xs"
+                              className="inline-flex max-w-full items-center rounded-md bg-[#17a2b4]/10 px-1.5 py-0.5 text-[10px] font-semibold leading-snug text-[#17a2b4] sm:px-2 sm:py-1 sm:text-xs"
                               title={vendor.gstNo || ''}
                             >
                               <span className="line-clamp-2 break-all sm:line-clamp-1 sm:break-normal">{vendor.gstNo ? vendor.gstNo : '—'}</span>
@@ -912,7 +937,7 @@ export default function VendorMaster2() {
             {loading ? (
               <div className="flex flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
                 <div className="relative">
-                  <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#0565FF]/25 border-t-[#0565FF]" />
+                  <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#17a2b4]/25 border-t-[#17a2b4]" />
                 </div>
                 <p className="mt-3 text-sm text-slate-500">Loading vendors...</p>
               </div>
@@ -939,7 +964,7 @@ export default function VendorMaster2() {
           </div>
 
           {/* Pagination (attached to table) */}
-          <div className="border-t border-slate-200 bg-white px-3 py-3 sm:px-6 sm:py-5">
+          <div className={vmsPaginationBarClass()}>
             {/* Mobile Pagination */}
             <div className="flex flex-col gap-2.5 sm:hidden">
               <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
@@ -982,7 +1007,7 @@ export default function VendorMaster2() {
                     setRowsPerPage(Number(e.target.value))
                     setPage(1)
                   }}
-                  className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700 outline-none focus:border-[#0565FF]"
+                  className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700 outline-none focus:border-[#17a2b4]"
                 >
                   {ROWS_OPTIONS.map((n) => (
                     <option key={n} value={n}>{n}</option>
@@ -992,7 +1017,7 @@ export default function VendorMaster2() {
             </div>
 
             {/* Desktop Pagination */}
-            <div className="hidden flex-col gap-4 sm:flex sm:flex-row sm:items-center sm:justify-between">
+            <div className={`hidden sm:flex ${vmsPaginationBarClass()} !mt-0 rounded-b-2xl`}>
               <div className="flex flex-shrink-0 flex-wrap items-center gap-2 text-xs text-slate-600 sm:text-sm">
                 <label htmlFor="vendor-rows-per-page" className="whitespace-nowrap font-medium">
                   Rows per page:
@@ -1004,7 +1029,7 @@ export default function VendorMaster2() {
                     setRowsPerPage(Number(e.target.value))
                     setPage(1)
                   }}
-                  className="min-h-[44px] min-w-[72px] cursor-pointer rounded-xl border border-slate-200 bg-white/80 py-2 pl-3 pr-8 text-sm font-medium text-slate-700 outline-none transition-colors hover:bg-white focus:border-[#0565FF] focus:ring-2 focus:ring-[#0565FF]/25 touch-manipulation"
+                  className="min-h-[36px] min-w-[72px] cursor-pointer rounded-full border border-slate-200 bg-white py-2 pl-3 pr-8 text-sm font-medium text-slate-700 outline-none transition-colors hover:bg-white focus:border-[#5cc3cf] focus:ring-2 focus:ring-[#17a2b4]/20 touch-manipulation"
                 >
                   {ROWS_OPTIONS.map((n) => (
                     <option key={n} value={n}>{n}</option>
@@ -1022,7 +1047,8 @@ export default function VendorMaster2() {
                   type="button"
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   disabled={currentPage === 1}
-                  className="flex min-h-[44px] min-w-[44px] touch-manipulation items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm transition-all duration-200 ease-in-out hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  className={vmsPaginationBtnClass(false)}
+                  aria-label="Previous page"
                 >
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -1031,17 +1057,14 @@ export default function VendorMaster2() {
 
                 {pageNumbers.map((p, i) =>
                   p === '...' ? (
-                    <span key={`dots-${i}`} className="flex min-h-[44px] min-w-[44px] items-center justify-center text-xs text-slate-400">…</span>
+                    <span key={`dots-${i}`} className="flex h-9 w-9 items-center justify-center text-xs text-slate-400">…</span>
                   ) : (
                     <button
                       key={p}
                       type="button"
                       onClick={() => setPage(p)}
-                      className={`flex min-h-[44px] min-w-[44px] touch-manipulation items-center justify-center rounded-xl text-sm font-bold transition-all ${
-                        currentPage === p
-                          ? 'bg-gradient-to-r from-[#0565FF] to-[#045CE6] text-white shadow-md'
-                          : 'border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50'
-                      }`}
+                      className={vmsPaginationBtnClass(currentPage === p)}
+                      aria-label={`Page ${p}`}
                     >
                       {p}
                     </button>
@@ -1052,7 +1075,8 @@ export default function VendorMaster2() {
                   type="button"
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                   disabled={currentPage === totalPages}
-                  className="flex min-h-[44px] min-w-[44px] touch-manipulation items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm transition-all duration-200 ease-in-out hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  className={vmsPaginationBtnClass(false)}
+                  aria-label="Next page"
                 >
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -1078,7 +1102,7 @@ export default function VendorMaster2() {
           >
             <div className="relative flex items-center justify-between border-b border-slate-100 px-4 py-3 sm:px-6 sm:py-4">
               <div className="min-w-0 pr-2">
-                <h2 className="text-base font-bold text-[#0565FF] sm:text-lg">
+                <h2 className="text-base font-bold text-[#17a2b4] sm:text-lg">
                   Add New Vendor
                 </h2>
                 <p className="mt-0.5 text-[11px] text-slate-500 sm:text-xs">Fill in the vendor details below</p>
@@ -1105,12 +1129,12 @@ export default function VendorMaster2() {
                 <div key={field.label}>
                   <label className="mb-1 block text-[11px] font-semibold text-slate-600 sm:mb-1.5 sm:text-xs">{field.label}</label>
                   <div className="relative group">
-                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 transition-colors group-focus-within:text-[#0565FF] sm:left-3.5">
+                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 transition-colors group-focus-within:text-[#17a2b4] sm:left-3.5">
                       {field.icon}
                     </div>
                     <input
                       placeholder={field.placeholder}
-                      className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs text-slate-800 shadow-sm outline-none transition-all placeholder:text-slate-400 focus:border-[#0565FF]/35 focus:ring-2 focus:ring-[#0565FF]/25 sm:py-2.5 sm:pl-10 sm:pr-4 sm:text-sm"
+                      className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs text-slate-800 shadow-sm outline-none transition-all placeholder:text-slate-400 focus:border-[#17a2b4]/35 focus:ring-2 focus:ring-[#17a2b4]/25 sm:py-2.5 sm:pl-10 sm:pr-4 sm:text-sm"
                     />
                   </div>
                 </div>
@@ -1120,14 +1144,14 @@ export default function VendorMaster2() {
               <button
                 type="button"
                 onClick={() => setNewVendorOpen(false)}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition-all hover:bg-slate-50 hover:border-slate-300 sm:px-4 sm:text-sm"
+                className={vmsSecondaryBtnClass()}
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={() => setNewVendorOpen(false)}
-                className="rounded-xl bg-gradient-to-r from-[#0565FF] to-[#045CE6] px-4 py-2 text-xs font-semibold text-white shadow-md transition-all duration-200 hover:opacity-95 hover:shadow-lg sm:px-5 sm:text-sm"
+                className={vmsPrimaryBtnClass()}
               >
                 Save Vendor
               </button>

@@ -11,6 +11,34 @@ import {
 } from './kfContractPaths.js'
 import { mapKfContractItem, contractStatusPillClass } from './kfContractItemMap.js'
 import AOS from 'aos'
+import {
+  vmsPageClass,
+  vmsPageInnerClass,
+  vmsHeaderShellClass,
+  vmsAvatarClass,
+  vmsRoleAccentClass,
+  vmsSectionShellClass,
+  vmsSectionHeaderClass,
+  vmsPrimaryBtnClass,
+  vmsChipBtnClass,
+  vmsSearchInputClass,
+  vmsDangerBtnClass,
+  vmsIconBtnClass,
+  vmsGhostBtnClass,
+  vmsSelectClass,
+  vmsTableHeadClass,
+  vmsTableHeadCellClass,
+  vmsTableRowClass,
+  vmsExpandBtnClass,
+  vmsMobileCardClass,
+  vmsPaginationBarClass,
+  vmsPaginationBtnClass,
+  vmsSegmentBtnClass,
+  vmsContractTypeIcon,
+  vmsTypeChipClass,
+  vmsColIconClass,
+} from './vms/vmsTheme.js'
+import P2pKpiCard, { P2pHeaderFx } from './vms/P2pKpiCard.jsx'
 
 function envVite(name) {
   try {
@@ -251,7 +279,7 @@ function getStatusBadgeClass(status) {
   if (s.includes('withdrawn')) return 'bg-orange-100 text-orange-700 border-orange-200'
   if (s.includes('draft')) return 'bg-gray-100 text-gray-700 border-gray-200'
   if (s.includes('expired')) return 'bg-slate-100 text-slate-700 border-slate-200'
-  if (s.includes('progress')) return 'bg-[#0565FF]/10 text-[#0565FF] border-[#0565FF]/25'
+  if (s.includes('progress')) return 'bg-[#17a2b4]/10 text-[#17a2b4] border-[#17a2b4]/25'
   return 'bg-slate-100 text-slate-700 border-slate-200'
 }
 
@@ -646,7 +674,7 @@ async function fetchContractTaskDetailMerged(contractPaths, kfInstance, baseTask
 function buildMyItemsPath(contractPaths, statusFilter, pageNumber, pageSize) {
   const segment = STATUS_TO_SEGMENT[statusFilter] || 'draft'
   const pn = Math.max(1, Number(pageNumber) || 1)
-  const ps = Math.min(100000, Math.max(1, Number(pageSize) || 100000))
+  const ps = Math.min(1000, Math.max(1, Number(pageSize) || 1000))
   return `/process/2/${contractPaths.accountId}/${contractPaths.processId}/myitems/${segment}?apply_preference=true&page_number=${pn}&page_size=${ps}&skip_aggregation=true&_application_id=${encodeURIComponent(contractPaths.applicationId)}`
 }
 
@@ -686,22 +714,22 @@ const DEMO_ITEMS = [
 ]
 
 const ITEMS_COLUMNS = [
-  { id: 'vendor', label: 'Vendor Name' },
-  { id: 'contractDescription', label: 'Contract Description' },
-  { id: 'contractCategory', label: 'Category' },
-  { id: 'createdAt', label: 'Date Created' },
-  { id: 'valueDisplay', label: 'Value' },
-  { id: 'status', label: 'Status' },
-  { id: 'endDate', label: 'End Date' },
+  { id: 'vendor', label: 'Vendor Name', icon: 'ri-building-2-line' },
+  { id: 'contractDescription', label: 'Contract Description', icon: 'ri-file-paper-2-line' },
+  { id: 'contractCategory', label: 'Category', icon: 'ri-price-tag-3-line' },
+  { id: 'createdAt', label: 'Date Created', icon: 'ri-calendar-line' },
+  { id: 'valueDisplay', label: 'Value', icon: 'ri-money-rupee-circle-line' },
+  { id: 'status', label: 'Status', icon: 'ri-flag-line' },
+  { id: 'endDate', label: 'End Date', icon: 'ri-calendar-close-line' },
 ]
 const TASKS_COLUMNS = [
-  { id: 'vendor', label: 'Vendor Name' },
-  { id: 'contractDescription', label: 'Contract Description' },
-  { id: 'contractCategory', label: 'Category' },
-  { id: 'createdAt', label: 'Date Created' },
-  { id: 'valueDisplay', label: 'Value' },
-  { id: 'status', label: 'Status' },
-  { id: 'endDate', label: 'End Date' },
+  { id: 'vendor', label: 'Vendor Name', icon: 'ri-building-2-line' },
+  { id: 'contractDescription', label: 'Contract Description', icon: 'ri-file-paper-2-line' },
+  { id: 'contractCategory', label: 'Category', icon: 'ri-price-tag-3-line' },
+  { id: 'createdAt', label: 'Date Created', icon: 'ri-calendar-line' },
+  { id: 'valueDisplay', label: 'Value', icon: 'ri-money-rupee-circle-line' },
+  { id: 'status', label: 'Status', icon: 'ri-flag-line' },
+  { id: 'endDate', label: 'End Date', icon: 'ri-calendar-close-line' },
 ]
 
 const DEFAULT_VISIBLE_ITEMS = Object.fromEntries(ITEMS_COLUMNS.map((c) => [c.id, true]))
@@ -764,7 +792,7 @@ function StarRatingDock({ value }) {
           <span
             key={idx}
             onMouseEnter={() => setHoveredIdx(idx)}
-            className={`select-none leading-none transition-transform duration-150 ease-out ${filledStar ? 'text-[#0565FF]' : 'text-sky-200'}`}
+            className={`select-none leading-none transition-transform duration-150 ease-out ${filledStar ? 'text-[#17a2b4]' : 'text-[#bfe6ec]'}`}
             style={{ transform: `scale(${scale})`, fontSize: '1.45rem', transformOrigin: 'bottom center' }}
           >
             ★
@@ -782,7 +810,7 @@ function ItemVendorNameCell({ item, vendorCellLoadingById }) {
   if (isLoading) {
     return (
       <span className="inline-flex items-center gap-2 text-slate-400" aria-busy="true" aria-label="Loading vendor">
-        <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-sky-200 border-t-sky-500" />
+        <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[#e6f6f8] border-t-[#17a2b4]" />
         <span className="text-xs font-medium text-slate-500">Loading…</span>
       </span>
     )
@@ -821,7 +849,7 @@ function ContractAccordionDetail({ item, onViewDetails, onClose }) {
     const t = formatYesNoLabel(val)
       const cls =
         t === 'Yes'
-        ? 'bg-[#0565FF]/10 text-[#0565FF] border-[#0565FF]/20'
+        ? 'bg-[#17a2b4]/10 text-[#17a2b4] border-[#17a2b4]/20'
         : t === 'No'
           ? 'bg-slate-100 text-slate-700 border-slate-200/80'
           : 'bg-slate-50 text-slate-600 border-slate-200/80'
@@ -833,7 +861,7 @@ function ContractAccordionDetail({ item, onViewDetails, onClose }) {
     <div className={className}>
       <p className="text-xs text-slate-500 uppercase tracking-wide">
         {label}
-        {required ? <span className="text-[#0565FF] ml-0.5">*</span> : null}
+        {required ? <span className="text-[#17a2b4] ml-0.5">*</span> : null}
       </p>
       <div className="mt-0.5 text-sm font-medium text-slate-900 leading-relaxed break-words">{children}</div>
     </div>
@@ -842,7 +870,7 @@ function ContractAccordionDetail({ item, onViewDetails, onClose }) {
     <div className="w-full bg-white max-md:bg-transparent">
       <div className="flex items-start justify-between gap-3 px-0 md:px-1 py-2 md:py-0">
         <div className="flex items-start gap-3 min-w-0">
-          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0565FF] text-sm font-semibold text-white">
+          <div className={`mt-0.5 shrink-0 ${vmsAvatarClass()}`}>
             {(item.vendor || item.name || '?').charAt(0)}
           </div>
           <div className="min-w-0">
@@ -950,7 +978,7 @@ function ContractAccordionDetail({ item, onViewDetails, onClose }) {
               <button
                 type="button"
                 onClick={onViewDetails}
-                className="inline-flex min-h-[36px] items-center gap-2 rounded-lg bg-[#0565FF] px-3.5 py-1.5 text-sm font-semibold text-white transition hover:bg-[#045CE6]"
+                className="inline-flex min-h-[36px] items-center gap-2 rounded-lg bg-[#17a2b4] px-3.5 py-1.5 text-sm font-semibold text-white transition hover:bg-[#0f6b7a]"
               >
                 <i className="ri-external-link-line" aria-hidden />
                 View Full Details
@@ -1347,7 +1375,7 @@ export default function ContractsMyItems() {
     let cancelled = false
     setItemsLoading(true)
     // Fetch selected status list from /myitems/{status} endpoint.
-    const path = buildMyItemsPath(contractPaths, statusFilter, 1, 100000)
+    const path = buildMyItemsPath(contractPaths, statusFilter, 1, 1000)
     const segment = STATUS_TO_SEGMENT[statusFilter] || 'draft'
     const url = getApiBase() + path
     async function run() {
@@ -1392,7 +1420,7 @@ export default function ContractsMyItems() {
     let cancelled = false
     async function run() {
       try {
-        const path = adminPaths.getContractItemsPath(1, 100000)
+        const path = adminPaths.getContractItemsPath(1, 1000)
         let response
         if (kf?.api) {
           const resp = await kf.api(path, { method: 'GET', headers: { Accept: 'application/json' } })
@@ -1479,7 +1507,7 @@ export default function ContractsMyItems() {
     }
     async function run() {
       try {
-        const path = vendorMasterPaths.getVendorItemsPath(1, 100000)
+        const path = vendorMasterPaths.getVendorItemsPath(1, 1000)
         let response
         if (kf?.api) {
           const resp = await kf.api(path, { method: 'GET', headers: { Accept: 'application/json' } })
@@ -2223,109 +2251,62 @@ export default function ContractsMyItems() {
   }
 
   return (
-    <div className="bg-[#f6f8fb] p-2 md:p-4 overflow-hidden w-full min-w-0 transition-all duration-200 ease-in-out">
-      <div className="mx-auto max-w-[1500px] min-w-0">
-        <div className="p-2.5 sm:p-4 md:p-5 flex flex-col space-y-4 sm:space-y-6 transition-smooth">
-            <section className="mb-3 sm:mb-4" data-aos="fade-down">
-              <div className="flex items-center gap-3 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden whitespace-nowrap">
-                <div className="flex items-center gap-3 min-w-0 shrink-0">
-                  <div className="h-10 w-10 rounded-xl bg-gradient-to-r from-[#0565FF] to-[#045CE6] text-white text-sm font-bold flex items-center justify-center shadow-sm">
-                    {(firstName || 'U').charAt(0)}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-base sm:text-lg font-semibold tracking-tight text-slate-700 truncate">{greeting}, {firstName}</p>
-                    <p className="text-xs sm:text-sm text-slate-500 truncate">Logged in as <span className="font-semibold text-[#0565FF]">{roleLabel}</span></p>
-                  </div>
+    <div className={`${vmsPageClass} w-full min-w-0`}>
+      <div className={vmsPageInnerClass}>
+        <div className="p-1 sm:p-2 md:p-0 flex flex-col space-y-4 sm:space-y-6 transition-smooth">
+            <section className={vmsHeaderShellClass()} data-aos="fade-down">
+              <P2pHeaderFx />
+              <div className="relative z-[1] flex items-center gap-3 min-w-0">
+                <div className={vmsAvatarClass()}>
+                  {(firstName || 'U').charAt(0)}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-base sm:text-lg font-semibold tracking-tight text-gray-900 truncate">{greeting}, {firstName}</p>
+                  <p className="text-xs sm:text-sm text-gray-500 truncate">Logged in as <span className={vmsRoleAccentClass()}>{roleLabel}</span></p>
                 </div>
               </div>
             </section>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 gap-2.5 sm:gap-3" data-aos="fade-up">
+            <div className="tfx-kpis-row grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 gap-3">
               {[
-                { key: 'total', label: 'Total Contracts', value: contractKpis.total, icon: 'ri-file-list-3-line', grad: 'from-sky-200 via-sky-100 to-sky-200', iconGrad: 'from-[#0565FF] to-[#045CE6]' },
-                { key: 'active', label: 'Active Contracts', value: contractKpis.active, icon: 'ri-checkbox-circle-line', grad: 'from-emerald-200 via-emerald-100 to-teal-200', iconGrad: 'from-emerald-500 to-teal-600' },
-                { key: 'expiring', label: 'Expiring Soon', value: contractKpis.expiringSoon, segmented: true, icon: 'ri-calendar-event-line', grad: 'from-violet-200 via-indigo-100 to-purple-200', iconGrad: 'from-violet-500 to-indigo-600' },
-                { key: 'expired', label: 'Expired', value: contractKpis.expired, icon: 'ri-time-line', grad: 'from-rose-200 via-red-100 to-orange-200', iconGrad: 'from-rose-500 to-red-600' },
-                { key: 'nda', label: 'NDA Missing', value: contractKpis.ndaMiss, icon: 'ri-alert-line', grad: 'from-pink-200 via-rose-100 to-rose-200', iconGrad: 'from-rose-500 to-pink-600' },
-                { key: 'msa', label: 'MSA Missing', value: contractKpis.msaMiss, icon: 'ri-shield-line', grad: 'from-orange-200 via-amber-100 to-yellow-200', iconGrad: 'from-amber-500 to-orange-600' },
-                { key: 'sow', label: 'SOW Missing', value: contractKpis.sowMiss, icon: 'ri-briefcase-4-line', grad: 'from-cyan-200 via-sky-100 to-sky-200', iconGrad: 'from-cyan-500 to-[#045CE6]' },
-                { key: 'vendors', label: 'Total Vendors', value: contractKpis.vendors, icon: 'ri-team-line', grad: 'from-sky-200 via-indigo-100 to-violet-200', iconGrad: 'from-sky-500 to-indigo-600' },
-              ].map((card) => (
-                <div
+                { key: 'total', label: 'Total Contracts', value: contractKpis.total, icon: 'ri-file-copy-2-line', variant: 'all' },
+                { key: 'active', label: 'Active Contracts', value: contractKpis.active, icon: 'ri-file-check-line', variant: 'approved' },
+                { key: 'expiring', label: 'Expiring Soon', value: contractKpis.expiringSoon, segmented: true, icon: 'ri-calendar-schedule-line', variant: 'overdue', live: true },
+                { key: 'expired', label: 'Expired', value: contractKpis.expired, icon: 'ri-calendar-close-line', variant: 'rejected' },
+                { key: 'nda', label: 'NDA Missing', value: contractKpis.ndaMiss, icon: 'ri-lock-2-line', variant: 'draft' },
+                { key: 'msa', label: 'MSA Missing', value: contractKpis.msaMiss, icon: 'ri-stack-line', variant: 'returned' },
+                { key: 'sow', label: 'SOW Missing', value: contractKpis.sowMiss, icon: 'ri-clipboard-line', variant: 'pending_approval' },
+                { key: 'vendors', label: 'Total Vendors', value: contractKpis.vendors, icon: 'ri-handshake-line', variant: 'payments' },
+              ].map((card, idx) => (
+                <P2pKpiCard
                   key={card.key}
-                  className={`group relative overflow-hidden rounded-2xl border border-white/60 bg-gradient-to-br ${card.grad} p-2.5 md:p-3 min-h-[96px] md:min-h-[108px] shadow-[0_10px_26px_rgba(30,64,175,0.12)] transition-all duration-200 hover:shadow-[0_14px_30px_rgba(30,64,175,0.16)]`}
-                >
-                  {/* Mobile only: centered icon, title, value (md+ uses block below) */}
-                  <div className="flex md:hidden flex-col items-center justify-center text-center gap-2.5 py-0.5">
-                    <div
-                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${card.iconGrad} text-white shadow-sm`}
-                    >
-                      <i className={`${card.icon} text-lg`} />
+                  label={card.label}
+                  value={card.value}
+                  icon={card.icon}
+                  variant={card.variant}
+                  live={card.live}
+                  total={card.key === 'vendors' ? card.value : contractKpis.total}
+                  index={idx}
+                  extra={card.segmented ? (
+                    <div className="tfx-kpi-windows">
+                      {['30', '60', '90'].map((w) => (
+                        <button
+                          key={w}
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setExpiringWindow(w) }}
+                          className={expiringWindow === w ? 'is-on' : ''}
+                        >
+                          {w}d
+                        </button>
+                      ))}
                     </div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 leading-snug px-0.5">
-                      {card.label}
-                    </p>
-                    {card.segmented ? (
-                      <>
-                        <div className="inline-flex rounded-md border border-white/70 bg-white/80 p-0.5 shadow-sm">
-                          {['30', '60', '90'].map((w) => (
-                            <button
-                              key={w}
-                              type="button"
-                              onClick={() => setExpiringWindow(w)}
-                              className={`px-1.5 py-0.5 text-[10px] font-semibold rounded transition ${
-                                expiringWindow === w ? 'bg-[#0565FF] text-white shadow-sm' : 'text-slate-600 hover:bg-sky-50'
-                              }`}
-                            >
-                              {w}d
-                            </button>
-                          ))}
-                        </div>
-                        <p className="text-xl font-bold leading-none text-gray-900">{card.value}</p>
-                      </>
-                    ) : (
-                      <p className="text-xl font-bold leading-none text-gray-900">{card.value}</p>
-                    )}
-                  </div>
-
-                  {/** Tablet & desktop: original layout unchanged */}
-                  <div className="hidden md:block">
-                    <div className="mb-1.5 flex items-start justify-between gap-2">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">{card.label}</p>
-                      <span className={`inline-flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br ${card.iconGrad} text-white shadow-sm`}>
-                        <i className={`${card.icon} text-sm`} />
-                      </span>
-                    </div>
-                    {card.segmented ? (
-                      <div className="mt-1 flex h-[62px] flex-col justify-between">
-                        <div className="inline-flex w-fit rounded-md border border-white/70 bg-white/80 p-0.5 shadow-sm">
-                          {['30', '60', '90'].map((w) => (
-                            <button
-                              key={w}
-                              type="button"
-                              onClick={() => setExpiringWindow(w)}
-                              className={`px-1.5 py-0.5 text-[10px] font-semibold rounded transition ${
-                                expiringWindow === w ? 'bg-[#0565FF] text-white shadow-sm' : 'text-slate-600 hover:bg-sky-50'
-                              }`}
-                            >
-                              {w}d
-                            </button>
-                          ))}
-                        </div>
-                        <p className="text-3xl font-bold leading-none text-slate-900 drop-shadow-[0_1px_0_rgba(255,255,255,0.5)]">{card.value}</p>
-                      </div>
-                    ) : (
-                      <div className="mt-3 flex h-[58px] items-end">
-                        <p className="text-3xl font-bold leading-none text-slate-900 drop-shadow-[0_1px_0_rgba(255,255,255,0.5)]">{card.value}</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                  ) : null}
+                />
               ))}
             </div>
 
             {/* Toolbar: mobile first (above tabs), desktop unchanged */}
-            <div className="order-2 relative z-[100] flex flex-col gap-3 sm:gap-4 sm:flex-row sm:items-center sm:justify-between flex-wrap min-w-0 rounded-2xl border border-sky-100/70 bg-gradient-to-r from-white/90 via-sky-50/70 to-sky-50/70 p-2.5 sm:p-3 shadow-[0_8px_26px_rgba(30,64,175,0.08)] max-md:rounded-none max-md:border-0 max-md:bg-transparent max-md:shadow-none max-md:px-0 max-md:py-0" data-aos="fade-down">
+            <div className={`order-2 relative z-[100] flex flex-col gap-3 sm:gap-4 sm:flex-row sm:items-center sm:justify-between flex-wrap min-w-0 ${vmsSectionShellClass()} ${vmsSectionHeaderClass()} max-md:rounded-none max-md:border-0 max-md:shadow-none max-md:px-0 max-md:py-0`} data-aos="fade-down">
               <div className="flex flex-wrap gap-2 items-center justify-center md:justify-start">
                 {activeTab === 'items' ? (
                   <>
@@ -2337,11 +2318,7 @@ export default function ContractsMyItems() {
                           setStatusFilter(status)
                           setItemsPage(1)
                         }}
-                        className={`min-h-[36px] md:min-h-[40px] px-3 md:px-4 py-1.5 md:py-2 rounded-full text-xs md:text-sm font-medium transition-all duration-200 ease-in-out touch-manipulation border border-sky-100/70 hover:scale-105 ${
-                          statusFilter === status
-                            ? 'bg-gradient-to-r from-[#0565FF] to-[#045CE6] text-white border-transparent shadow-md'
-                            : 'bg-gradient-to-r from-white/80 to-sky-50/70 backdrop-blur-sm text-slate-600 hover:shadow-md'
-                        }`}
+                        className={vmsChipBtnClass(statusFilter === status)}
                       >
                         {status}
                         {statusTabCounts[status] != null && (
@@ -2354,7 +2331,7 @@ export default function ContractsMyItems() {
                         type="button"
                         onClick={handleDeleteSelectedDrafts}
                         disabled={deletingDrafts}
-                        className="min-h-[36px] md:min-h-[40px] px-3 md:px-4 py-1.5 md:py-2 rounded-xl text-xs md:text-sm font-semibold transition-all duration-300 touch-manipulation border border-sky-200/90 bg-gradient-to-r from-sky-50/90 to-sky-50/80 text-sky-800 hover:shadow-md disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-1.5"
+                        className={`${vmsDangerBtnClass()} disabled:opacity-60 disabled:cursor-not-allowed`}
                         title="Delete selected draft records"
                       >
                         <i className="ri-delete-bin-6-line"></i>
@@ -2373,11 +2350,7 @@ export default function ContractsMyItems() {
                         setTotalTasksCount(activity.Count ?? 0)
                         setTasksPage(1)
                       }}
-                      className={`min-h-[36px] md:min-h-[40px] px-3 md:px-4 py-1.5 md:py-2 rounded-full text-xs md:text-sm font-medium transition-all duration-200 ease-in-out touch-manipulation border border-sky-100/70 hover:scale-105 ${
-                        currentActivityId === activity._id
-                          ? 'bg-gradient-to-r from-[#0565FF] to-[#045CE6] text-white border-transparent shadow-md'
-                          : 'bg-gradient-to-r from-white/80 to-sky-50/70 backdrop-blur-sm text-slate-600 hover:shadow-md'
-                      }`}
+                      className={vmsChipBtnClass(currentActivityId === activity._id)}
                     >
                       {activity.StepName || 'Activity'}
                       <span className="ml-1.5 font-bold">{activity.Count ?? 0}</span>
@@ -2392,27 +2365,27 @@ export default function ContractsMyItems() {
                   <button
                     type="button"
                     onClick={handleNewItem}
-                    className="hidden md:inline-flex min-h-[42px] px-4 py-2 rounded-xl bg-gradient-to-r from-[#0565FF] to-[#045CE6] text-white font-semibold shadow-[0_6px_22px_rgba(5,101,255,0.22)] hover:scale-105 transition-all duration-200 ease-in-out touch-manipulation items-center gap-2 whitespace-nowrap"
+                    className={`hidden md:inline-flex ${vmsPrimaryBtnClass()}`}
                   >
                     <i className="ri-add-line text-base"></i>
                     New item
                   </button>
                 )}
-                <div className="relative w-full max-w-[220px] md:w-auto md:flex-1 sm:max-w-xs min-w-0 bg-gradient-to-r from-white/85 to-sky-50/70 backdrop-blur-md border border-sky-100/70 rounded-2xl shadow-[0_8px_22px_rgba(30,64,175,0.10)] px-1 transition-all duration-200 ease-in-out">
-                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-base md:text-lg pointer-events-none"></i>
+                <div className="relative w-full max-w-[220px] md:w-auto md:flex-1 sm:max-w-xs min-w-0">
+                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base pointer-events-none"></i>
                   <input
                     type="text"
                     placeholder="Search"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    className="w-full min-h-[38px] md:min-h-[44px] pl-9 md:pl-10 pr-3 md:pr-4 py-2 text-xs md:text-sm bg-transparent rounded-2xl outline-none focus:ring-2 focus:ring-[#0565FF]/25 placeholder:text-slate-400 touch-manipulation"
+                    className={vmsSearchInputClass()}
                   />
                 </div>
                 <div className="relative" ref={filterPopoverRef}>
                   <button
                     type="button"
                     onClick={() => { setFilterPopoverOpen((o) => !o); setColumnsPopoverOpen(false) }}
-                    className={`h-9 w-9 md:min-h-[44px] md:min-w-[44px] flex items-center justify-center rounded-full bg-gradient-to-r from-white/90 to-sky-50/70 backdrop-blur-md p-2 border border-sky-100/70 text-slate-600 transition-all duration-200 ease-in-out hover:shadow-md hover:scale-105 ${filterPopoverOpen ? 'ring-2 ring-[#0565FF]/25 text-[#0565FF]' : ''}`}
+                    className={vmsIconBtnClass(filterPopoverOpen)}
                     aria-label="Filter"
                   >
                     <i className="ri-filter-3-line text-base md:text-lg"></i>
@@ -2422,7 +2395,7 @@ export default function ContractsMyItems() {
                   createPortal(
                     <div
                       ref={filterDropdownRef}
-                      className="rounded-2xl bg-white/95 backdrop-blur-xl border border-white/60 shadow-2xl p-4"
+                      className="rounded-xl bg-white border border-gray-200 shadow-lg p-4"
                       style={{
                         position: 'fixed',
                         top: filterAnchorRect.top,
@@ -2439,11 +2412,11 @@ export default function ContractsMyItems() {
                         <button
                           type="button"
                           onClick={() => openDatePicker('from')}
-                          className="w-full min-h-[44px] px-3 py-2.5 text-left text-sm text-slate-700 bg-gradient-to-r from-white to-sky-50/70 border border-sky-100/80 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-[#0565FF]/25 focus:border-[#0565FF]/35 transition-all"
+                          className={`${vmsGhostBtnClass()} w-full justify-between`}
                         >
                           <span className="inline-flex w-full items-center justify-between">
                             <span className="inline-flex items-center gap-2">
-                              <i className="ri-calendar-2-line text-sky-600/90" aria-hidden />
+                              <i className="ri-calendar-2-line text-[#17a2b4]/90" aria-hidden />
                               <span>{formatIsoDateToDisplay(filterFromDate) || 'dd-mm-yyyy'}</span>
                             </span>
                             <i className="ri-calendar-event-line text-slate-500" aria-hidden />
@@ -2453,11 +2426,11 @@ export default function ContractsMyItems() {
                         <button
                           type="button"
                           onClick={() => openDatePicker('to')}
-                          className="w-full min-h-[44px] px-3 py-2.5 text-left text-sm text-slate-700 bg-gradient-to-r from-white to-sky-50/70 border border-sky-100/80 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-[#0565FF]/25 focus:border-[#0565FF]/35 transition-all"
+                          className={`${vmsGhostBtnClass()} w-full justify-between`}
                         >
                           <span className="inline-flex w-full items-center justify-between">
                             <span className="inline-flex items-center gap-2">
-                              <i className="ri-calendar-check-line text-sky-600/90" aria-hidden />
+                              <i className="ri-calendar-check-line text-[#17a2b4]/90" aria-hidden />
                               <span>{formatIsoDateToDisplay(filterToDate) || 'dd-mm-yyyy'}</span>
                             </span>
                             <i className="ri-calendar-event-line text-slate-500" aria-hidden />
@@ -2531,7 +2504,7 @@ export default function ContractsMyItems() {
                         <button
                           type="button"
                           onClick={() => setFilterPopoverOpen(false)}
-                          className="flex-1 min-h-[40px] px-3 py-2 text-sm font-medium text-white bg-[#0565FF] rounded-xl hover:opacity-90"
+                          className={`flex-1 ${vmsPrimaryBtnClass()}`}
                         >
                           Apply
                         </button>
@@ -2544,7 +2517,7 @@ export default function ContractsMyItems() {
                   <button
                     type="button"
                     onClick={() => { setColumnsPopoverOpen((o) => !o); setFilterPopoverOpen(false) }}
-                    className={`h-9 w-9 md:min-h-[44px] md:min-w-[44px] flex items-center justify-center rounded-full bg-gradient-to-r from-white/90 to-sky-50/70 backdrop-blur-md p-2 border border-sky-100/70 text-slate-600 transition-all duration-200 ease-in-out hover:shadow-md hover:scale-105 ${columnsPopoverOpen ? 'ring-2 ring-[#0565FF]/25 text-[#0565FF]' : ''}`}
+                    className={vmsIconBtnClass(columnsPopoverOpen)}
                     aria-label="Column visibility"
                   >
                     <i className="ri-eye-line text-base md:text-lg"></i>
@@ -2554,7 +2527,7 @@ export default function ContractsMyItems() {
                   createPortal(
                     <div
                       ref={columnsDropdownRef}
-                      className="rounded-2xl bg-white/95 backdrop-blur-xl border border-white/60 shadow-2xl p-4"
+                      className="rounded-xl bg-white border border-gray-200 shadow-lg p-4"
                       style={{
                         position: 'fixed',
                         top: columnsAnchorRect.top,
@@ -2574,7 +2547,7 @@ export default function ContractsMyItems() {
                                 onChange={() =>
                                   setVisibleColumnsItems((prev) => ({ ...prev, [col.id]: !prev[col.id] }))
                                 }
-                                className="rounded border-slate-300 text-sky-600 focus:ring-sky-400"
+                                className="rounded border-slate-300 text-[#17a2b4] focus:ring-[#17a2b4]"
                               />
                               <span className="text-sm text-slate-700">{col.label}</span>
                             </label>
@@ -2588,7 +2561,7 @@ export default function ContractsMyItems() {
                                 onChange={() =>
                                   setVisibleColumnsTasks((prev) => ({ ...prev, [col.id]: !prev[col.id] }))
                                 }
-                                className="rounded border-slate-300 text-sky-600 focus:ring-sky-400"
+                                className="rounded border-slate-300 text-[#17a2b4] focus:ring-[#17a2b4]"
                               />
                               <span className="text-sm text-slate-700">{col.label}</span>
                             </label>
@@ -2597,7 +2570,7 @@ export default function ContractsMyItems() {
                       <button
                         type="button"
                         onClick={() => setColumnsPopoverOpen(false)}
-                        className="mt-3 w-full min-h-[40px] px-3 py-2 text-sm font-medium text-white bg-[#0565FF] rounded-xl hover:opacity-90"
+                        className={`mt-3 w-full ${vmsPrimaryBtnClass()}`}
                       >
                         Done
                       </button>
@@ -2609,32 +2582,24 @@ export default function ContractsMyItems() {
             </div>
 
             {/* Tabs */}
-            <div className="order-1 mx-auto w-full max-w-[360px] md:max-w-none flex rounded-2xl border border-sky-100/80 bg-gradient-to-r from-white/90 via-sky-50/70 to-sky-50/70 px-1.5 md:px-2 shadow-[0_6px_20px_rgba(29,78,216,0.07)]" data-aos="fade-down">
+            <div className="order-1 mx-auto w-full max-w-[360px] md:max-w-none flex gap-2" data-aos="fade-down">
               <button
                 type="button"
                 onClick={() => setActiveTab('items')}
-                className={`relative flex-1 min-h-[40px] md:min-h-[44px] px-3 md:px-6 py-1.5 md:py-2 text-xs md:text-sm font-semibold transition-all duration-200 ease-in-out touch-manipulation hover:text-[#0565FF] text-center ${
-                  activeTab === 'items'
-                    ? "text-[#0565FF] after:content-[''] after:absolute after:left-0 after:bottom-0 after:h-[2px] after:w-full after:bg-gradient-to-r after:from-[#0565FF] after:to-[#045CE6]"
-                    : 'text-slate-500 hover:text-slate-700'
-                }`}
+                className={`${vmsSegmentBtnClass(activeTab === 'items')} flex-1`}
               >
                 My Items
               </button>
               <button
                 type="button"
                 onClick={() => setActiveTab('tasks')}
-                className={`relative flex-1 min-h-[40px] md:min-h-[44px] px-3 md:px-6 py-1.5 md:py-2 text-xs md:text-sm font-semibold transition-all duration-200 ease-in-out touch-manipulation hover:text-[#0565FF] text-center ${
-                  activeTab === 'tasks'
-                    ? "text-[#0565FF] after:content-[''] after:absolute after:left-0 after:bottom-0 after:h-[2px] after:w-full after:bg-gradient-to-r after:from-[#0565FF] after:to-[#045CE6]"
-                    : 'text-slate-500 hover:text-slate-700'
-                }`}
+                className={`${vmsSegmentBtnClass(activeTab === 'tasks')} flex-1`}
               >
                 <span className="inline-flex items-center gap-2">
                   <span>My Tasks</span>
                   {totalTasksCount > 0 && (
-                    <span className={`inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full text-xs font-bold ${
-                      activeTab === 'tasks' ? 'bg-[#0565FF] text-white' : 'bg-[#0565FF]/10 text-[#0565FF]'
+                    <span className={`inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-lg text-xs font-bold ${
+                      activeTab === 'tasks' ? 'bg-white/20 text-white' : 'bg-[#e6f6f8] text-[#0f6b7a]'
                     }`}>
                       {totalTasksCount}
                     </span>
@@ -2644,7 +2609,7 @@ export default function ContractsMyItems() {
             </div>
 
             {/* Table - z-0 so toolbar dropdowns (z-[100]) render on top */}
-            <div className="order-3 relative z-0 bg-gradient-to-br from-white/88 via-sky-50/65 to-sky-50/70 backdrop-blur-md border border-sky-100/70 rounded-2xl shadow-[0_10px_30px_rgba(30,64,175,0.10)] overflow-hidden p-2.5 sm:p-6 transition-all duration-200 ease-in-out hover:shadow-[0_14px_36px_rgba(30,64,175,0.14)] max-md:bg-transparent max-md:border-0 max-md:shadow-none max-md:rounded-none max-md:px-0" data-aos="fade-up">
+            <div className={`order-3 relative z-0 ${vmsSectionShellClass()} p-2.5 sm:p-4 max-md:bg-transparent max-md:border-0 max-md:shadow-none max-md:rounded-none max-md:px-0`} data-aos="fade-up">
               {activeTab === 'items' && (
                 <>
                   <div className="md:hidden space-y-2.5 w-full min-w-0">
@@ -2659,7 +2624,7 @@ export default function ContractsMyItems() {
                         return (
                           <article
                             key={item.id}
-                            className="rounded-2xl border border-sky-100/80 bg-white/95 shadow-sm p-3 w-full min-w-0"
+                            className={vmsMobileCardClass(expanded)}
                           >
                             <div className="flex w-full min-w-0 items-start gap-3">
                               {showItemBulkCheckboxes && (
@@ -2667,14 +2632,14 @@ export default function ContractsMyItems() {
                                   type="checkbox"
                                   checked={selectedItemIds.has(item.id)}
                                   onChange={() => toggleItemSelection(item.id)}
-                                  className="mt-2.5 rounded border-slate-300 text-[#0565FF] focus:ring-[#0565FF]/25 shrink-0"
+                                  className="mt-2.5 rounded border-slate-300 text-[#17a2b4] focus:ring-[#17a2b4]/25 shrink-0"
                                   onClick={(e) => e.stopPropagation()}
                                   aria-label="Select row"
                                 />
                               )}
                               <button
                                 type="button"
-                                className="mt-0.5 h-9 w-9 shrink-0 flex items-center justify-center bg-[#0565FF]/10 text-[#0565FF] rounded-xl border border-[#0565FF]/20 hover:bg-[#0565FF]/15 transition-colors touch-manipulation"
+                                className={`mt-0.5 ${vmsExpandBtnClass(expanded, true)}`}
                                 onClick={() => setExpandedItemId((prev) => (prev === item.id ? null : item.id))}
                                 aria-label={expanded ? 'Collapse details' : 'Expand details'}
                               >
@@ -2710,7 +2675,12 @@ export default function ContractsMyItems() {
                               </div>
                               <div className="min-w-0 col-span-1">
                                 <p className="text-xs font-medium text-slate-500">Type</p>
-                                <p className="font-semibold break-words">{item.contractType || '—'}</p>
+                                <p className="font-semibold break-words">
+                                  <span className={vmsTypeChipClass()}>
+                                    <i className={`${vmsContractTypeIcon(item.contractType)} text-[12px]`} aria-hidden />
+                                    {item.contractType || '—'}
+                                  </span>
+                                </p>
                               </div>
                               <div className="min-w-0 col-span-2">
                                 <p className="text-xs font-medium text-slate-500">End Date</p>
@@ -2734,19 +2704,19 @@ export default function ContractsMyItems() {
                   <div className="hidden md:block overflow-x-auto">
                   <table className="w-full border-separate border-spacing-0">
                     <thead>
-                      <tr className="border-b border-[#0565FF]/25 bg-gradient-to-b from-[#0565FF]/14 via-[#0565FF]/10 to-slate-100/85 shadow-[0_2px_6px_rgba(15,23,42,0.06)]">
+                      <tr className={`${vmsTableHeadClass()} border-b border-gray-100`}>
                         {showItemBulkCheckboxes && (
-                          <th className="sticky top-0 z-20 w-10 sm:w-12 rounded-tl-xl bg-[#0565FF]/12 px-2 sm:px-3 py-3 sm:py-4 align-middle">
+                          <th className="sticky top-0 z-20 w-10 sm:w-12 rounded-tl-xl bg-gray-50 px-2 sm:px-3 py-3 sm:py-4 align-middle">
                             <input
                               type="checkbox"
                               checked={itemsPaginated.length > 0 && itemsPaginated.every((i) => selectedItemIds.has(i.id))}
                               onChange={(e) => selectAllItems(e.target.checked)}
-                              className="mx-auto block rounded border-slate-300 text-[#0565FF] focus:ring-2 focus:ring-[#0565FF]/25"
+                              className="mx-auto block rounded border-slate-300 text-[#17a2b4] focus:ring-2 focus:ring-[#17a2b4]/25"
                             />
                           </th>
                         )}
                         <th
-                          className={`sticky top-0 z-20 w-10 bg-[#0565FF]/12 px-2 sm:px-3 py-3 sm:py-4 text-center align-middle ${showItemBulkCheckboxes ? '' : 'rounded-tl-xl'}`}
+                          className={`sticky top-0 z-20 w-10 bg-gray-50 px-2 sm:px-3 py-3 sm:py-4 text-center align-middle ${showItemBulkCheckboxes ? '' : 'rounded-tl-xl'}`}
                           aria-label="Expand row"
                         >
                           <span className="text-xs font-bold text-slate-500 uppercase"> </span>
@@ -2754,9 +2724,9 @@ export default function ContractsMyItems() {
                         {ITEMS_COLUMNS.map((col) => (
                           <th
                             key={col.id}
-                            className={`sticky top-0 z-20 bg-[#0565FF]/12 px-3 sm:px-6 py-3 sm:py-4 text-left text-[11px] uppercase tracking-wider text-slate-700 font-semibold last:rounded-tr-xl ${visibleColumnsItems[col.id] ? '' : 'hidden'}`}
+                            className={`sticky top-0 z-20 bg-gray-50 px-3 sm:px-6 py-3 sm:py-4 text-left text-[11px] uppercase tracking-wider text-slate-700 font-semibold last:rounded-tr-xl ${visibleColumnsItems[col.id] ? '' : 'hidden'}`}
                           >
-                            {col.label}
+                            <span className="inline-flex items-center gap-1.5">{col.icon ? <i className={`${col.icon} ${vmsColIconClass()}`} aria-hidden /> : null}{col.label}</span>
                           </th>
                         ))}
                       </tr>
@@ -2780,7 +2750,7 @@ export default function ContractsMyItems() {
                           return (
                           <React.Fragment key={item.id}>
                             <tr
-                              className={`cursor-pointer transition-all duration-200 ease-in-out odd:bg-white even:bg-slate-50/95 hover:bg-sky-100/75 ${expandedItemId === item.id ? '!bg-gradient-to-r from-sky-100/95 via-sky-100/75 to-slate-100/85 shadow-[inset_3px_0_0_0_rgba(14,165,233,0.5)]' : ''}`}
+                              className={vmsTableRowClass(expandedItemId === item.id)}
                               onClick={() => setExpandedItemId((prev) => (prev === item.id ? null : item.id))}
                             >
                               {showItemBulkCheckboxes && (
@@ -2789,7 +2759,7 @@ export default function ContractsMyItems() {
                                     type="checkbox"
                                     checked={selectedItemIds.has(item.id)}
                                     onChange={() => toggleItemSelection(item.id)}
-                                    className="mx-auto block rounded border-slate-300 text-[#0565FF] focus:ring-[#0565FF]/25"
+                                    className="mx-auto block rounded border-slate-300 text-[#17a2b4] focus:ring-[#17a2b4]/25"
                                   />
                                 </td>
                               )}
@@ -2816,7 +2786,12 @@ export default function ContractsMyItems() {
                                 </td>
                               )}
                               {visibleColumnsItems.contractCategory && (
-                                <td className="px-3 sm:px-6 py-3 sm:py-4 text-sm text-slate-700">{item.contractType || '—'}</td>
+                                <td className="px-3 sm:px-6 py-3 sm:py-4 text-sm text-slate-700">
+                                  <span className={vmsTypeChipClass()}>
+                                    <i className={`${vmsContractTypeIcon(item.contractType)} text-[12px]`} aria-hidden />
+                                    {item.contractType || '—'}
+                                  </span>
+                                </td>
                               )}
                               {visibleColumnsItems.createdAt && (
                                 <td className="px-3 sm:px-6 py-3 sm:py-4 text-sm text-slate-600">{formatDateTime(item.createdDate)}</td>
@@ -2875,7 +2850,7 @@ export default function ContractsMyItems() {
                         return (
                           <article
                             key={task.id}
-                            className="rounded-xl border border-sky-100/80 bg-white shadow-sm p-3 w-full min-w-0"
+                            className={vmsMobileCardClass(expanded)}
                           >
                             <div className="flex justify-between gap-3 items-start min-w-0">
                               <div className="min-w-0 flex-1">
@@ -2905,7 +2880,7 @@ export default function ContractsMyItems() {
                               )}
                               <div className="flex items-center gap-2 min-w-0">
                                 <span
-                                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-100 text-[11px] font-bold text-sky-900 border border-sky-200/80"
+                                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#e6f6f8] text-[11px] font-bold text-gray-800 border border-[#bfe6ec]/80"
                                   title={taskView.createdBy || '—'}
                                 >
                                   {taskView.createdByInitials || task.createdByInitials || '?'}
@@ -2929,7 +2904,7 @@ export default function ContractsMyItems() {
                             <div className="mt-4 flex items-center gap-2 min-w-0">
                               <button
                                 type="button"
-                                className="h-9 w-9 shrink-0 flex items-center justify-center bg-sky-50 text-sky-800 rounded-xl border border-sky-200/90 hover:bg-sky-100 transition-colors touch-manipulation"
+                                className={vmsExpandBtnClass(expanded, true)}
                                 onClick={() => setExpandedTaskId((prev) => (prev === task.id ? null : task.id))}
                                 aria-label={expanded ? 'Collapse details' : 'Expand details'}
                               >
@@ -2940,7 +2915,7 @@ export default function ContractsMyItems() {
                             </div>
                             <button
                               type="button"
-                              className="mt-2.5 w-full min-h-[40px] rounded-xl border border-sky-200/90 bg-gradient-to-r from-white to-sky-50/80 text-xs md:text-sm font-semibold text-sky-900 shadow-sm hover:shadow-md transition-all touch-manipulation"
+                              className={`${vmsGhostBtnClass()} mt-2.5 w-full`}
                               onClick={() => openContractPopup(taskView)}
                             >
                               View Details
@@ -2962,9 +2937,9 @@ export default function ContractsMyItems() {
                   <div className="hidden md:block overflow-x-auto">
                   <table className="w-full border-separate border-spacing-0">
                     <thead>
-                      <tr className="border-b border-[#0565FF]/25 bg-gradient-to-b from-[#0565FF]/14 via-[#0565FF]/10 to-slate-100/85 shadow-[0_2px_6px_rgba(15,23,42,0.06)]">
+                      <tr className={`${vmsTableHeadClass()} border-b border-gray-100`}>
                         <th
-                          className="sticky top-0 z-20 rounded-tl-xl bg-[#0565FF]/12 px-2 sm:px-3 py-3 sm:py-4 w-10 text-center"
+                          className="sticky top-0 z-20 rounded-tl-xl bg-gray-50 px-2 sm:px-3 py-3 sm:py-4 w-10 text-center"
                           aria-label="Expand row"
                         >
                           <span className="text-xs font-bold text-slate-500 uppercase"> </span>
@@ -2972,9 +2947,9 @@ export default function ContractsMyItems() {
                         {TASKS_COLUMNS.map((col) => (
                           <th
                             key={col.id}
-                            className={`sticky top-0 z-20 bg-[#0565FF]/12 px-3 sm:px-6 py-3 sm:py-4 text-left text-[11px] uppercase tracking-wider text-slate-700 font-semibold last:rounded-tr-xl ${visibleColumnsTasks[col.id] ? '' : 'hidden'}`}
+                            className={`sticky top-0 z-20 bg-gray-50 px-3 sm:px-6 py-3 sm:py-4 text-left text-[11px] uppercase tracking-wider text-slate-700 font-semibold last:rounded-tr-xl ${visibleColumnsTasks[col.id] ? '' : 'hidden'}`}
                           >
-                            {col.label}
+                            <span className="inline-flex items-center gap-1.5">{col.icon ? <i className={`${col.icon} ${vmsColIconClass()}`} aria-hidden /> : null}{col.label}</span>
                           </th>
                         ))}
                       </tr>
@@ -2998,7 +2973,7 @@ export default function ContractsMyItems() {
                           return (
                           <React.Fragment key={task.id}>
                             <tr
-                              className={`cursor-pointer transition-all duration-200 ease-in-out odd:bg-white even:bg-slate-50/95 hover:bg-sky-100/75 ${expandedTaskId === task.id ? '!bg-gradient-to-r from-sky-100/95 via-sky-100/75 to-slate-100/85 shadow-[inset_3px_0_0_0_rgba(14,165,233,0.5)]' : ''}`}
+                              className={vmsTableRowClass(expandedTaskId === task.id)}
                               onClick={() => setExpandedTaskId((prev) => (prev === task.id ? null : task.id))}
                             >
                               <td className="px-2 sm:px-3 py-3 sm:py-4 text-slate-500" onClick={(e) => e.stopPropagation()}>
@@ -3022,7 +2997,12 @@ export default function ContractsMyItems() {
                                 </td>
                               )}
                               {visibleColumnsTasks.contractCategory && (
-                                <td className="px-3 sm:px-6 py-3 sm:py-4 text-sm text-slate-700">{taskView.contractType || '—'}</td>
+                                <td className="px-3 sm:px-6 py-3 sm:py-4 text-sm text-slate-700">
+                                  <span className={vmsTypeChipClass()}>
+                                    <i className={`${vmsContractTypeIcon(taskView.contractType)} text-[12px]`} aria-hidden />
+                                    {taskView.contractType || '—'}
+                                  </span>
+                                </td>
                               )}
                               {visibleColumnsTasks.createdAt && (
                                 <td className="px-3 sm:px-6 py-3 sm:py-4 text-sm text-slate-600">{formatDateTime(taskView.createdDate)}</td>
@@ -3066,7 +3046,7 @@ export default function ContractsMyItems() {
               )}
 
               {/* Pagination */}
-              <div className="mt-4 rounded-2xl bg-gradient-to-r from-white/90 via-sky-50/70 to-sky-50/70 backdrop-blur-md border border-sky-100/70 shadow-[0_10px_26px_rgba(30,64,175,0.10)] px-4 sm:px-6 py-4 sm:py-5 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all duration-200 ease-in-out">
+              <div className={`${vmsPaginationBarClass()} mt-4`}>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <label htmlFor="rows-per-page-select" className="text-xs sm:text-sm text-slate-600 font-medium whitespace-nowrap">
                     Rows per page:
@@ -3081,7 +3061,7 @@ export default function ContractsMyItems() {
                       setItemsPage(1)
                       setTasksPage(1)
                     }}
-                    className="min-h-[44px] min-w-[72px] pl-3 pr-8 py-2 text-sm font-medium bg-white/80 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#0565FF]/25 focus:border-[#0565FF]/35 cursor-pointer touch-manipulation hover:bg-white transition-colors"
+                    className={vmsSelectClass()}
                     aria-label="Rows per page"
                   >
                     <option value={5}>5</option>
@@ -3101,7 +3081,7 @@ export default function ContractsMyItems() {
                       type="button"
                       disabled={activeTab === 'items' ? itemsPage <= 1 : tasksPage <= 1}
                       onClick={() => (activeTab === 'items' ? setItemsPage((p) => Math.max(1, p - 1)) : setTasksPage((p) => Math.max(1, p - 1)))}
-                    className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full bg-gradient-to-r from-white/90 to-sky-50/70 backdrop-blur-sm border border-sky-100/70 text-slate-700 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 hover:shadow-md transition-all duration-200 ease-in-out touch-manipulation"
+                    className={vmsPaginationBtnClass(false)}
                     >
                       <i className="ri-arrow-left-s-line text-lg"></i>
                     </button>
@@ -3111,11 +3091,7 @@ export default function ContractsMyItems() {
                           key={p}
                           type="button"
                           onClick={() => setItemsPage(p)}
-                          className={`min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-sm font-bold transition-all touch-manipulation ${
-                            itemsPage === p
-                              ? 'bg-gradient-to-r from-[#0565FF] to-[#045CE6] text-white shadow-md'
-                              : 'bg-gradient-to-r from-white/90 to-sky-50/70 backdrop-blur-sm border border-sky-100/70 text-slate-700 hover:scale-105 hover:shadow-md'
-                          }`}
+                          className={vmsPaginationBtnClass(itemsPage === p)}
                         >
                           {p}
                         </button>
@@ -3126,11 +3102,7 @@ export default function ContractsMyItems() {
                           key={p}
                           type="button"
                           onClick={() => setTasksPage(p)}
-                          className={`min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-sm font-bold transition-all touch-manipulation ${
-                            tasksPage === p
-                              ? 'bg-gradient-to-r from-[#0565FF] to-[#045CE6] text-white shadow-md'
-                              : 'bg-gradient-to-r from-white/90 to-sky-50/70 backdrop-blur-sm border border-sky-100/70 text-slate-700 hover:scale-105 hover:shadow-md'
-                          }`}
+                          className={vmsPaginationBtnClass(tasksPage === p)}
                         >
                           {p}
                         </button>
@@ -3143,7 +3115,7 @@ export default function ContractsMyItems() {
                           ? setItemsPage((p) => Math.min(totalItemsPages, p + 1))
                           : setTasksPage((p) => Math.min(totalTasksPages, p + 1))
                       }
-                      className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full bg-gradient-to-r from-white/90 to-sky-50/70 backdrop-blur-sm border border-sky-100/70 text-slate-700 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 hover:shadow-md transition-all duration-200 ease-in-out touch-manipulation"
+                      className={vmsPaginationBtnClass(false)}
                     >
                       <i className="ri-arrow-right-s-line text-lg"></i>
                     </button>
@@ -3173,38 +3145,38 @@ export default function ContractsMyItems() {
                     </button>
                   </div>
                   <div className="space-y-4">
-                    <div className="p-4 bg-gradient-to-r from-sky-50/90 to-sky-50/80 rounded-xl border border-sky-200/60">
+                    <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
                       <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Contract</p>
                       <p className="text-lg font-bold text-slate-900">{selectedContract.name || '—'}</p>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="p-4 bg-gradient-to-r from-sky-50/90 to-sky-50/70 rounded-xl border border-sky-200/50">
+                      <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
                         <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Vendor</p>
                         <p className="text-sm font-bold text-slate-900">{selectedContract.vendor || '—'}</p>
                       </div>
-                      <div className="p-4 bg-gradient-to-r from-sky-50/90 to-sky-50/70 rounded-xl border border-sky-200/50">
+                      <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
                         <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Type</p>
                         <p className="text-sm font-bold text-slate-900">{selectedContract.contractType || '—'}</p>
                       </div>
-                      <div className="p-4 bg-gradient-to-r from-sky-50/90 to-sky-50/70 rounded-xl border border-sky-200/50">
+                      <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
                         <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Value</p>
                         <p className="text-sm font-bold text-slate-900">{selectedContract.valueDisplay || '—'}</p>
                       </div>
-                      <div className="p-4 bg-gradient-to-r from-sky-50/90 to-sky-50/70 rounded-xl border border-sky-200/50">
+                      <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
                         <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">End date</p>
                         <p className="text-sm font-bold text-slate-900">{selectedContract.endDate || '—'}</p>
                       </div>
                     </div>
-                    <div className="p-4 bg-gradient-to-r from-slate-50/80 to-sky-50/60 rounded-xl border border-slate-200/50">
+                    <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
                       <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Notes</p>
                       <p className="text-sm text-slate-700 leading-relaxed">{selectedContract.message || '—'}</p>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="p-4 bg-gradient-to-r from-sky-50/90 to-sky-50/70 rounded-xl border border-sky-200/50">
+                      <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
                         <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Created</p>
                         <p className="text-sm font-bold text-slate-900">{formatDateTime(selectedContract.createdDate)}</p>
                       </div>
-                      <div className="p-4 bg-gradient-to-r from-sky-50/90 to-sky-50/60 rounded-xl border border-sky-200/50">
+                      <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
                         <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Status</p>
                         <p className="text-sm font-bold text-slate-900">{selectedContract.status || '—'}</p>
                       </div>

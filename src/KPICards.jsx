@@ -1,5 +1,6 @@
 import { useMemo, useEffect, useState } from 'react';
 import VenwindKPICardsView from './venwind/components/VenwindKPICardsView.jsx';
+import { PT_KPI_THEME, ptKpiCardClass } from './leadPtTheme.js';
 
 /** Normalize status for comparisons */
 function statusNorm(lead) {
@@ -231,6 +232,57 @@ export default function KPICards({
         onCardClick={onCardClick}
       />
     );
+  }
+
+  if (variant !== 'pro') {
+    return (
+      <section className="mb-0 w-full max-w-full min-w-0">
+        <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-3 xl:grid-cols-6 min-w-0 w-full max-w-full">
+          {cards.map((card) => {
+            const theme = PT_KPI_THEME[card.id] || PT_KPI_THEME.total
+            const active = activeCardId === card.id
+            return (
+              <div
+                key={card.id}
+                role={onCardClick ? 'button' : undefined}
+                tabIndex={onCardClick ? 0 : undefined}
+                onClick={onCardClick ? () => onCardClick(card.id) : undefined}
+                onKeyDown={
+                  onCardClick
+                    ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') onCardClick(card.id)
+                      }
+                    : undefined
+                }
+                className={ptKpiCardClass(theme, { active, clickable: Boolean(onCardClick) })}
+              >
+                <div className="relative flex flex-1 items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-400 sm:text-[11px] sm:tracking-[0.14em]">
+                      {card.title}
+                    </p>
+                    <p className={`mt-1 text-[22px] font-bold tabular-nums leading-none tracking-tight sm:mt-2 sm:text-3xl ${theme.valueClass}`}>
+                      {card.value.toLocaleString()}
+                    </p>
+                    {card.subtitle ? (
+                      <p className="mt-1 line-clamp-2 text-[10px] font-medium text-slate-400 sm:text-xs">{card.subtitle}</p>
+                    ) : null}
+                  </div>
+                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl sm:h-9 sm:w-9 ${theme.iconWrap}`}>
+                    <i className={`${card.icon} text-base sm:text-lg`} />
+                  </div>
+                </div>
+                {onCardClick ? (
+                  <p className="mt-2 hidden text-[10px] font-semibold text-[#1E88E5] opacity-0 transition-opacity group-hover:opacity-100 lg:block">
+                    Click to view →
+                  </p>
+                ) : null}
+              </div>
+            )
+          })}
+        </div>
+      </section>
+    )
   }
 
   return (

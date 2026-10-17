@@ -6,6 +6,7 @@ import LeadTrends from './LeadTrends.jsx'
 import LeadByDayOfWeek from './LeadByDayOfWeek.jsx'
 import LeadInsightCards from './LeadInsightCards.jsx'
 import { filterLeadsByInsightCard, LEAD_TABLE_PULSE_CLASS, useLeadTableHighlight } from './leadTableHighlight.js'
+import { PT_PAGE_SHELL, PT_SECTION } from './leadPtTheme.js'
 import RecentLeadsCard from './RecentLeadsCard.jsx'
 import LeadsTable from './LeadsTable.jsx'
 import OpportunityFilterSheet, {
@@ -24,11 +25,11 @@ function emptyLeadCeoFilters(lockedWebsite = '') {
   return {
     userFilter: 'All',
     entityFilter: lockedWebsite || 'All',
-    dateRange: 'Last 30 Days',
+    dateRange: 'MTD',
     customDateStart: '',
     customDateEnd: '',
     searchQuery: '',
-    periodLabel: 'Last 30 Days',
+    periodLabel: 'MTD',
   }
 }
 
@@ -49,39 +50,45 @@ function normalizeText(value) {
 
 const ROLE_TO_WEBSITE = {
   '3isalesmanager': '3iMedtech',
+  '3isalesteam': '3iMedtech',
   'salesmanageradonis': 'Adonis',
+  'Sales Team Adonis': 'Adonis',
+  salesteamadonis: 'Adonis',
   'salesmanageranamaya': 'Anamaya',
   'salesmanagerril': 'Refex Industries Limited',
+  salesteamril: 'Refex Industries Limited',
   'salesmanagerrlfc': 'Refex Life Sciences',
+  salesteamrlfc: 'Refex Life Sciences',
   'salesmanagerrril': 'Refex Renewables',
+  salesteamrril: 'Refex Renewables',
   'salesmanagerrefexgroup': 'Refex Group',
   'salesmanagerrefexmobility': 'Refex Mobility',
+  'Sales Team Refex Mobility': 'Refex Mobility',
+  salesteamrefexmobility: 'Refex Mobility',
   'salesmanagersparzan': 'Sparzana',
   'salesmanagersparzana': 'Sparzana',
   'venwindsalesmanager': 'Venwind Refex',
+  venwindsalesteam: 'Venwind Refex',
   'Modepro Manager': 'Modepro',
   modepromanager: 'Modepro',
+  'Sales Team Modepro': 'Modepro',
+  salesteammodepro: 'Modepro',
+  'RMC Sales Manager': 'RMC',
+  rmcsalesmanager: 'RMC',
+  'RMC Sales Team': 'RMC',
+  rmcsalesteam: 'RMC',
 }
 
 const CEO_REPORT_URL =
   'https://refex-admin-ui-dhwffeu7pq-el.a.run.app/applications/production-Lead_Trcaker_A00?tab=dashboard&embed=1'
-
-function RefexLogoMark() {
-  return (
-    <div
-      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-400 via-[#0086c9] to-indigo-500 text-base font-bold tracking-tight text-white shadow-sm sm:h-10 sm:w-10 sm:text-lg"
-      aria-label="Refex"
-    >
-      R
-    </div>
-  )
-}
 
 function resolveWebsiteFromOptions(targetWebsite, websiteOptions) {
   if (!targetWebsite) return null
   const targetNorm = normalizeText(targetWebsite)
   const exact = websiteOptions.find((opt) => normalizeText(opt) === targetNorm)
   if (exact) return exact
+  // Short codes like "RMC" must not fuzzy-match unrelated websites.
+  if (targetNorm.length <= 3) return targetWebsite
   const fuzzy = websiteOptions.find((opt) => {
     const norm = normalizeText(opt)
     return norm && (norm.includes(targetNorm) || targetNorm.includes(norm))
@@ -97,6 +104,25 @@ function stringifyKfRole(roleLike) {
     return String(n || '').trim()
   }
   return ''
+}
+
+function collectRoleCandidates(roleName, user) {
+  const fromList = (list, pick) =>
+    (Array.isArray(list) ? list : [])
+      .map((item) => String(pick(item) || '').trim())
+      .filter(Boolean)
+
+  return [
+    roleName,
+    user?.Role?.Name,
+    stringifyKfRole(user?.Role),
+    user?._user_type,
+    ...fromList(user?.Groups, (g) => (typeof g === 'string' ? g : g?.Name ?? g?.name)),
+    ...fromList(user?.Roles, (r) => stringifyKfRole(r) || r?.Name || r?.name),
+  ]
+    .filter(Boolean)
+    .map((v) => String(v).trim())
+    .filter(Boolean)
 }
 
 function toUserDisplay(val) {
@@ -440,6 +466,11 @@ function leadInDateRange(lead, dateRange, customDateStart, customDateEnd) {
   const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1)
 
   if (dateRange === 'Today') return d >= todayStart && d <= todayEnd
+  if (dateRange === 'MTD') {
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+    return d >= monthStart && d <= todayEnd
+  }
+  if (dateRange === 'LTD') return d <= todayEnd
   if (dateRange === 'Last 7 Days') {
     const start = new Date(todayStart)
     start.setDate(start.getDate() - 7)
@@ -526,11 +557,11 @@ export default function LeadCEOPage() {
 
   const [entityFilter, setEntityFilter] = useState('All')
   const [userFilter, setUserFilter] = useState('All')
-  const [dateRange, setDateRange] = useState('Last 30 Days')
+  const [dateRange, setDateRange] = useState('MTD')
   const [customDateStart, setCustomDateStart] = useState('')
   const [customDateEnd, setCustomDateEnd] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
-  const [periodLabel, setPeriodLabel] = useState('Last 30 Days')
+  const [periodLabel, setPeriodLabel] = useState('MTD')
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [draftFilters, setDraftFilters] = useState(() => emptyLeadCeoFilters())
   const [latestLeadsQuery, setLatestLeadsQuery] = useState('')
@@ -966,16 +997,7 @@ export default function LeadCEOPage() {
   }, [apiLeads])
 
   const lockedWebsite = useMemo(function getLockedWebsiteFromRole() {
-    const roleCandidates = [
-      roleName,
-      user?.Role?.Name,
-      user?._user_type,
-      user?.Groups?.[0]?.Name,
-      user?.Roles?.[0]?.Name,
-    ]
-      .filter(Boolean)
-      .map((v) => String(v).trim())
-      .filter(Boolean)
+    const roleCandidates = collectRoleCandidates(roleName, user)
 
     if (roleCandidates.length === 0) return null
 
@@ -996,7 +1018,7 @@ export default function LeadCEOPage() {
     for (let i = 0; i < websiteOptions.length; i += 1) {
       const website = websiteOptions[i]
       const wNorm = normalizeText(website)
-      if (!wNorm) continue
+      if (!wNorm || wNorm.length <= 3) continue
       const matched = normalizedRoles.some((rNorm) => rNorm.includes(wNorm) || wNorm.includes(rNorm))
       if (matched) return website
     }
@@ -1029,7 +1051,7 @@ export default function LeadCEOPage() {
   const activeFilterCount =
     (userFilter !== 'All' ? 1 : 0) +
     (!lockedWebsite && entityFilter !== 'All' ? 1 : 0) +
-    (dateRange !== 'Last 30 Days' ? 1 : 0) +
+    (dateRange !== 'MTD' ? 1 : 0) +
     (searchQuery ? 1 : 0)
 
   const openFilterSheet = () => {
@@ -1084,15 +1106,37 @@ export default function LeadCEOPage() {
     { value: 'All', label: 'All Users' },
     ...userOptions.map((userName) => ({ value: userName, label: userName })),
   ]
+  const displayName =
+    user?.Name ||
+    [user?.FirstName, user?.LastName].filter(Boolean).join(' ') ||
+    'User'
+  const displayRole =
+    roleName ||
+    user?.Role?.Name?.trim() ||
+    user?._user_type ||
+    user?.Groups?.[0]?.Name ||
+    user?.Roles?.[0]?.Name ||
+    'User'
 
   return (
-    <div ref={pageRootRef} className="min-h-screen overflow-x-hidden bg-gradient-to-br from-slate-100 via-slate-50 to-slate-100 px-2 pb-4 pt-1 sm:px-3 md:px-4 md:pb-6 md:pt-2">
+    <div ref={pageRootRef} className={`h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain ${PT_PAGE_SHELL} px-2 pb-4 pt-1 sm:px-3 md:px-4 md:pb-6 md:pt-2`}>
       <div className="mx-auto max-w-[1500px] min-w-0">
           <div className="p-1 sm:p-2 md:p-3 max-md:space-y-4 space-y-5 sm:space-y-6 transition-smooth">
+            <section className="mb-1 sm:mb-2 min-w-0">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="break-words text-base font-semibold tracking-tight text-[#0F172A] sm:text-lg">
+                    {greeting}, {displayName}
+                  </p>
+                  <p className="break-words text-xs text-[#64748B] sm:text-sm">
+                    Logged in as {displayRole}
+                  </p>
+                </div>
+              </div>
+            </section>
+
             <section className="mb-3 sm:mb-4 relative z-[120]" data-aos="fade-down">
               <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
-                <RefexLogoMark />
-
                 <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                   <a
                     href={CEO_REPORT_URL}
@@ -1185,11 +1229,12 @@ export default function LeadCEOPage() {
 
               <section
                 ref={tableSectionRef}
-                className={`scroll-mt-24 rounded-2xl sm:rounded-2xl border-0 sm:border sm:border-white/50 bg-transparent sm:bg-white/45 backdrop-blur-0 sm:backdrop-blur-sm shadow-none sm:shadow-sm p-0 sm:p-4 md:p-5 transition-[box-shadow,ring] duration-500 ${
+                className={`scroll-mt-24 overflow-visible transition-[box-shadow,ring] duration-500 ${
                   insightPulse ? LEAD_TABLE_PULSE_CLASS : ''
                 }`}
               >
                 <LeadsTable
+                  variant="pt"
                   leads={latestTableLeadsFiltered}
                   loading={apiLeadsLoading && apiLeads === null}
                   onViewDetails={openLeadPopup}
@@ -1235,21 +1280,21 @@ export default function LeadCEOPage() {
                 />
               </section>
 
+              {/* Analytics charts are temporarily hidden. Uncomment this block when needed.
               {entityFilter === 'All' && (
-                <section className="rounded-2xl border border-white/50 bg-white/45 backdrop-blur-sm shadow-sm p-3 sm:p-4 md:p-5">
-                  <LeadSourceCharts leads={displayLeads} />
+                <section className={`overflow-visible ${PT_SECTION}`}>
+                  <LeadSourceCharts theme="pt" leads={displayLeads} />
                 </section>
               )}
 
-              <section className="rounded-2xl border border-white/50 bg-white/45 backdrop-blur-sm shadow-sm p-3 sm:p-4 md:p-5">
-                <LeadTrends leads={displayLeads} />
+              <section className={`overflow-visible ${PT_SECTION}`}>
+                <LeadTrends variant="pt" leads={displayLeads} />
               </section>
 
-              <section className="rounded-2xl border border-white/50 bg-white/45 backdrop-blur-sm shadow-sm p-3 sm:p-4 md:p-5">
-                <LeadByDayOfWeek leads={displayLeads} />
-              </section>
+              <LeadByDayOfWeek theme="pt" leads={displayLeads} className={`overflow-visible ${PT_SECTION}`} />
 
-              <LeadInsightCards leads={displayLeads} onCardClick={handleCardClick} activeCardId={activeKpiCardId} />
+              <LeadInsightCards theme="pt" leads={displayLeads} onCardClick={handleCardClick} activeCardId={activeKpiCardId} />
+              */}
 
               {/* <RecentLeadsCard leads={displayLeads} onViewDetails={openLeadPopup} /> */}
             </div>

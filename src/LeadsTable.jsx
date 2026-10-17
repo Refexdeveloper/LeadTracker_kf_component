@@ -13,6 +13,10 @@ import {
   slaDeadlineTitle,
 } from './slaMeta.js'
 import SlaCell from './SlaCell.jsx'
+import { TableColumnHeader, distinctFilterOptions, toggleSortState, compareText, compareDateValue } from './components/TableColumnHeaders.jsx'
+import TablePaginationBar from './components/TablePaginationBar.jsx'
+import PtStatusBadge from './components/PtStatusBadge.jsx'
+import { PT_TABLE_SHELL, PT_TABLE_TOOLBAR, PT_THEAD_ROW } from './leadPtTheme.js'
 
 function InlineAudioPlayer({ url }) {
   const [playing, setPlaying] = useState(false)
@@ -129,6 +133,10 @@ export default function LeadsTable({
   const [mobileMessageOpenId, setMobileMessageOpenId] = useState(null);
   const [headerSearch, setHeaderSearch] = useState('');
   const [nowTick, setNowTick] = useState(() => Date.now())
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [websiteFilter, setWebsiteFilter] = useState('all')
+  const [productFilter, setProductFilter] = useState('all')
+  const isPt = variant === 'pt'
   const activeFilterQuery = enableHeaderSearch ? headerSearch : filterQuery
   const itemsPerPage = 10;
   const hasViewDetails = typeof onViewDetails === 'function'
@@ -140,22 +148,40 @@ export default function LeadsTable({
   const slaDurationRef = useRef(new Map())
   const expandedEverRef = useRef(new Set())
 
-  const filteredLeads = useMemo(
+  const searchedLeads = useMemo(
     () => filterLeadsByQuery(leads, activeFilterQuery, { fullNameOnly: searchFullNameOnly }),
     [leads, activeFilterQuery, searchFullNameOnly],
   )
 
-  const sortedLeads = useMemo(() => {
-    return [...filteredLeads].sort((a, b) => {
-      const aValue = a[sortField];
-      const bValue = b[sortField];
+  const statusFilterOptions = useMemo(
+    () => distinctFilterOptions(searchedLeads, (row) => String(row?.status || '').trim() || 'In Progress', { allLabel: 'All Status' }),
+    [searchedLeads],
+  )
+  const websiteFilterOptions = useMemo(
+    () => distinctFilterOptions(searchedLeads, (row) => row?.website, { allLabel: 'All Websites' }),
+    [searchedLeads],
+  )
+  const productFilterOptions = useMemo(
+    () => distinctFilterOptions(searchedLeads, (row) => row?.product, { allLabel: 'All Products' }),
+    [searchedLeads],
+  )
 
-      if (sortDirection === 'asc') {
-        return aValue > bValue ? 1 : -1;
-      } else {
-        return aValue < bValue ? 1 : -1;
-      }
-    });
+  const filteredLeads = useMemo(() => {
+    if (!isPt) return searchedLeads
+    return searchedLeads.filter((row) => {
+      if (statusFilter !== 'all' && (String(row?.status || '').trim() || 'In Progress') !== statusFilter) return false
+      if (websiteFilter !== 'all' && String(row?.website || '') !== websiteFilter) return false
+      if (productFilter !== 'all' && String(row?.product || '') !== productFilter) return false
+      return true
+    })
+  }, [isPt, searchedLeads, statusFilter, websiteFilter, productFilter])
+
+  const sortedLeads = useMemo(() => {
+    const dir = sortDirection === 'asc' ? 1 : -1
+    return [...filteredLeads].sort((a, b) => {
+      if (sortField === 'createdDate') return compareDateValue(a.createdDate, b.createdDate, dir, sortDirection)
+      return compareText(a[sortField], b[sortField], dir)
+    })
   }, [filteredLeads, sortField, sortDirection]);
 
   const paginatedLeads = useMemo(() => {
@@ -180,7 +206,7 @@ export default function LeadsTable({
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [leads, activeFilterQuery])
+  }, [leads, activeFilterQuery, statusFilter, websiteFilter, productFilter])
 
   const resolveLeadForViewDetails = useCallback(
     (lead) => {
@@ -356,6 +382,12 @@ export default function LeadsTable({
   }
 
   const handleSort = (field) => {
+    if (isPt) {
+      const next = toggleSortState(sortField, sortDirection, field)
+      setSortField(next.sortKey)
+      setSortDirection(next.sortDir)
+      return
+    }
     if (sortField === field) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
     } else {
@@ -394,6 +426,15 @@ export default function LeadsTable({
     if (label === 'draft') return 'bg-gray-100 text-gray-700 border-gray-200';
     return 'bg-blue-100 text-blue-700 border-blue-200';
   };
+
+  const renderStatusBadge = (status, extraClass = '') => {
+    if (isPt) return <PtStatusBadge status={statusLabel(status)} label={statusLabel(status)} className={extraClass} />
+    return (
+      <span className={`inline-flex px-2.5 py-1 text-[11px] font-medium rounded-full border ${statusClasses(status)} ${extraClass}`}>
+        {statusLabel(status)}
+      </span>
+    )
+  }
 
   const getTimelineStepIndex = (status) => {
     const label = statusLabel(status).toLowerCase();
@@ -1296,8 +1337,52 @@ export default function LeadsTable({
     )
   }
 
+  const ptColumns = [
+    { key: 'fullName', label: 'Full Name' },
+    { key: 'status', label: 'Status', filter: 'status' },
+    ...(showProductColumn ? [{ key: 'product', label: 'Product', filter: 'product' }] : []),
+    { key: 'phoneNumber', label: 'Phone' },
+    { key: 'emailId', label: 'Email' },
+    ...(!hideWebsiteColumn ? [{ key: 'website', label: 'Website', filter: 'website' }] : []),
+    { key: 'createdDate', label: 'Created Date' },
+    ...(showSlaColumn ? [{ key: 'sla', label: 'SLA' }] : []),
+  ]
+  const ptColumnFilters = {
+    status: { filterValue: statusFilter, filterOptions: statusFilterOptions, onFilterChange: setStatusFilter },
+    website: { filterValue: websiteFilter, filterOptions: websiteFilterOptions, onFilterChange: setWebsiteFilter },
+    product: { filterValue: productFilter, filterOptions: productFilterOptions, onFilterChange: setProductFilter },
+  }
+
   return (
-    <section className="mb-0 w-full max-w-full min-w-0">
+    <section className={`mb-0 w-full max-w-full min-w-0 ${isPt ? PT_TABLE_SHELL : ''}`}>
+      {isPt ? (
+        <div className={PT_TABLE_TOOLBAR}>
+          <div className="min-w-0 text-left">
+            <h3 className="text-sm font-semibold text-slate-800 sm:text-base">{title}</h3>
+            <p className="mt-0.5 text-[11px] text-[#7F8C8D] sm:text-xs">
+              {filteredLeads.length} of {Array.isArray(leads) ? leads.length : 0} leads
+              <span className="hidden sm:inline"> · chevron expands details</span>
+            </p>
+          </div>
+          {enableHeaderSearch || headerRight ? (
+            <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:items-center">
+              {enableHeaderSearch ? (
+                <div className="relative w-full sm:w-44 lg:w-52">
+                  <i className="ri-search-line absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-[#7F8C8D]" />
+                  <input
+                    type="search"
+                    value={headerSearch}
+                    onChange={(e) => setHeaderSearch(e.target.value)}
+                    placeholder={searchPlaceholder}
+                    className="min-h-[40px] w-full rounded-xl border border-slate-200 bg-white py-2 pl-8 pr-8 text-xs shadow-sm outline-none focus:border-[#1E88E5] focus:ring-2 focus:ring-[#1E88E5]/20 lg:rounded-2xl"
+                  />
+                </div>
+              ) : null}
+              {headerRight}
+            </div>
+          ) : null}
+        </div>
+      ) : (
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-6 sm:mb-8">
         <div className="flex items-center gap-3 sm:gap-4 min-w-0">
           <div className="w-12 h-12 flex items-center justify-center bg-blue-100 rounded-2xl border border-blue-200 shrink-0">
@@ -1335,6 +1420,7 @@ export default function LeadsTable({
           </div>
         ) : null}
       </div>
+      )}
 
       <div className="w-full max-w-full min-w-0 overflow-hidden">
         {/* Mobile: card list — desktop unchanged table */}
@@ -1360,10 +1446,8 @@ export default function LeadsTable({
                       <h3 className="text-base font-bold text-gray-900 flex-1 min-w-0 leading-snug break-words whitespace-normal">
                         {lead.fullName || '—'}
                       </h3>
-                      <span
-                        className={`shrink-0 self-start px-2.5 py-1 text-[11px] font-medium rounded-full border whitespace-normal break-words text-right leading-snug max-w-[9.5rem] ${statusClasses(lead.status)}`}
-                      >
-                        {statusLabel(lead.status)}
+                      <span className="shrink-0 self-start max-w-[9.5rem]">
+                        {renderStatusBadge(lead.status)}
                       </span>
                     </div>
 
@@ -1468,6 +1552,26 @@ export default function LeadsTable({
         <div className="hidden md:block w-full max-w-full min-w-0 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
           <table className="w-full min-w-0 table-auto">
             <thead>
+              {isPt ? (
+                <tr className={PT_THEAD_ROW}>
+                  {ptColumns.map((col) => {
+                    const filterCfg = col.filter ? ptColumnFilters[col.filter] : null
+                    return (
+                      <TableColumnHeader
+                        key={col.key}
+                        col={col}
+                        sortKey={sortField}
+                        sortDir={sortDirection}
+                        onSort={handleSort}
+                        filterValue={filterCfg?.filterValue}
+                        filterOptions={filterCfg?.filterOptions}
+                        onFilterChange={filterCfg?.onFilterChange}
+                        className={col.key === 'emailId' ? 'hidden md:table-cell' : ''}
+                      />
+                    )
+                  })}
+                </tr>
+              ) : (
               <tr className="bg-gradient-to-r from-slate-200/80 via-slate-100/80 to-indigo-100/60 backdrop-blur-xl border-b border-slate-300/70">
                 <th
                   className="px-3 sm:px-6 py-3 sm:py-4 text-left text-[11px] font-semibold text-slate-600 uppercase tracking-[0.14em] cursor-pointer hover:text-blue-700 transition-colors whitespace-nowrap touch-manipulation"
@@ -1499,12 +1603,6 @@ export default function LeadsTable({
                     </div>
                   </th>
                 )}
-                {/* Address column hidden for now
-                <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider hidden xl:table-cell">Address</th>
-                */}
-                {/* Message column hidden for now
-                <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider hidden xl:table-cell">Message</th>
-                */}
                 <th
                   className="px-3 sm:px-6 py-3 sm:py-4 text-left text-[11px] font-semibold text-slate-600 uppercase tracking-[0.14em] cursor-pointer hover:text-blue-700 transition-colors whitespace-nowrap touch-manipulation"
                   onClick={() => handleSort('createdDate')}
@@ -1520,6 +1618,7 @@ export default function LeadsTable({
                   </th>
                 )}
               </tr>
+              )}
             </thead>
             <tbody className="relative">
               {loading ? (
@@ -1543,37 +1642,39 @@ export default function LeadsTable({
                   <Fragment key={lead.id}>
                     <tr
                       className={`transition-all duration-200 ${
-                        variant === 'pro'
+                        isPt
+                          ? `border-b border-slate-100 ${isExpanded ? 'bg-slate-50/70' : 'hover:bg-blue-50/40'}`
+                          : variant === 'pro'
                           ? 'hover:bg-slate-50 [&>td]:border-b [&>td]:border-slate-200/80'
                           : 'hover:bg-gray-50 [&>td]:border-b [&>td]:border-gray-200'
                       }`}
-                      style={{ animationDelay: `${index * 50}ms` }}
+                      style={isPt ? { height: '56px' } : { animationDelay: `${index * 50}ms` }}
                     >
-                      <td className={`px-3 sm:px-6 whitespace-nowrap ${variant === 'pro' ? 'py-2.5 sm:py-3' : 'py-3 sm:py-4'}`}>
+                      <td className={`px-3 sm:px-6 whitespace-nowrap ${isPt || variant === 'pro' ? 'py-2.5 sm:py-3' : 'py-3 sm:py-4'}`}>
                         <div className="flex items-center gap-2 sm:gap-3">
                           <button
                             type="button"
                             onClick={() => {
                               setSelectedLead(isExpanded ? null : lead)
                             }}
-                            className={`flex items-center justify-center rounded-xl border transition-colors flex-shrink-0 ${
-                              variant === 'pro'
-                                ? 'w-8 h-8 sm:w-9 sm:h-9 bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                                : 'w-9 h-9 sm:w-10 sm:h-10 bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                            className={`flex items-center justify-center shrink-0 transition-colors ${
+                              isPt
+                                ? 'h-6 w-6 rounded-md text-slate-400 hover:bg-slate-100 hover:text-[#1E88E5]'
+                                : variant === 'pro'
+                                ? 'w-8 h-8 sm:w-9 sm:h-9 rounded-xl border bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                                : 'w-9 h-9 sm:w-10 sm:h-10 rounded-xl border bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
                             }`}
                             aria-label={`View details for ${lead.fullName || 'lead'}`}
                           >
-                            <i className={`${isExpanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-lg`}></i>
+                            <i className={`${isExpanded ? 'ri-arrow-down-s-line' : isPt ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-lg ${isPt && isExpanded ? 'rotate-180' : ''} transition-transform`}></i>
                           </button>
                           <div className="flex items-center gap-2 min-w-0">
-                            <span className="text-sm font-semibold text-gray-900 truncate max-w-[120px] sm:max-w-[180px] lg:max-w-[220px]">{lead.fullName || '—'}</span>
+                            <span className={`text-sm font-semibold truncate max-w-[120px] sm:max-w-[180px] lg:max-w-[220px] ${isPt ? 'text-[#2C3E50]' : 'text-gray-900'}`}>{lead.fullName || '—'}</span>
                           </div>
                         </div>
                       </td>
-                      <td className={`px-3 sm:px-6 whitespace-nowrap ${variant === 'pro' ? 'py-2.5 sm:py-3' : 'py-3 sm:py-4'}`}>
-                        <span className={`inline-flex px-2.5 py-1 text-[11px] font-medium rounded-full border ${statusClasses(lead.status)}`}>
-                          {statusLabel(lead.status)}
-                        </span>
+                      <td className={`px-3 sm:px-6 whitespace-nowrap ${isPt || variant === 'pro' ? 'py-2.5 sm:py-3' : 'py-3 sm:py-4'}`}>
+                        {renderStatusBadge(lead.status)}
                       </td>
                       {showProductColumn && (
                         <td className={`px-3 sm:px-6 whitespace-nowrap ${variant === 'pro' ? 'py-2.5 sm:py-3' : 'py-3 sm:py-4'}`}>
@@ -1618,7 +1719,11 @@ export default function LeadsTable({
                       </td>
                       {!hideWebsiteColumn && (
                         <td className={`px-3 sm:px-6 whitespace-nowrap ${variant === 'pro' ? 'py-2.5 sm:py-3' : 'py-3 sm:py-4'}`}>
-                          <span className={`px-2 sm:px-3 py-1 sm:py-1.5 text-xs font-bold rounded-lg border ${websiteColors[lead.website] || 'bg-gray-50 text-gray-700 border-gray-200'}`}>
+                          <span className={`px-2 sm:px-3 py-1 sm:py-1.5 text-xs font-semibold rounded-lg border ${
+                            isPt
+                              ? 'bg-[#EEF4FF] text-[#1565C0] border-[#1E88E5]/20'
+                              : (websiteColors[lead.website] || 'bg-gray-50 text-gray-700 border-gray-200')
+                          }`}>
                             {lead.website}
                           </span>
                         </td>
@@ -1682,6 +1787,14 @@ export default function LeadsTable({
           </table>
         </div>
 
+        {isPt ? (
+          <TablePaginationBar
+            total={filteredLeads.length}
+            page={currentPage}
+            onPageChange={setCurrentPage}
+            pageSize={itemsPerPage}
+          />
+        ) : (
         <div className="px-4 sm:px-6 py-4 sm:py-5 bg-gradient-to-r from-slate-200/70 via-slate-100/80 to-indigo-100/60 backdrop-blur-xl border-t border-slate-300/70 flex flex-col sm:flex-row items-center justify-between gap-4 w-full max-w-full min-w-0">
           <div className="text-xs sm:text-sm text-gray-600 text-center sm:text-left order-2 sm:order-1 w-full sm:w-auto">
             Showing <span className="font-bold text-gray-900">{(currentPage - 1) * itemsPerPage + 1}</span>–<span className="font-bold text-gray-900">{Math.min(currentPage * itemsPerPage, filteredLeads.length)}</span> of <span className="font-bold text-gray-900">{filteredLeads.length}</span>
@@ -1757,6 +1870,7 @@ export default function LeadsTable({
             </div>
           )}
         </div>
+        )}
       </div>
 
       {!isDesktop && selectedLead && typeof document !== 'undefined' && createPortal(

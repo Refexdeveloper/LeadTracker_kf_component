@@ -1,5 +1,6 @@
 import { useMemo, useEffect, useState } from 'react'
 import { formatInrCr, isOpenRow } from './salesOpportunityMap.js'
+import { PT_KPI_THEME, ptKpiCardClass } from '../leadPtTheme.js'
 
 export default function OpportunityKpiCards({ rows, onCardClick, activeCardId }) {
   const list = Array.isArray(rows) ? rows : []
@@ -119,43 +120,44 @@ export default function OpportunityKpiCards({ rows, onCardClick, activeCardId })
 
   return (
     <section className="mb-0">
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 2xl:grid-cols-6 min-w-0">
-        {cards.map((card) => (
-          <div
-            key={card.id}
-            role={onCardClick ? 'button' : undefined}
-            tabIndex={onCardClick ? 0 : undefined}
-            onClick={onCardClick ? () => onCardClick(card.id) : undefined}
-            onKeyDown={
-              onCardClick
-                ? (e) => {
-                    if (e.key === 'Enter' || e.key === ' ') onCardClick(card.id)
-                  }
-                : undefined
-            }
-            className={`kpi-card relative overflow-hidden rounded-2xl px-3 py-3 min-h-[88px] sm:min-h-[90px] min-w-0 flex flex-col justify-between transition-all duration-200 bg-gradient-to-br ${card.gradient} border border-white/70 backdrop-blur-xl touch-manipulation ${
-              onCardClick ? 'cursor-pointer select-none' : ''
-            } ${activeCardId === card.id ? 'ring-2 ring-blue-500/40 ring-offset-1 ring-offset-transparent' : ''}`}
-            style={{
-              ['--accent-rgb']: card.accentRgb,
-              borderColor: `rgba(${card.accentRgb}, 0.35)`,
-            }}
-          >
-            <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,0.82)_0%,rgba(255,255,255,0.2)_40%,transparent_100%)] opacity-60 rounded-xl" />
-            <div className="relative z-10 flex items-start justify-between gap-2 mb-1.5">
-              <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg shadow-sm shadow-black/10 flex items-center justify-center bg-gradient-to-br ${card.iconGradient} text-white`}>
-                <i className={`${card.icon} text-sm sm:text-base`} />
+      <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-3 2xl:grid-cols-6 min-w-0">
+        {cards.map((card) => {
+          const theme = PT_KPI_THEME[card.id] || PT_KPI_THEME.total
+          const active = activeCardId === card.id
+          return (
+            <div
+              key={card.id}
+              role={onCardClick ? 'button' : undefined}
+              tabIndex={onCardClick ? 0 : undefined}
+              onClick={onCardClick ? () => onCardClick(card.id) : undefined}
+              onKeyDown={
+                onCardClick
+                  ? (e) => {
+                      if (e.key === 'Enter' || e.key === ' ') onCardClick(card.id)
+                    }
+                  : undefined
+              }
+              className={ptKpiCardClass(theme, { active, clickable: Boolean(onCardClick) })}
+            >
+              <div className="relative flex flex-1 items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-400 sm:text-[11px] sm:tracking-[0.14em]">
+                    {card.title}
+                  </p>
+                  <p className={`mt-1 text-[22px] font-bold tabular-nums leading-none tracking-tight sm:mt-2 sm:text-3xl ${theme.valueClass}`}>
+                    {card.value}
+                  </p>
+                  {card.subtitle ? (
+                    <p className="mt-1 line-clamp-2 text-[10px] font-medium text-slate-400 sm:text-xs">{card.subtitle}</p>
+                  ) : null}
+                </div>
+                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl sm:h-9 sm:w-9 ${theme.iconWrap}`}>
+                  <i className={`${card.icon} text-base sm:text-lg`} />
+                </div>
               </div>
             </div>
-            <div className="relative z-10 space-y-0.5 text-center sm:text-left">
-              <p className="text-[10px] sm:text-[11px] font-semibold tracking-wide uppercase text-slate-600/90">{card.title}</p>
-              <p className="text-lg sm:text-xl font-black tracking-tight leading-tight text-slate-900">{card.value}</p>
-              {card.subtitle ? (
-                <p className="text-[10px] sm:text-[11px] font-medium truncate text-slate-500">{card.subtitle}</p>
-              ) : null}
-            </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </section>
   )

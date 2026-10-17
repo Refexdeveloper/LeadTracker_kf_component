@@ -111,6 +111,7 @@ export default function MobileLeadCards({
   formatDateTime,
   getStatusBadgeClass,
   formatStatusForDisplay,
+  highlightRows = false,
 }) {
   if (loading && (!items || items.length === 0)) {
     return (
@@ -129,7 +130,7 @@ export default function MobileLeadCards({
   }
 
   return (
-    <div className="space-y-3 p-0 sm:p-4">
+    <div className="space-y-3 p-3 sm:p-4">
       {items.map((item) => {
         const itemView = resolveLeadRowView(item, itemDetailsById, kpiLeads)
         const emailStr = itemView.emailId ? String(itemView.emailId) : ''
@@ -137,7 +138,11 @@ export default function MobileLeadCards({
         return (
           <article
             key={item.id}
-            className="rounded-2xl border border-white/60 bg-white/90 shadow-sm backdrop-blur-sm p-4"
+            className={`rounded-2xl border bg-white/90 p-4 shadow-sm backdrop-blur-sm transition-[background-color,border-color,box-shadow] duration-500 ${
+              highlightRows
+                ? 'border-[#1E88E5] bg-blue-50/80 shadow-[0_0_0_4px_rgba(30,136,229,0.14)]'
+                : 'border-white/60'
+            }`}
           >
             {/* Full-width name block; status on next row (mobile layout). */}
             <div className="min-w-0 space-y-2">

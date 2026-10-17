@@ -1,10 +1,10 @@
-import React, { useState, useMemo, useEffect, useLayoutEffect, useContext, useRef } from 'react'
+import React, { useState, useMemo, useEffect, useLayoutEffect, useContext, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { kf, KissflowSDKContext } from './sdk/index.js'
 import KPICards from './KPICards.jsx'
 import { getApiBase } from './apiBase.js'
-import { buildLeadProcessApiPaths, buildLeadAdminApiPaths, resolveKfApplicationId } from './kfLeadPaths.js'
-import AOS from 'aos'
+import { buildLeadProcessApiPaths, resolveKfApplicationId } from './kfLeadPaths.js'
+import { kfMutateJson } from './lib/kfRuntime.js'
 import { useMediaQuery } from './hooks/useMediaQuery.js'
 import MobileLeadCards from './MobileLeadCards.jsx'
 import MobileTaskCards from './MobileTaskCards.jsx'
@@ -13,6 +13,8 @@ import LeadAccordionPanel from './LeadAccordionPanel.jsx'
 import { hydrateAccordionLead } from './leadAccordionHydration.js'
 import { parseFollowUpDetailsFromItem } from './leadWorkflowUi.js'
 import { fetchParticipatedActivitySteps, fetchParticipatedLeadsForActivity } from './participatedLeads.js'
+import { PT_AVATAR, PT_CARD, PT_PAGE_SHELL } from './leadPtTheme.js'
+import { LEAD_TABLE_PULSE_CLASS, useLeadTableHighlight } from './leadTableHighlight.js'
 
 const STATUS_TO_SEGMENT = {
   'Draft': 'draft',
@@ -176,12 +178,12 @@ function formatStatusForDisplay(raw) {
 
 function getStatusBadgeClass(status) {
   const s = String(formatStatusForDisplay(status) || '').toLowerCase()
-  if (s.includes('completed')) return 'bg-emerald-100 text-emerald-800 border border-emerald-200/80'
-  if (s.includes('in progress')) return 'bg-blue-100 text-blue-800 border border-blue-200/80'
-  if (s.includes('rejected')) return 'bg-rose-100 text-rose-800 border border-rose-200/80'
-  if (s.includes('withdrawn')) return 'bg-orange-100 text-orange-800 border border-orange-200/80'
-  if (s.includes('draft')) return 'bg-slate-100 text-slate-700 border border-slate-200/80'
-  return 'bg-violet-100 text-violet-800 border border-violet-200/80'
+  if (s.includes('completed')) return 'bg-green-50 text-[#43A047]'
+  if (s.includes('in progress')) return 'bg-blue-50 text-[#1E88E5]'
+  if (s.includes('rejected')) return 'bg-red-50 text-[#E53935]'
+  if (s.includes('withdrawn')) return 'bg-orange-50 text-[#FB8C00]'
+  if (s.includes('draft')) return 'bg-gray-100 text-[#7F8C8D]'
+  return 'bg-blue-50 text-[#1E88E5]'
 }
 
 /**
@@ -219,6 +221,95 @@ function pickFirstId(value) {
   }
   if (value == null) return ''
   return String(value)
+}
+
+function kfUserRef(value) {
+  if (!value) return { id: '', email: '', name: '' }
+  if (typeof value === 'string') {
+    const text = value.trim()
+    return { id: '', email: text.includes('@') ? text : '', name: text.includes('@') ? '' : text }
+  }
+  if (Array.isArray(value)) return kfUserRef(value[0])
+  return {
+    id: String(value._id || value.Id || value.id || '').trim(),
+    email: String(value.Email || value.email || '').trim(),
+    name: String(value.Name || value.name || '').trim(),
+  }
+}
+
+function personMatchesCurrentUser(user, person) {
+  if (!user || !person) return false
+  const userId = String(user._id || user.Id || user.id || '').trim().toLowerCase()
+  const userEmail = String(user.Email || user.email || '').trim().toLowerCase()
+  const userName = String(user.Name || user.name || user.DisplayName || '').trim().toLowerCase()
+  const userFirstName = String(user.FirstName || '').trim().toLowerCase()
+  const personId = String(person.id || person._id || person.Id || '').trim().toLowerCase()
+  const personEmail = String(person.email || person.Email || '').trim().toLowerCase()
+  const personName = String(person.name || person.Name || '').trim().toLowerCase()
+  if (userId && personId && userId === personId) return true
+  if (userEmail && personEmail && userEmail === personEmail) return true
+  if (userName && personName && (userName === personName || userName.includes(personName) || personName.includes(userName))) {
+    return true
+  }
+  const userToken = (userFirstName || userName).split(/\s+/)[0] || ''
+  const personToken = personName.split(/\s+/)[0] || ''
+  if (userToken && personToken && userToken === personToken) return true
+  return false
+}
+
+function leadBelongsToCurrentUser(user, lead) {
+  if (!user || !lead) return false
+  if (
+    personMatchesCurrentUser(user, {
+      id: lead.createdById,
+      email: lead.createdByEmail,
+      name: lead.createdBy,
+    })
+  ) {
+    return true
+  }
+  if (
+    personMatchesCurrentUser(user, {
+      id: lead.assignedToId,
+      email: lead.assignedToEmail,
+      name: lead.assignedTo,
+    })
+  ) {
+    return true
+  }
+  return false
+}
+
+function rowHasCreatorIdentity(row) {
+  return Boolean(row?.createdById || row?.createdByEmail || row?.createdBy)
+}
+
+function rowHasAssigneeIdentity(row) {
+  return Boolean(row?.assignedToId || row?.assignedToEmail || row?.assignedTo)
+}
+
+function scopeCreatedByCurrentUser(list, user) {
+  if (!Array.isArray(list)) return []
+  if (!user || list.length === 0) return list
+  return list.filter((row) => {
+    if (!rowHasCreatorIdentity(row)) return true
+    return personMatchesCurrentUser(user, {
+      id: row.createdById,
+      email: row.createdByEmail,
+      name: row.createdBy,
+    })
+  })
+}
+
+function scopeAssignedOrCreatedByCurrentUser(list, user) {
+  if (!Array.isArray(list)) return []
+  if (!user || list.length === 0) return list
+  return list.filter((row) => {
+    if (leadBelongsToCurrentUser(user, row)) return true
+    if (!rowHasCreatorIdentity(row) && !rowHasAssigneeIdentity(row)) return true
+    if (rowHasAssigneeIdentity(row)) return false
+    return true
+  })
 }
 
 function mapKfItemToLead(item, listUrlSegment) {
@@ -271,11 +362,15 @@ function mapKfItemToLead(item, listUrlSegment) {
     firstCtx?._context_activity_instance ??
     ''
   const name = stringifyKfFieldValue(getVal(item, ['Name', 'Untitled_Field'], '')) || (website && fullName ? `LEAD-${String(website).replace(/\s+/g, '')}-${String(id).slice(-4)} - ${fullName}` : fullName || id || '—')
-  const createdBy =
-    item._created_by?.Name ||
-    item.Created_by?.Name ||
-    stringifyKfFieldValue(getVal(item, ['_current_assigned_to', 'AssignedTo', 'assigned_to'], '')) ||
-    null
+  const createdRef = kfUserRef(item._created_by || item.Created_by)
+  const assignedRef = kfUserRef(
+    item._current_assigned_to ||
+      item._assigned_to ||
+      item.AssignedTo ||
+      item.assigned_to ||
+      getVal(item, ['_current_assigned_to', 'AssignedTo', 'assigned_to'], null),
+  )
+  const createdBy = createdRef.name || assignedRef.name || null
 
   const currentStep = stringifyKfFieldValue(getVal(item, ['_current_step', 'Current_step', 'current_step'], ''))
   return {
@@ -304,6 +399,11 @@ function mapKfItemToLead(item, listUrlSegment) {
     status: resolveStatusFromItem(item, listUrlSegment),
     progress: Number(getVal(item, ['_progress', 'Progress'], 0)) || 0,
     createdBy,
+    createdById: createdRef.id,
+    createdByEmail: createdRef.email,
+    assignedTo: assignedRef.name,
+    assignedToId: assignedRef.id,
+    assignedToEmail: assignedRef.email,
     currentStep,
     activityId: pickFirstId(activityId),
     activityInstanceId: pickFirstId(activityInstanceId),
@@ -443,6 +543,8 @@ const ROLE_TO_WEBSITE_KPI = {
   '3isalesmanager': '3iMedtech',
   '3isalesteam': '3iMedtech',
   'salesmanageradonis': 'Adonis',
+  'Sales Team Adonis': 'Adonis',
+  salesteamadonis: 'Adonis',
   'salesmanageranamaya': 'Anamaya',
   'salesmanagerril': 'Refex Industries Limited',
   'salesteamril': 'Refex Industries Limited',
@@ -452,16 +554,39 @@ const ROLE_TO_WEBSITE_KPI = {
   'salesteamrril': 'Refex Renewables',
   'salesmanagerrefexgroup': 'Refex Group',
   'salesmanagerrefexmobility': 'Refex Mobility',
+  'Sales Team Refex Mobility': 'Refex Mobility',
+  salesteamrefexmobility: 'Refex Mobility',
   'salesmanagersparzan': 'Sparzana',
   'salesmanagersparzana': 'Sparzana',
   'venwindsalesmanager': 'Venwind Refex',
   'venwindsalesteam': 'Venwind Refex',
   'Modepro Manager': 'Modepro',
   modepromanager: 'Modepro',
+  'Sales Team Modepro': 'Modepro',
+  salesteammodepro: 'Modepro',
+  'RMC Sales Manager': 'RMC',
+  rmcsalesmanager: 'RMC',
+  'RMC Sales Team': 'RMC',
+  rmcsalesteam: 'RMC',
 }
 
 function normalizeTextKpi(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+function parseLeadCreateIds(resp) {
+  const layer1 = resp?.data ?? resp ?? {}
+  const data = layer1?.data && typeof layer1.data === 'object' ? layer1.data : layer1
+  const instanceId = String(data?._id || data?.Id || data?.id || '').trim()
+  const activityRaw =
+    data?._activity_instance_id ??
+    data?._activity_instance_ids?.[0] ??
+    data?.activityInstanceId ??
+    data?.ActivityInstanceId
+  const activityInstanceId = Array.isArray(activityRaw)
+    ? String(activityRaw[0] || '').trim()
+    : String(activityRaw || '').trim()
+  return { instanceId, activityInstanceId, raw: data }
 }
 
 function resolveWebsiteFromOptionsKpi(targetWebsite, websiteOptions) {
@@ -528,29 +653,23 @@ function isCreatedThisWeekKpi(lead) {
   return d >= sevenDaysAgo && d <= endToday
 }
 
-const DEMO_ITEMS = [
-  { id: '1', name: 'LEAD-Anamaya-0502 - t1232', fullName: 't1232', emailId: 'sathishkumar.r@refex.co.in', message: 'cwdwjfhwec', createdDate: '2026-03-17T15:10:00', status: 'Draft' },
-  { id: '2', name: 'LEAD-3iMedtech-0501 - asdf', fullName: 'asdf', emailId: 'sathishkumar.r@refex.co.in', message: 'raghul.je@refex.co.in', createdDate: '2026-03-17T14:42:00', status: 'Draft' },
-  { id: '3', name: '—', fullName: '', emailId: '', message: '', createdDate: '2026-03-17T14:39:00', status: 'Draft' },
-]
-
 const ITEMS_COLUMNS = [
-  { id: 'fullName', label: 'Full Name' },
-  { id: 'status', label: 'Status' },
-  { id: 'product', label: 'Product' },
-  { id: 'phoneNumber', label: 'Phone' },
-  { id: 'emailId', label: 'Email' },
-  { id: 'createdDate', label: 'Created Date' },
-  { id: 'sla', label: 'SLA' },
+  { id: 'fullName', key: 'fullName', label: 'Full Name' },
+  { id: 'status', key: 'status', label: 'Status', filter: 'status' },
+  { id: 'product', key: 'product', label: 'Product', filter: 'product' },
+  { id: 'phoneNumber', key: 'phoneNumber', label: 'Phone' },
+  { id: 'emailId', key: 'emailId', label: 'Email' },
+  { id: 'createdDate', key: 'createdDate', label: 'Created Date' },
+  { id: 'sla', key: 'sla', label: 'SLA' },
 ]
 const TASKS_COLUMNS = [
-  { id: 'fullName', label: 'Full Name' },
-  { id: 'status', label: 'Status' },
-  { id: 'product', label: 'Product' },
-  { id: 'phoneNumber', label: 'Phone' },
-  { id: 'emailId', label: 'Email' },
-  { id: 'createdDate', label: 'Created Date' },
-  { id: 'sla', label: 'SLA' },
+  { id: 'fullName', key: 'fullName', label: 'Full Name' },
+  { id: 'status', key: 'status', label: 'Status', filter: 'status' },
+  { id: 'product', key: 'product', label: 'Product', filter: 'product' },
+  { id: 'phoneNumber', key: 'phoneNumber', label: 'Phone' },
+  { id: 'emailId', key: 'emailId', label: 'Email' },
+  { id: 'createdDate', key: 'createdDate', label: 'Created Date' },
+  { id: 'sla', key: 'sla', label: 'SLA' },
 ]
 
 const DEFAULT_VISIBLE_ITEMS = Object.fromEntries(ITEMS_COLUMNS.map((c) => [c.id, true]))
@@ -572,6 +691,7 @@ import {
   slaDeadlineTitle,
 } from './slaMeta.js'
 import SlaCell from './SlaCell.jsx'
+import { TableColumnHeader, distinctFilterOptions, toggleSortState, compareText, compareDateValue } from './components/TableColumnHeaders.jsx'
 
 function getSlaChipForRow(row, getMeta) {
   const deadlineLike = row?.deadline ?? row?.Deadline
@@ -595,7 +715,6 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
   const { kf: kfFromContext, sdkReady } = useContext(KissflowSDKContext)
   const kfInstance = kfFromContext ?? (typeof window !== 'undefined' ? window.kf : null)
   const leadPaths = useMemo(() => buildLeadProcessApiPaths(kfInstance), [kfInstance])
-  const adminPaths = useMemo(() => buildLeadAdminApiPaths(kfInstance), [kfInstance])
 
   const [activeTab, setActiveTab] = useState('tasks')
   const [statusFilter, setStatusFilter] = useState('Draft')
@@ -609,6 +728,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
   const [participatedPage, setParticipatedPage] = useState(1)
   const [rowsPerPage, setRowsPerPage] = useState(10)
   const [selectedItemIds, setSelectedItemIds] = useState(new Set())
+  const [creatingNewItem, setCreatingNewItem] = useState(false)
   const [selectedLead, setSelectedLead] = useState(null)
   const [statusCountsFromApi, setStatusCountsFromApi] = useState(null)
   const [pendingActivities, setPendingActivities] = useState(null)
@@ -629,6 +749,10 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
   const [filterToDate, setFilterToDate] = useState('')
   const [visibleColumnsItems, setVisibleColumnsItems] = useState(DEFAULT_VISIBLE_ITEMS)
   const [visibleColumnsTasks, setVisibleColumnsTasks] = useState(DEFAULT_VISIBLE_TASKS)
+  const [tableSortKey, setTableSortKey] = useState('createdDate')
+  const [tableSortDir, setTableSortDir] = useState('desc')
+  const [colStatusFilter, setColStatusFilter] = useState('all')
+  const [colProductFilter, setColProductFilter] = useState('all')
   const [expandedItemId, setExpandedItemId] = useState(null)
   const [expandedTaskId, setExpandedTaskId] = useState(null)
   const [expandedParticipatedId, setExpandedParticipatedId] = useState(null)
@@ -643,6 +767,13 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
   const getSlaDeadlineMeta = useSlaDeadlineMeta()
   const [kpiLeadsCapReached, setKpiLeadsCapReached] = useState(false)
   const [activeKpiCardId, setActiveKpiCardId] = useState('total')
+  const selectKpiCard = useCallback((cardId) => {
+    setActiveTab('items')
+    setActiveKpiCardId(cardId)
+    setItemsPage(1)
+  }, [])
+  const { pageRootRef, tableSectionRef, insightPulse, handleCardClick } =
+    useLeadTableHighlight(selectKpiCard)
   const [greeting, setGreeting] = useState(getTimeGreeting())
   const accordionDetailCacheRef = useRef(new Map())
   const accordionProgressCacheRef = useRef(new Map())
@@ -795,43 +926,19 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
     return () => { cancelled = true }
   }, [sdkReady, watchParamsTick, leadPaths, kfInstance, currentActivityId])
 
-  useEffect(function fetchUser() {
-    if (!leadPaths) return
-    const kf = kfInstance
-    const userId = kf?.user?._id || kf?.context?.user?._id || 'UsCyVwuplHVM'
-    const path = leadPaths.userPathPrefix + userId + leadPaths.userPathSuffix
-    const url = getApiBase() + path
-    let cancelled = false
-    async function run() {
-      try {
-        let response
-        if (kf?.api) {
-          const resp = await kf.api(path, { method: 'GET', headers: { Accept: 'application/json' } })
-          response = resp?.data ?? resp ?? null
-        } else {
-          const res = await fetch(url, { method: 'GET', credentials: 'include', headers: { Accept: 'application/json' } })
-          if (!res.ok) return
-          response = await res.json()
-        }
-        if (!cancelled && response && (response._id || response.Name)) setUser(response)
-      } catch (e) {
-        if (!cancelled) console.warn('User fetch failed:', e?.message || e)
-      }
-      if (!cancelled && !user && kf?.user?.Name) {
-        const u = kf.user
-        setUser({
-          _id: u._id,
-          Name: u.Name,
-          FirstName: u.FirstName || (u.Name && u.Name.split(' ')[0]) || 'User',
-          LastName: u.LastName,
-          Email: u.Email,
-          _user_type: u._user_type || u.Groups?.[0]?.Name || u.Roles?.[0]?.Name || 'User',
-        })
-      }
-    }
-    run()
-    return () => { cancelled = true }
-  }, [sdkReady, leadPaths])
+  useEffect(function seedUserFromSdk() {
+    const u = kfInstance?.user || kfInstance?.context?.user
+    if (!u?._id && !u?.Email && !u?.email && !u?.Name) return
+    setUser((prev) => ({
+      ...(prev || {}),
+      _id: prev?._id || u._id,
+      Name: prev?.Name || u.Name,
+      FirstName: prev?.FirstName || u.FirstName || (u.Name && String(u.Name).split(' ')[0]) || 'User',
+      LastName: prev?.LastName || u.LastName,
+      Email: u.Email || u.email || prev?.Email || '',
+      _user_type: prev?._user_type || u._user_type || u.Groups?.[0]?.Name || u.Roles?.[0]?.Name || 'User',
+    }))
+  }, [kfInstance])
 
   useEffect(function fetchParticipatedActivities() {
     if (!leadPaths || !kfInstance) return
@@ -929,7 +1036,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
       } catch (e) {
         if (!cancelled) {
           console.warn('Leads items fetch failed:', e?.message || e)
-          setItems(null)
+          setItems([])
         }
       } finally {
         if (!cancelled) setItemsLoading(false)
@@ -1139,10 +1246,6 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
     return () => { cancelled = true }
   }, [expandedParticipatedId, leadPaths, kfInstance, participatedFromApi, participatedDetailsById, kpiLeads])
 
-  useEffect(function initAOS() {
-    AOS.init({ duration: 800, once: true })
-  }, [])
-
   useEffect(function syncGreetingClock() {
     const t = setInterval(() => setGreeting(getTimeGreeting()), 60000)
     return () => clearInterval(t)
@@ -1160,41 +1263,73 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
     return () => document.removeEventListener('mousedown', handle)
   }, [filterPopoverOpen, columnsPopoverOpen])
 
-  useEffect(function fetchKpiLeadsAdminList() {
-    if (!adminPaths) return
+  useEffect(function fetchKpiLeadsForCurrentUser() {
+    if (!leadPaths) return
     const kf = kfInstance
     let cancelled = false
     setKpiLeadsLoading(true)
 
-    async function fetchOnePage(pageNumber) {
-      const path = adminPaths.getLeadItemsPath(pageNumber, 1000)
-      if (kf?.api) {
-        const resp = await kf.api(path, {
-          method: 'GET',
-          headers: { Accept: 'application/json' },
-        })
-        return resp?.data ?? resp ?? null
-      }
-      const res = await fetch(getApiBase() + path, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { Accept: 'application/json' },
-      })
-      if (!res.ok) throw new Error(`KPI lead list HTTP ${res.status}`)
-      return res.json()
-    }
-
     async function run() {
       try {
-        const response = await fetchOnePage(1)
-        if (cancelled) return
-        const data = response?.Data ?? response?.data ?? (Array.isArray(response) ? response : null)
-        const list = Array.isArray(data) ? data : []
         const merge = []
-        for (let i = 0; i < list.length; i += 1) {
-          const row = mapKfItemToLead(list[i], undefined)
-          if (row) merge.push(row)
+        const seenIds = new Set()
+        const appendLead = (row) => {
+          if (!row) return
+          const id = String(row.id || row._id || '').trim()
+          if (id && seenIds.has(id)) return
+          if (id) seenIds.add(id)
+          merge.push({ ...row, userScoped: true })
         }
+
+        // Leads created by the logged-in user.
+        for (const status of STATUS_OPTIONS) {
+          let pageNumber = 1
+          while (pageNumber <= KF_LIST_MAX_PAGES) {
+            if (cancelled) return
+            const path = buildMyItemsPath(leadPaths, status, pageNumber, KF_LIST_API_PAGE_SIZE)
+            const response = await fetchKfJson(kf, path)
+            if (cancelled) return
+            const data = extractKfListPayload(response)
+            const batch = Array.isArray(data) ? data : []
+
+            batch.forEach((raw) => appendLead(mapKfItemToLead(raw, STATUS_TO_SEGMENT[status])))
+
+            if (batch.length < KF_LIST_API_PAGE_SIZE) break
+            pageNumber += 1
+          }
+        }
+
+        // Leads currently assigned to the logged-in user. The pending endpoint
+        // is already user-scoped, so fetch every activity rather than only the
+        // activity selected in the My Tasks tab.
+        for (const activity of Array.isArray(pendingActivities) ? pendingActivities : []) {
+          if (!activity?._id) continue
+          let pageNumber = 1
+          while (pageNumber <= KF_LIST_MAX_PAGES) {
+            if (cancelled) return
+            const path =
+              `/process/2/${leadPaths.accountId}/${leadPaths.processId}/pending/${encodeURIComponent(String(activity._id))}` +
+              `?apply_preference=true&page_number=${pageNumber}&page_size=${KF_LIST_API_PAGE_SIZE}` +
+              `&skip_aggregation=true&_application_id=${encodeURIComponent(TASKS_APPLICATION_ID)}`
+            const response = await fetchKfJson(kf, path)
+            if (cancelled) return
+            const data = extractKfListPayload(response)
+            const batch = Array.isArray(data) ? data : []
+            batch.forEach((raw) => appendLead(mapKfTaskToRow(raw, activity._id)))
+            if (batch.length < KF_LIST_API_PAGE_SIZE) break
+            pageNumber += 1
+          }
+        }
+
+        // Completed/closed leads in which the logged-in user participated.
+        for (const activity of Array.isArray(participatedActivities) ? participatedActivities : []) {
+          if (!activity?._id) continue
+          if (cancelled) return
+          const { leads } = await fetchParticipatedLeadsForActivity(kf, leadPaths, activity._id)
+          if (cancelled) return
+          leads.forEach(appendLead)
+        }
+
         if (!cancelled) {
           setKpiLeadsCapReached(false)
           setKpiLeads(merge)
@@ -1211,14 +1346,53 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
     }
     run()
     return function () { cancelled = true }
-  }, [sdkReady, watchParamsTick, adminPaths, kfInstance])
+  }, [sdkReady, watchParamsTick, leadPaths, kfInstance, pendingActivities, participatedActivities])
 
   useEffect(function resetItemsPageOnKpiCardChange() {
     setItemsPage(1)
   }, [activeKpiCardId])
 
-  const itemList = items !== null ? items : DEMO_ITEMS
-  const taskList = tasksFromApi ?? []
+  useEffect(function resetPagesOnColumnSortFilter() {
+    setItemsPage(1)
+    setTasksPage(1)
+    setParticipatedPage(1)
+  }, [colStatusFilter, colProductFilter, tableSortKey, tableSortDir])
+
+  const scopeUser = useMemo(() => {
+    if (user?._id || user?.Email || user?.Name) return user
+    const u = kfInstance?.user || kfInstance?.context?.user
+    if (!u) return null
+    return {
+      _id: u._id,
+      Name: u.Name,
+      FirstName: u.FirstName || (u.Name && String(u.Name).split(' ')[0]) || 'User',
+      Email: u.Email || u.email || '',
+      Role: u.Role || u.Roles?.[0],
+    }
+  }, [user, kfInstance])
+
+  const itemList = useMemo(
+    () => scopeCreatedByCurrentUser(items !== null ? items : [], scopeUser),
+    [items, scopeUser],
+  )
+  const taskList = useMemo(
+    () => scopeAssignedOrCreatedByCurrentUser(tasksFromApi ?? [], scopeUser),
+    [tasksFromApi, scopeUser],
+  )
+  const participatedList = useMemo(
+    () => scopeAssignedOrCreatedByCurrentUser(participatedFromApi !== null ? participatedFromApi : [], scopeUser),
+    [participatedFromApi, scopeUser],
+  )
+  const myScopedLeadIds = useMemo(() => {
+    const ids = new Set()
+    ;[itemList, taskList, participatedList].forEach((list) => {
+      list.forEach((row) => {
+        const id = String(row?.id || row?._id || '').trim()
+        if (id) ids.add(id)
+      })
+    })
+    return ids
+  }, [itemList, taskList, participatedList])
   const activityTabs = useMemo(() => {
     const list = Array.isArray(pendingActivities) ? pendingActivities : []
     return list.filter((a) => a && a._id)
@@ -1313,10 +1487,18 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
     if (!isAdminRole && activeKpiCardId === 'sources') setActiveKpiCardId('total')
   }, [isAdminRole, activeKpiCardId])
 
-  /** Full-process lead set for KPI cards: respects role-scoped website + toolbar date/search (not status tab). */
+  /** Full-process lead set for KPI cards: current user + role website + toolbar date/search. */
   const kpiDisplayLeads = useMemo(() => {
     const base = Array.isArray(kpiLeads) ? kpiLeads : []
     let list = base
+    if (scopeUser) {
+      list = list.filter((l) => {
+        if (l?.userScoped) return true
+        if (leadBelongsToCurrentUser(scopeUser, l)) return true
+        const id = String(l?.id || l?._id || '').trim()
+        return Boolean(id && myScopedLeadIds.has(id))
+      })
+    }
     if (lockedWebsiteKpi) {
       list = list.filter((l) => String(l.website || '').trim() === lockedWebsiteKpi)
     }
@@ -1334,7 +1516,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
       )
     }
     return list
-  }, [kpiLeads, lockedWebsiteKpi, filterFromDate, filterToDate, search])
+  }, [kpiLeads, scopeUser, myScopedLeadIds, lockedWebsiteKpi, filterFromDate, filterToDate, search])
 
   const filteredItems = useMemo(() => {
     // Rows are already loaded from myitems/{segment} for the active status tab — do not re-filter by row status.
@@ -1380,10 +1562,12 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
   }, [statusCountsFromApi, itemList])
 
   const filteredItemsAfterKpi = useMemo(() => {
-    let list = filteredItems
-    if (activeTab !== 'items') return list
+    if (activeTab !== 'items') return filteredItems
     const id = activeKpiCardId
-    if (!id || id === 'total') return list
+    if (!id || id === 'total') return filteredItems
+    // KPI cards summarize the full current-user lead set, not only the
+    // currently selected workflow-status chip.
+    let list = kpiDisplayLeads
     if (id === 'today') return list.filter(isCreatedTodayKpi)
     if (id === 'week') return list.filter(isCreatedThisWeekKpi)
     if (id === 'pending') return list.filter(isOpenPipelineKpi)
@@ -1402,25 +1586,70 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
     return list
   }, [filteredItems, activeKpiCardId, activeTab, kpiDisplayLeads])
 
+  const handleTableSort = (key) => {
+    const next = toggleSortState(tableSortKey, tableSortDir, key)
+    setTableSortKey(next.sortKey)
+    setTableSortDir(next.sortDir)
+  }
+
+  const getManagedRowValue = (row, detailsById, key) => {
+    const view = resolveLeadRowView(row, detailsById, kpiLeads)
+    if (key === 'status') return formatStatusForDisplay(view.status) || 'In progress'
+    if (key === 'product') return String(view.product || '').trim()
+    if (key === 'fullName') return String(view.fullName || view.name || '')
+    if (key === 'phoneNumber') return String(view.phoneNumber || '')
+    if (key === 'emailId') return String(view.emailId || '')
+    if (key === 'createdDate') return view.createdDate || ''
+    if (key === 'sla') return view.deadline || view.Deadline || ''
+    return ''
+  }
+
+  const applyTableSortFilter = (list, detailsById) => {
+    let next = Array.isArray(list) ? list : []
+    if (colStatusFilter !== 'all') {
+      next = next.filter((row) => getManagedRowValue(row, detailsById, 'status') === colStatusFilter)
+    }
+    if (colProductFilter !== 'all') {
+      next = next.filter((row) => getManagedRowValue(row, detailsById, 'product') === colProductFilter)
+    }
+    const dir = tableSortDir === 'asc' ? 1 : -1
+    return [...next].sort((a, b) => {
+      if (tableSortKey === 'createdDate' || tableSortKey === 'sla') {
+        return compareDateValue(
+          getManagedRowValue(a, detailsById, tableSortKey),
+          getManagedRowValue(b, detailsById, tableSortKey),
+          dir,
+          tableSortDir,
+        )
+      }
+      return compareText(
+        getManagedRowValue(a, detailsById, tableSortKey),
+        getManagedRowValue(b, detailsById, tableSortKey),
+        dir,
+      )
+    })
+  }
+
+  const hasColumnFilters = colStatusFilter !== 'all' || colProductFilter !== 'all'
   const hasItemsToolbarFilters = Boolean(
-    search.trim() || filterFromDate || filterToDate || (activeTab === 'items' && activeKpiCardId && activeKpiCardId !== 'total')
+    search.trim() || filterFromDate || filterToDate || hasColumnFilters || (activeTab === 'items' && activeKpiCardId && activeKpiCardId !== 'total')
   )
-  const hasTasksToolbarFilters = Boolean(search.trim() || filterFromDate || filterToDate)
+  const hasTasksToolbarFilters = Boolean(search.trim() || filterFromDate || filterToDate || hasColumnFilters)
 
-  const totalItemsForDisplay = useMemo(() => {
-    if (hasItemsToolbarFilters) return filteredItemsAfterKpi.length
-    const apiCount = statusCountsFromApi?.[statusFilter]
-    if (apiCount != null && apiCount >= 0) return apiCount
+  const totalItemsForDisplayBase = useMemo(() => {
+    if (hasItemsToolbarFilters && !hasColumnFilters) return filteredItemsAfterKpi.length
+    if (!hasItemsToolbarFilters) {
+      const apiCount = statusCountsFromApi?.[statusFilter]
+      if (apiCount != null && apiCount >= 0) return apiCount
+    }
     return filteredItemsAfterKpi.length
-  }, [hasItemsToolbarFilters, filteredItemsAfterKpi.length, statusCountsFromApi, statusFilter])
+  }, [hasItemsToolbarFilters, hasColumnFilters, filteredItemsAfterKpi.length, statusCountsFromApi, statusFilter])
 
-  const totalTasksForDisplay = useMemo(() => {
-    if (hasTasksToolbarFilters) return filteredTasks.length
-    if (totalTasksCount != null && totalTasksCount > 0) return totalTasksCount
+  const totalTasksForDisplayBase = useMemo(() => {
+    if (hasTasksToolbarFilters && !hasColumnFilters) return filteredTasks.length
+    if (!hasTasksToolbarFilters && totalTasksCount != null && totalTasksCount > 0) return totalTasksCount
     return filteredTasks.length
-  }, [hasTasksToolbarFilters, filteredTasks.length, totalTasksCount])
-
-  const participatedList = participatedFromApi !== null ? participatedFromApi : []
+  }, [hasTasksToolbarFilters, hasColumnFilters, filteredTasks.length, totalTasksCount])
 
   const filteredParticipated = useMemo(() => {
     let list = participatedList
@@ -1438,17 +1667,57 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
     )
   }, [participatedList, search, filterFromDate, filterToDate])
 
-  const hasParticipatedToolbarFilters = Boolean(search.trim() || filterFromDate || filterToDate)
+  const itemsSorted = useMemo(
+    () => applyTableSortFilter(filteredItemsAfterKpi, itemDetailsById),
+    [filteredItemsAfterKpi, itemDetailsById, colStatusFilter, colProductFilter, tableSortKey, tableSortDir, kpiLeads],
+  )
+  const tasksSorted = useMemo(
+    () => applyTableSortFilter(filteredTasks, taskDetailsById),
+    [filteredTasks, taskDetailsById, colStatusFilter, colProductFilter, tableSortKey, tableSortDir, kpiLeads],
+  )
+  const participatedSorted = useMemo(
+    () => applyTableSortFilter(filteredParticipated, participatedDetailsById),
+    [filteredParticipated, participatedDetailsById, colStatusFilter, colProductFilter, tableSortKey, tableSortDir, kpiLeads],
+  )
 
-  const totalParticipatedForDisplay = useMemo(() => {
-    if (hasParticipatedToolbarFilters) return filteredParticipated.length
-    if (totalParticipatedCount != null && totalParticipatedCount > 0) return totalParticipatedCount
-    return filteredParticipated.length
-  }, [hasParticipatedToolbarFilters, filteredParticipated.length, totalParticipatedCount])
+  const itemStatusFilterOptions = useMemo(
+    () => distinctFilterOptions(filteredItemsAfterKpi, (row) => getManagedRowValue(row, itemDetailsById, 'status'), { allLabel: 'All Status' }),
+    [filteredItemsAfterKpi, itemDetailsById, kpiLeads],
+  )
+  const itemProductFilterOptions = useMemo(
+    () => distinctFilterOptions(filteredItemsAfterKpi, (row) => getManagedRowValue(row, itemDetailsById, 'product'), { allLabel: 'All Products' }),
+    [filteredItemsAfterKpi, itemDetailsById, kpiLeads],
+  )
+  const taskStatusFilterOptions = useMemo(
+    () => distinctFilterOptions(filteredTasks, (row) => getManagedRowValue(row, taskDetailsById, 'status'), { allLabel: 'All Status' }),
+    [filteredTasks, taskDetailsById, kpiLeads],
+  )
+  const taskProductFilterOptions = useMemo(
+    () => distinctFilterOptions(filteredTasks, (row) => getManagedRowValue(row, taskDetailsById, 'product'), { allLabel: 'All Products' }),
+    [filteredTasks, taskDetailsById, kpiLeads],
+  )
+  const participatedStatusFilterOptions = useMemo(
+    () => distinctFilterOptions(filteredParticipated, (row) => getManagedRowValue(row, participatedDetailsById, 'status'), { allLabel: 'All Status' }),
+    [filteredParticipated, participatedDetailsById, kpiLeads],
+  )
+  const participatedProductFilterOptions = useMemo(
+    () => distinctFilterOptions(filteredParticipated, (row) => getManagedRowValue(row, participatedDetailsById, 'product'), { allLabel: 'All Products' }),
+    [filteredParticipated, participatedDetailsById, kpiLeads],
+  )
 
-  const maxLoadedItemsPage = Math.max(1, Math.ceil(filteredItemsAfterKpi.length / rowsPerPage) || 1)
-  const maxLoadedTasksPage = Math.max(1, Math.ceil(filteredTasks.length / rowsPerPage) || 1)
-  const maxLoadedParticipatedPage = Math.max(1, Math.ceil(filteredParticipated.length / rowsPerPage) || 1)
+  const hasParticipatedToolbarFilters = Boolean(search.trim() || filterFromDate || filterToDate || hasColumnFilters)
+
+  const totalItemsForDisplay = hasColumnFilters ? itemsSorted.length : totalItemsForDisplayBase
+  const totalTasksForDisplay = hasColumnFilters ? tasksSorted.length : totalTasksForDisplayBase
+  const totalParticipatedForDisplay = hasColumnFilters
+    ? participatedSorted.length
+    : hasParticipatedToolbarFilters
+      ? filteredParticipated.length
+      : (totalParticipatedCount != null && totalParticipatedCount > 0 ? totalParticipatedCount : filteredParticipated.length)
+
+  const maxLoadedItemsPage = Math.max(1, Math.ceil(itemsSorted.length / rowsPerPage) || 1)
+  const maxLoadedTasksPage = Math.max(1, Math.ceil(tasksSorted.length / rowsPerPage) || 1)
+  const maxLoadedParticipatedPage = Math.max(1, Math.ceil(participatedSorted.length / rowsPerPage) || 1)
 
   const totalItemsPages = Math.max(1, Math.ceil(totalItemsForDisplay / rowsPerPage))
   const totalTasksPages = Math.max(1, Math.ceil(totalTasksForDisplay / rowsPerPage))
@@ -1469,9 +1738,9 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
     [safeParticipatedPage, totalParticipatedPages],
   )
 
-  const itemsPaginated = filteredItemsAfterKpi.slice((safeItemsPage - 1) * rowsPerPage, safeItemsPage * rowsPerPage)
-  const tasksPaginated = filteredTasks.slice((safeTasksPage - 1) * rowsPerPage, safeTasksPage * rowsPerPage)
-  const participatedPaginated = filteredParticipated.slice(
+  const itemsPaginated = itemsSorted.slice((safeItemsPage - 1) * rowsPerPage, safeItemsPage * rowsPerPage)
+  const tasksPaginated = tasksSorted.slice((safeTasksPage - 1) * rowsPerPage, safeTasksPage * rowsPerPage)
+  const participatedPaginated = participatedSorted.slice(
     (safeParticipatedPage - 1) * rowsPerPage,
     safeParticipatedPage * rowsPerPage,
   )
@@ -1561,25 +1830,142 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
     }
   }
 
-  // Same pattern as DashboardPage.handleCreateContract — only popup id + openPage fallback differ
-  const handleNewItem = () => {
-    const sdk = typeof kf !== 'undefined' ? kf : window.kf
+  // Create lead draft (POST process), then open form/popup — same shape as your working Postman call.
+  // Role-locked website (header brand) → raw body { "Website_and_form": "<lock>" }.
+  // Unlocked roles (e.g. Admin) → {}.
+  const handleNewItem = async () => {
+    const sdk = (typeof kf !== 'undefined' ? kf : null) || kfInstance || (typeof window !== 'undefined' ? window.kf : null)
     const POPUP_ID = 'Popup_w-VaMxwzHv'
-    const popupParams = {
+    const popupShell = {
       width: 960,
       height: 720,
       popupWidth: '960px',
       popupHeight: '720px',
     }
-    const appId = resolveKfApplicationId(sdk)
-    if (typeof sdk?.app?.page?.openPopup === 'function') {
-      sdk.app.page.openPopup(POPUP_ID, popupParams)
-    } else if (sdk?.navigation && typeof sdk.navigation.navigate === 'function') {
-      sdk.navigation.navigate({ page: 'create' })
-    } else if (sdk?.app?.openPage && appId) {
-      sdk.app.openPage(appId)
-    } else {
-      console.info('New item – wire popup/navigation in Kissflow')
+    const appId = resolveKfApplicationId(sdk) || leadPaths?.applicationId
+    const accountId = leadPaths?.accountId || sdk?.account?._id
+    const processId = leadPaths?.processId
+
+    const openEmptyCreateFallback = () => {
+      if (typeof sdk?.app?.page?.openPopup === 'function') {
+        sdk.app.page.openPopup(POPUP_ID, popupShell)
+      } else if (sdk?.navigation && typeof sdk.navigation.navigate === 'function') {
+        sdk.navigation.navigate({ page: 'create' })
+      } else if (sdk?.app?.openPage && appId) {
+        sdk.app.openPage(appId)
+      } else {
+        console.info('New item – wire popup/navigation in Kissflow')
+      }
+    }
+
+    if (!sdk || !accountId || !processId) {
+      openEmptyCreateFallback()
+      return
+    }
+    if (creatingNewItem) return
+
+    const websiteAndForm = lockedWebsiteKpi ? String(lockedWebsiteKpi).trim() : ''
+    const body = websiteAndForm ? { Website_and_form: websiteAndForm } : {}
+
+    setCreatingNewItem(true)
+    try {
+      // Match Postman: POST /process/2/{account}/Lead_tracker_1_A00 with JSON raw body
+      const path = `/process/2/${accountId}/${processId}`
+      const headers = {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      }
+      const rawBody = JSON.stringify(body)
+
+      let raw = null
+      if (typeof sdk.api === 'function') {
+        const resp = await sdk.api(path, { method: 'POST', headers, body: rawBody })
+        raw = resp?.data ?? resp ?? null
+      } else {
+        raw = await kfMutateJson(sdk, path, { method: 'POST', body })
+      }
+
+      if (raw?.status === 'error' || raw?.error_code) {
+        throw new Error(raw.en_message || raw.message || 'Kissflow create failed')
+      }
+
+      const { instanceId, activityInstanceId } = parseLeadCreateIds(raw)
+      if (!instanceId || !activityInstanceId) {
+        console.warn('Lead create response missing ids', raw)
+        throw new Error('Lead create API did not return instance and activity ids')
+      }
+
+      console.info('New item created', {
+        websiteAndForm: websiteAndForm || null,
+        lockedWebsiteKpi,
+        body,
+        instanceId,
+        activityInstanceId,
+      })
+
+      // openForm/openPopup often never resolve while the form is open — clear loading now
+      // so the button is not stuck on "Creating…" when the user returns.
+      setCreatingNewItem(false)
+
+      const processApi =
+        sdk?.app?.getProcess?.(processId) ||
+        sdk?.getProcess?.(processId) ||
+        sdk?.process?.[processId] ||
+        null
+
+      if (typeof processApi?.openForm === 'function') {
+        try {
+          void Promise.resolve(
+            processApi.openForm({
+              _id: instanceId,
+              _activity_instance_id: activityInstanceId,
+            }),
+          ).catch((e) => {
+            console.warn('Lead openForm failed, falling back to popup:', e?.message || e)
+            if (typeof sdk?.app?.page?.openPopup === 'function') {
+              sdk.app.page.openPopup(POPUP_ID, {
+                ActivityID: String(activityInstanceId),
+                InstanceId: String(instanceId),
+                ActivityInstanceId: String(activityInstanceId),
+                ActivityId: String(activityInstanceId),
+                activityId: String(activityInstanceId),
+                InstanceID: String(instanceId),
+                ...popupShell,
+              })
+            }
+          })
+          return
+        } catch (e) {
+          console.warn('Lead openForm failed, falling back to popup:', e?.message || e)
+        }
+      }
+
+      if (typeof sdk?.app?.page?.openPopup === 'function') {
+        const p = sdk.app.page.openPopup(POPUP_ID, {
+          ActivityID: String(activityInstanceId),
+          InstanceId: String(instanceId),
+          ActivityInstanceId: String(activityInstanceId),
+          ActivityId: String(activityInstanceId),
+          activityId: String(activityInstanceId),
+          InstanceID: String(instanceId),
+          ...popupShell,
+        })
+        if (p && typeof p.catch === 'function') {
+          p.catch((e) => {
+            console.warn('New item popup failed:', e?.message || e)
+          })
+        }
+        return
+      }
+
+      throw new Error('Could not open the created lead form')
+    } catch (e) {
+      console.warn('New item create failed:', e?.message || e)
+      window.alert(e?.message || 'Could not create a new lead. Please try again.')
+      // Do not open an empty create popup when website prefill was required.
+      if (!websiteAndForm) openEmptyCreateFallback()
+    } finally {
+      setCreatingNewItem(false)
     }
   }
 
@@ -1640,19 +2026,19 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
     'User'
 
   return (
-    <div className={hideGreeting ? 'min-w-0' : 'bg-[#f6f8fb] p-3 md:p-4 overflow-hidden'}>
+    <div ref={pageRootRef} className={hideGreeting ? 'min-w-0' : `h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain ${PT_PAGE_SHELL} p-3 md:p-4`}>
       <div className={hideGreeting ? 'min-w-0' : 'mx-auto max-w-[1500px] min-w-0'}>
           <div className={hideGreeting ? 'space-y-5 sm:space-y-6 transition-smooth' : 'p-2 sm:p-3 md:p-4 space-y-5 sm:space-y-6 transition-smooth'}>
             {!hideGreeting && (
-            <section className="mb-3 sm:mb-4" data-aos="fade-down">
+            <section className="mb-3 sm:mb-4">
               <div className="flex items-center gap-3 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden whitespace-nowrap">
                 <div className="flex items-center gap-3 min-w-0 shrink-0">
-                  <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-indigo-500 via-brand-blue to-brand-green flex items-center justify-center text-white text-sm font-bold shadow-sm">
+                  <div className={PT_AVATAR}>
                     {(firstName || 'U').charAt(0)}
                   </div>
                   <div className="min-w-0">
-                    <p className="text-base sm:text-lg font-semibold tracking-tight text-gray-900 truncate">{greeting}, {firstName}</p>
-                    <p className="text-xs sm:text-sm text-gray-600 truncate">Logged in as {displayRole}</p>
+                    <p className="text-base sm:text-lg font-semibold tracking-tight text-[#0F172A] truncate">{greeting}, {firstName}</p>
+                    <p className="text-xs sm:text-sm text-[#64748B] truncate">Logged in as {displayRole}</p>
                   </div>
                 </div>
                 {(lockedWebsiteKpi || kpiLeadsLoading) && (
@@ -1672,26 +2058,23 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
               </div>
             )} */}
 
-            <div className="space-y-1 min-w-0" data-aos="fade-up">
+            <div className="space-y-1 min-w-0">
               <KPICards
                 leads={kpiDisplayLeads}
                 allLeads={kpiDisplayLeads}
                 datasetCapReached={kpiLeads !== null && kpiLeadsCapReached}
                 dateRange="Last 30 Days"
-                onCardClick={(id) => setActiveKpiCardId(id)}
+                onCardClick={handleCardClick}
                 activeCardId={activeKpiCardId}
                 showSourcesCard={isAdminRole}
               />
             </div>
 
             {/* Tabs + actions toolbar (ContractsMyItemsPro-style single row on sm+) */}
-            <div
-              className="rounded-2xl border border-white/60 bg-white/50 backdrop-blur-sm shadow-sm overflow-hidden"
-              data-aos="fade-down"
-            >
-              <div className="relative z-[100] flex flex-col gap-3 border-b border-slate-200/60 bg-gradient-to-r from-slate-50/70 to-white/40 px-2.5 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-3 sm:py-3">
+            <div className={`${PT_CARD} overflow-visible`}>
+              <div className="relative z-[100] flex flex-col gap-3 border-b border-slate-200/80 bg-[#EEF4FF]/50 px-2.5 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-3 sm:py-3">
                 <div
-                  className="grid grid-cols-3 w-full gap-1 p-1 rounded-2xl border border-slate-300/70 bg-white/70 shadow-sm sm:w-auto sm:min-w-[420px]"
+                  className="grid grid-cols-3 w-full min-w-0 gap-1 p-1 rounded-2xl border border-slate-300/70 bg-white/70 shadow-sm sm:w-auto sm:min-w-[420px]"
                   role="tablist"
                 >
                   <button
@@ -1699,14 +2082,15 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                     role="tab"
                     aria-selected={activeTab === 'tasks'}
                     onClick={() => setActiveTab('tasks')}
-                    className={`min-h-[44px] sm:min-h-[36px] rounded-xl text-sm sm:text-xs font-semibold transition-all duration-200 touch-manipulation inline-flex items-center justify-center gap-2 text-center px-3 ${
+                    className={`min-h-[44px] sm:min-h-[36px] min-w-0 rounded-xl text-[11px] sm:text-xs font-semibold transition-all duration-200 touch-manipulation inline-flex items-center justify-center gap-1 sm:gap-2 text-center px-1.5 sm:px-3 ${
                       activeTab === 'tasks'
                         ? 'bg-white text-brand-blue shadow-md ring-1 ring-brand-blue/25'
                         : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                     }`}
                   >
-                    <span className="inline-flex items-center gap-1.5 min-w-0">
-                      <span className="leading-tight">My Tasks</span>
+                    <span className="inline-flex items-center gap-1 sm:gap-1.5 min-w-0">
+                      <span className="whitespace-nowrap leading-tight sm:hidden">Tasks</span>
+                      <span className="hidden sm:inline whitespace-nowrap leading-tight">My Tasks</span>
                       {totalTasksCount > 0 && (
                         <span
                           className={`inline-flex items-center justify-center min-w-[1.375rem] h-5 px-1.5 rounded-full text-[11px] font-bold tabular-nums ${
@@ -1725,27 +2109,29 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                     role="tab"
                     aria-selected={activeTab === 'items'}
                     onClick={() => setActiveTab('items')}
-                    className={`min-h-[44px] sm:min-h-[36px] rounded-xl text-sm sm:text-xs font-semibold transition-all duration-200 touch-manipulation inline-flex items-center justify-center gap-2 text-center px-3 ${
+                    className={`min-h-[44px] sm:min-h-[36px] min-w-0 rounded-xl text-[11px] sm:text-xs font-semibold transition-all duration-200 touch-manipulation inline-flex items-center justify-center gap-1 sm:gap-2 text-center px-1.5 sm:px-3 ${
                       activeTab === 'items'
                         ? 'bg-white text-brand-blue shadow-md ring-1 ring-brand-blue/25'
                         : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                     }`}
                   >
-                    <span className="leading-tight">My Leads</span>
+                    <span className="whitespace-nowrap leading-tight sm:hidden">Leads</span>
+                    <span className="hidden sm:inline whitespace-nowrap leading-tight">My Leads</span>
                   </button>
                   <button
                     type="button"
                     role="tab"
                     aria-selected={activeTab === 'participated'}
                     onClick={() => setActiveTab('participated')}
-                    className={`min-h-[44px] sm:min-h-[36px] rounded-xl text-sm sm:text-xs font-semibold transition-all duration-200 touch-manipulation inline-flex items-center justify-center gap-2 text-center px-2 sm:px-3 ${
+                    className={`min-h-[44px] sm:min-h-[36px] min-w-0 rounded-xl text-[11px] sm:text-xs font-semibold transition-all duration-200 touch-manipulation inline-flex items-center justify-center gap-1 sm:gap-2 text-center px-1.5 sm:px-3 ${
                       activeTab === 'participated'
                         ? 'bg-white text-brand-blue shadow-md ring-1 ring-brand-blue/25'
                         : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                     }`}
                   >
-                    <span className="inline-flex items-center gap-1.5 min-w-0">
-                      <span className="leading-tight">Participated Leads</span>
+                    <span className="inline-flex items-center gap-1 sm:gap-1.5 min-w-0">
+                      <span className="whitespace-nowrap leading-tight sm:hidden">Done</span>
+                      <span className="hidden sm:inline whitespace-nowrap leading-tight">Participated Leads</span>
                       {totalParticipatedCount > 0 && (
                         <span
                           className={`inline-flex items-center justify-center min-w-[1.375rem] h-5 px-1.5 rounded-full text-[11px] font-bold tabular-nums ${
@@ -1761,7 +2147,8 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                   </button>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto sm:flex-nowrap sm:justify-end min-w-0 shrink-0">
+                <div className="flex flex-col gap-2 w-full min-w-0 sm:w-auto sm:flex-row sm:flex-nowrap sm:items-center sm:justify-end">
+                <div className="flex flex-nowrap items-center gap-2 min-w-0 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                 {activeTab === 'items' && statusFilter === 'Draft' && selectedItemIds.size > 0 && (
                   <button
                     type="button"
@@ -1777,22 +2164,13 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                 <button
                   type="button"
                   onClick={handleNewItem}
-                  className="min-h-[44px] md:min-h-[40px] px-4 py-2.5 md:px-4 md:py-2 rounded-xl text-sm font-semibold transition-all duration-300 touch-manipulation inline-flex items-center justify-center gap-2 bg-gradient-to-br from-brand-blue to-indigo-600 text-white shadow-md shadow-indigo-500/25 hover:shadow-lg hover:scale-[1.01] whitespace-nowrap shrink-0"
+                  disabled={creatingNewItem}
+                  className="min-h-[44px] md:min-h-[40px] px-4 py-2.5 md:px-4 md:py-2 rounded-xl text-sm font-semibold transition-all duration-300 touch-manipulation inline-flex items-center justify-center gap-2 bg-gradient-to-br from-brand-blue to-indigo-600 text-white shadow-md shadow-indigo-500/25 hover:shadow-lg hover:scale-[1.01] whitespace-nowrap shrink-0 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
                 >
-                  <i className="ri-add-line text-base"></i>
-                  New item
+                  <i className={`text-base ${creatingNewItem ? 'ri-loader-4-line animate-spin' : 'ri-add-line'}`}></i>
+                  {creatingNewItem ? 'Creating…' : 'New item'}
                 </button>
-                <div className="relative w-full sm:w-auto flex-1 sm:max-w-xs min-w-0 order-3 sm:order-none">
-                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg pointer-events-none"></i>
-                  <input
-                    type="text"
-                    placeholder="Search"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    className="w-full min-h-[44px] pl-10 pr-4 py-2.5 text-sm bg-white/80 border border-slate-300/80 rounded-2xl focus:outline-none focus:ring-2 focus:ring-brand-blue/50 focus:border-brand-blue placeholder:text-slate-400 touch-manipulation"
-                  />
-                </div>
-                <div className="order-2 sm:order-none flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-2 shrink-0">
                 <div className="relative" ref={filterPopoverRef}>
                   <button
                     type="button"
@@ -2054,51 +2432,32 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                   )}
                 </div>
                 </div>
+                </div>
+                <div className="relative w-full sm:w-auto sm:flex-1 sm:max-w-xs min-w-0">
+                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg pointer-events-none"></i>
+                  <input
+                    type="text"
+                    placeholder="Search"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="w-full min-h-[44px] pl-10 pr-4 py-2.5 text-sm bg-white/80 border border-slate-300/80 rounded-2xl focus:outline-none focus:ring-2 focus:ring-brand-blue/50 focus:border-brand-blue placeholder:text-slate-400 touch-manipulation"
+                  />
+                </div>
+                </div>
               </div>
-            </div>
             </div>
 
             {/* Status / step chips row */}
             {activeTab === 'items' ? (
               <>
-                {/* Mobile: 2-col grid */}
-                <div className="grid grid-cols-2 gap-2.5 sm:hidden min-w-0">
+                <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                   {STATUS_OPTIONS.map((status) => (
                     <button
                       key={status}
                       type="button"
                       onClick={() => {
                         setStatusFilter(status)
-                        setItemsPage(1)
-                      }}
-                      className={`min-h-[44px] w-full px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-300 touch-manipulation border-2 text-left inline-flex flex-row items-center justify-between gap-2 ${
-                        statusFilter === status
-                          ? 'border-brand-blue bg-brand-blue/10 text-brand-blue'
-                          : 'border-slate-300/80 bg-white/80 text-slate-700 hover:bg-white'
-                      }`}
-                    >
-                      <span className="min-w-0 flex-1 truncate leading-snug">{status}</span>
-                      {statusCounts[status] != null && (
-                        <span
-                          className={`shrink-0 rounded-lg px-2 py-0.5 text-xs font-bold tabular-nums ${
-                            statusFilter === status ? 'bg-brand-blue/15 text-brand-blue' : 'bg-slate-100 text-slate-700'
-                          }`}
-                        >
-                          {(statusCounts[status] || 0)}
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Tablet/Desktop: single horizontal row */}
-                <div className="hidden sm:flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-                  {STATUS_OPTIONS.map((status) => (
-                    <button
-                      key={status}
-                      type="button"
-                      onClick={() => {
-                        setStatusFilter(status)
+                        setActiveKpiCardId('total')
                         setItemsPage(1)
                       }}
                       className={`min-h-[36px] shrink-0 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all duration-200 touch-manipulation border-2 inline-flex items-center gap-2 ${
@@ -2120,154 +2479,86 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                 </div>
               </>
             ) : activeTab === 'tasks' ? (
-              <>
-                {/* Mobile: 2-col grid */}
-                <div className="grid grid-cols-2 gap-2.5 sm:hidden min-w-0">
-                  {(activityTabs || []).map((activity) => {
-                    const isActive = currentActivityId === activity._id
-                    const count = activity.Count ?? 0
-                    return (
-                      <button
-                        key={activity._id}
-                        type="button"
-                        onClick={() => {
-                          setCurrentActivityId(activity._id)
-                          setCurrentStepName(activity.StepName || 'Review Lead Details')
-                          setTotalTasksCount(count)
-                          setTasksPage(1)
-                        }}
-                        className={`min-h-[44px] w-full px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-300 touch-manipulation border-2 text-left inline-flex flex-row items-center justify-between gap-2 ${
-                          isActive
-                            ? 'border-brand-blue bg-brand-blue/10 text-brand-blue'
-                            : 'border-slate-300/80 bg-white/80 text-slate-700 hover:bg-white'
+              <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                {(activityTabs || []).map((activity) => {
+                  const isActive = currentActivityId === activity._id
+                  const count = activity.Count ?? 0
+                  return (
+                    <button
+                      key={activity._id}
+                      type="button"
+                      onClick={() => {
+                        setCurrentActivityId(activity._id)
+                        setCurrentStepName(activity.StepName || 'Review Lead Details')
+                        setTotalTasksCount(count)
+                        setTasksPage(1)
+                      }}
+                      className={`min-h-[36px] shrink-0 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all duration-200 touch-manipulation border-2 inline-flex items-center gap-2 ${
+                        isActive
+                          ? 'border-brand-blue bg-brand-blue/10 text-brand-blue'
+                          : 'border-slate-300/80 bg-white/80 text-slate-700 hover:bg-white'
+                      }`}
+                    >
+                      <span className="truncate max-w-[16rem]">{activity.StepName || 'Activity'}</span>
+                      <span
+                        className={`shrink-0 rounded-lg px-1.5 py-0 text-[11px] font-bold tabular-nums ${
+                          isActive ? 'bg-brand-blue/15 text-brand-blue' : 'bg-slate-100 text-slate-700'
                         }`}
                       >
-                        <span className="min-w-0 flex-1 truncate leading-snug">{activity.StepName || 'Activity'}</span>
-                        <span
-                          className={`shrink-0 rounded-lg px-2 py-0.5 text-xs font-bold tabular-nums ${
-                            isActive ? 'bg-brand-blue/15 text-brand-blue' : 'bg-slate-100 text-slate-700'
-                          }`}
-                        >
-                          {count}
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-
-                {/* Tablet/Desktop: single horizontal row */}
-                <div className="hidden sm:flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-                  {(activityTabs || []).map((activity) => {
-                    const isActive = currentActivityId === activity._id
-                    const count = activity.Count ?? 0
-                    return (
-                      <button
-                        key={activity._id}
-                        type="button"
-                        onClick={() => {
-                          setCurrentActivityId(activity._id)
-                          setCurrentStepName(activity.StepName || 'Review Lead Details')
-                          setTotalTasksCount(count)
-                          setTasksPage(1)
-                        }}
-                        className={`min-h-[36px] shrink-0 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all duration-200 touch-manipulation border-2 inline-flex items-center gap-2 ${
-                          isActive
-                            ? 'border-brand-blue bg-brand-blue/10 text-brand-blue'
-                            : 'border-slate-300/80 bg-white/80 text-slate-700 hover:bg-white'
-                        }`}
-                      >
-                        <span className="truncate max-w-[16rem]">{activity.StepName || 'Activity'}</span>
-                        <span
-                          className={`shrink-0 rounded-lg px-1.5 py-0 text-[11px] font-bold tabular-nums ${
-                            isActive ? 'bg-brand-blue/15 text-brand-blue' : 'bg-slate-100 text-slate-700'
-                          }`}
-                        >
-                          {count}
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-              </>
+                        {count}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
             ) : activeTab === 'participated' ? (
-              <>
-                {/* Mobile: 2-col grid */}
-                <div className="grid grid-cols-2 gap-2.5 sm:hidden min-w-0">
-                  {(Array.isArray(participatedActivities) ? participatedActivities : []).map((activity) => {
-                    const isActive = currentParticipatedId === activity._id
-                    const count = activity.Count ?? 0
-                    return (
-                      <button
-                        key={activity._id}
-                        type="button"
-                        onClick={() => {
-                          setCurrentParticipatedId(activity._id)
-                          setCurrentParticipatedStepName(activity.StepName || 'Participated')
-                          setParticipatedPage(1)
-                        }}
-                        className={`min-h-[44px] w-full px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-300 touch-manipulation border-2 text-left inline-flex flex-row items-center justify-between gap-2 ${
-                          isActive
-                            ? 'border-brand-blue bg-brand-blue/10 text-brand-blue'
-                            : 'border-slate-300/80 bg-white/80 text-slate-700 hover:bg-white'
+              <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                {(Array.isArray(participatedActivities) ? participatedActivities : []).map((activity) => {
+                  const isActive = currentParticipatedId === activity._id
+                  const count = activity.Count ?? 0
+                  return (
+                    <button
+                      key={activity._id}
+                      type="button"
+                      onClick={() => {
+                        setCurrentParticipatedId(activity._id)
+                        setCurrentParticipatedStepName(activity.StepName || 'Participated')
+                        setParticipatedPage(1)
+                      }}
+                      className={`min-h-[36px] shrink-0 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all duration-200 touch-manipulation border-2 inline-flex items-center gap-2 ${
+                        isActive
+                          ? 'border-brand-blue bg-brand-blue/10 text-brand-blue'
+                          : 'border-slate-300/80 bg-white/80 text-slate-700 hover:bg-white'
+                      }`}
+                    >
+                      <span className="truncate max-w-[16rem]">{activity.StepName || 'Step'}</span>
+                      <span
+                        className={`shrink-0 rounded-lg px-1.5 py-0 text-[11px] font-bold tabular-nums ${
+                          isActive ? 'bg-brand-blue/15 text-brand-blue' : 'bg-slate-100 text-slate-700'
                         }`}
                       >
-                        <span className="min-w-0 flex-1 truncate leading-snug">{activity.StepName || 'Step'}</span>
-                        <span
-                          className={`shrink-0 rounded-lg px-2 py-0.5 text-xs font-bold tabular-nums ${
-                            isActive ? 'bg-brand-blue/15 text-brand-blue' : 'bg-slate-100 text-slate-700'
-                          }`}
-                        >
-                          {count}
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-
-                {/* Tablet/Desktop: single horizontal row */}
-                <div className="hidden sm:flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-                  {(Array.isArray(participatedActivities) ? participatedActivities : []).map((activity) => {
-                    const isActive = currentParticipatedId === activity._id
-                    const count = activity.Count ?? 0
-                    return (
-                      <button
-                        key={activity._id}
-                        type="button"
-                        onClick={() => {
-                          setCurrentParticipatedId(activity._id)
-                          setCurrentParticipatedStepName(activity.StepName || 'Participated')
-                          setParticipatedPage(1)
-                        }}
-                        className={`min-h-[36px] shrink-0 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all duration-200 touch-manipulation border-2 inline-flex items-center gap-2 ${
-                          isActive
-                            ? 'border-brand-blue bg-brand-blue/10 text-brand-blue'
-                            : 'border-slate-300/80 bg-white/80 text-slate-700 hover:bg-white'
-                        }`}
-                      >
-                        <span className="truncate max-w-[16rem]">{activity.StepName || 'Step'}</span>
-                        <span
-                          className={`shrink-0 rounded-lg px-1.5 py-0 text-[11px] font-bold tabular-nums ${
-                            isActive ? 'bg-brand-blue/15 text-brand-blue' : 'bg-slate-100 text-slate-700'
-                          }`}
-                        >
-                          {count}
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-              </>
+                        {count}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
             ) : null}
 
             {/* Table - z-0 so toolbar dropdowns (z-[100]) render on top */}
-            <div className="relative z-0 glass rounded-none md:rounded-3xl bg-transparent md:bg-gradient-to-br md:from-white/80 md:to-indigo-50/30 border border-slate-300/70 shadow-none md:shadow-xl md:shadow-slate-200/30 overflow-visible md:overflow-hidden glass-hover" data-aos="fade-up">
+            <div
+              ref={tableSectionRef}
+              className={`relative z-0 scroll-mt-24 overflow-visible rounded-none border border-slate-200/80 bg-white shadow-[0_12px_30px_rgba(76,98,168,0.10)] transition-[box-shadow,ring] duration-500 md:overflow-hidden md:rounded-3xl ${
+                insightPulse ? LEAD_TABLE_PULSE_CLASS : ''
+              }`}
+            >
                 {activeTab === 'items' && isMdUp && (
                   <div className="overflow-x-auto">
                     <table className="w-full bg-white/60 border border-slate-300/70">
                     <thead>
-                      <tr className="bg-gradient-to-r from-slate-200/80 via-slate-100/80 to-indigo-100/60 backdrop-blur-xl border-b border-slate-300/70">
+                      <tr className="border-b border-slate-100 bg-slate-50/70">
                         {showItemBulkCheckboxes && (
-                          <th className="px-2 sm:px-3 py-3 sm:py-4 w-10 sm:w-12">
+                          <th className="h-14 w-10 px-2 sm:h-16 sm:w-12 sm:px-3">
                             <input
                               type="checkbox"
                               checked={
@@ -2278,17 +2569,29 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                             />
                           </th>
                         )}
-                        <th className="px-2 sm:px-3 py-3 sm:py-4 w-10 text-center" aria-label="Expand row">
+                        <th className="h-14 w-10 px-2 text-center sm:h-16 sm:px-3" aria-label="Expand row">
                           <span className="text-xs font-bold text-slate-500 uppercase"> </span>
                         </th>
-                        {ITEMS_COLUMNS.map((col) => (
-                          <th
-                            key={col.id}
-                            className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-bold text-slate-700 uppercase tracking-wider ${visibleColumnsItems[col.id] ? '' : 'hidden'}`}
-                          >
-                            {col.label}
-                          </th>
-                        ))}
+                        {ITEMS_COLUMNS.map((col) => {
+                          const filterCfg = col.filter === 'status'
+                            ? { filterValue: colStatusFilter, filterOptions: itemStatusFilterOptions, onFilterChange: setColStatusFilter }
+                            : col.filter === 'product'
+                              ? { filterValue: colProductFilter, filterOptions: itemProductFilterOptions, onFilterChange: setColProductFilter }
+                              : null
+                          return (
+                            <TableColumnHeader
+                              key={col.id}
+                              col={col}
+                              sortKey={tableSortKey}
+                              sortDir={tableSortDir}
+                              onSort={handleTableSort}
+                              filterValue={filterCfg?.filterValue}
+                              filterOptions={filterCfg?.filterOptions}
+                              onFilterChange={filterCfg?.onFilterChange}
+                              className={visibleColumnsItems[col.id] ? '' : 'hidden'}
+                            />
+                          )
+                        })}
                       </tr>
                     </thead>
                     <tbody className="relative">
@@ -2316,7 +2619,13 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                           return (
                           <React.Fragment key={item.id}>
                             <tr
-                              className={`transition-colors cursor-pointer [&>td]:border-b [&>td]:border-slate-200/80 ${expandedItemId === item.id ? 'bg-indigo-50/60' : 'hover:bg-white/60'}`}
+                              className={`cursor-pointer transition-[background-color,box-shadow] duration-500 [&>td]:border-b [&>td]:border-slate-200/80 ${
+                                insightPulse
+                                  ? 'bg-blue-50 shadow-[inset_4px_0_0_#1E88E5]'
+                                  : expandedItemId === item.id
+                                    ? 'bg-indigo-50/60'
+                                    : 'hover:bg-white/60'
+                              }`}
                               onClick={() => setExpandedItemId((prev) => (prev === item.id ? null : item.id))}
                             >
                               {showItemBulkCheckboxes && (
@@ -2346,7 +2655,8 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                               )}
                               {visibleColumnsItems.status && (
                                 <td className="px-3 sm:px-6 py-3 sm:py-4">
-                                  <span className={`px-2.5 py-1 text-xs font-semibold rounded-lg ${getStatusBadgeClass(itemView.status)}`}>
+                                  <span className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold ${getStatusBadgeClass(itemView.status)}`}>
+                                    <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
                                     {formatStatusForDisplay(itemView.status) || 'In progress'}
                                   </span>
                                 </td>
@@ -2499,6 +2809,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                     formatDateTime={formatDateTime}
                     getStatusBadgeClass={getStatusBadgeClass}
                     formatStatusForDisplay={formatStatusForDisplay}
+                    highlightRows={insightPulse}
                   />
                 )}
 
@@ -2506,18 +2817,30 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                   <div className="overflow-x-auto">
                     <table className="w-full bg-white/60 border border-slate-300/70">
                     <thead>
-                      <tr className="bg-gradient-to-r from-slate-200/80 via-slate-100/80 to-indigo-100/60 backdrop-blur-xl border-b border-slate-300/70">
-                        <th className="px-2 sm:px-3 py-3 sm:py-4 w-10 text-center" aria-label="Expand row">
+                      <tr className="border-b border-slate-100 bg-slate-50/70">
+                        <th className="h-14 w-10 px-2 text-center sm:h-16 sm:px-3" aria-label="Expand row">
                           <span className="text-xs font-bold text-slate-500 uppercase"> </span>
                         </th>
-                        {TASKS_COLUMNS.map((col) => (
-                          <th
-                            key={col.id}
-                            className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-bold text-slate-700 uppercase tracking-wider ${visibleColumnsTasks[col.id] ? '' : 'hidden'}`}
-                          >
-                            {col.label}
-                          </th>
-                        ))}
+                        {TASKS_COLUMNS.map((col) => {
+                          const filterCfg = col.filter === 'status'
+                            ? { filterValue: colStatusFilter, filterOptions: participatedStatusFilterOptions, onFilterChange: setColStatusFilter }
+                            : col.filter === 'product'
+                              ? { filterValue: colProductFilter, filterOptions: participatedProductFilterOptions, onFilterChange: setColProductFilter }
+                              : null
+                          return (
+                            <TableColumnHeader
+                              key={col.id}
+                              col={col}
+                              sortKey={tableSortKey}
+                              sortDir={tableSortDir}
+                              onSort={handleTableSort}
+                              filterValue={filterCfg?.filterValue}
+                              filterOptions={filterCfg?.filterOptions}
+                              onFilterChange={filterCfg?.onFilterChange}
+                              className={visibleColumnsTasks[col.id] ? '' : 'hidden'}
+                            />
+                          )
+                        })}
                       </tr>
                     </thead>
                     <tbody className="relative">
@@ -2559,7 +2882,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                               )}
                               {visibleColumnsTasks.status && (
                                 <td className="px-3 sm:px-6 py-3 sm:py-4">
-                                  <span className={`px-2.5 py-1 text-xs font-semibold rounded-lg ${getStatusBadgeClass(rowView.status)}`}>
+                                  <span className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold ${getStatusBadgeClass(rowView.status)}`}>
                                     {formatStatusForDisplay(rowView.status) || 'In progress'}
                                   </span>
                                 </td>
@@ -2650,18 +2973,30 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                   <div className="overflow-x-auto">
                     <table className="w-full bg-white/60 border border-slate-300/70">
                     <thead>
-                      <tr className="bg-gradient-to-r from-slate-200/80 via-slate-100/80 to-indigo-100/60 backdrop-blur-xl border-b border-slate-300/70">
-                        <th className="px-2 sm:px-3 py-3 sm:py-4 w-10 text-center" aria-label="Expand row">
+                      <tr className="border-b border-slate-100 bg-slate-50/70">
+                        <th className="h-14 w-10 px-2 text-center sm:h-16 sm:px-3" aria-label="Expand row">
                           <span className="text-xs font-bold text-slate-500 uppercase"> </span>
                         </th>
-                        {TASKS_COLUMNS.map((col) => (
-                          <th
-                            key={col.id}
-                            className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-bold text-slate-700 uppercase tracking-wider ${visibleColumnsTasks[col.id] ? '' : 'hidden'}`}
-                          >
-                            {col.label}
-                          </th>
-                        ))}
+                        {TASKS_COLUMNS.map((col) => {
+                          const filterCfg = col.filter === 'status'
+                            ? { filterValue: colStatusFilter, filterOptions: taskStatusFilterOptions, onFilterChange: setColStatusFilter }
+                            : col.filter === 'product'
+                              ? { filterValue: colProductFilter, filterOptions: taskProductFilterOptions, onFilterChange: setColProductFilter }
+                              : null
+                          return (
+                            <TableColumnHeader
+                              key={col.id}
+                              col={col}
+                              sortKey={tableSortKey}
+                              sortDir={tableSortDir}
+                              onSort={handleTableSort}
+                              filterValue={filterCfg?.filterValue}
+                              filterOptions={filterCfg?.filterOptions}
+                              onFilterChange={filterCfg?.onFilterChange}
+                              className={visibleColumnsTasks[col.id] ? '' : 'hidden'}
+                            />
+                          )
+                        })}
                       </tr>
                     </thead>
                     <tbody className="relative">
@@ -2703,7 +3038,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                               )}
                               {visibleColumnsTasks.status && (
                                 <td className="px-3 sm:px-6 py-3 sm:py-4">
-                                  <span className={`px-2.5 py-1 text-xs font-semibold rounded-lg ${getStatusBadgeClass(task.status)}`}>
+                                  <span className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold ${getStatusBadgeClass(task.status)}`}>
                                     {formatStatusForDisplay(task.status) || 'In progress'}
                                   </span>
                                 </td>
@@ -2858,7 +3193,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
 
               {/* Pagination */}
               {activeTab !== 'participated' ? (
-              <div className="px-4 sm:px-6 py-4 sm:py-5 bg-gradient-to-r from-slate-200/70 via-slate-100/80 to-indigo-100/60 backdrop-blur-xl border-t border-slate-300/70 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex flex-col items-center justify-between gap-4 border-t border-slate-100 bg-slate-50/60 px-4 py-3 sm:flex-row sm:px-6 sm:py-3">
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <label htmlFor="rows-per-page-select" className="text-xs sm:text-sm text-slate-600 font-medium whitespace-nowrap">
                     Rows per page:
@@ -3023,7 +3358,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                 </div>
               </div>
               ) : (
-                <div className="px-4 sm:px-6 py-4 sm:py-5 bg-gradient-to-r from-slate-200/70 via-slate-100/80 to-indigo-100/60 backdrop-blur-xl border-t border-slate-300/70 flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="flex flex-col items-center justify-between gap-4 border-t border-slate-100 bg-slate-50/60 px-4 py-3 sm:flex-row sm:px-6 sm:py-3">
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <label htmlFor="rows-per-page-select" className="text-xs sm:text-sm text-slate-600 font-medium whitespace-nowrap">
                       Rows per page:
