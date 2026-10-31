@@ -1,0 +1,1257 @@
+import { useEffect, useMemo, useState } from 'react';
+import VendorSearchSelect from '../../requester/rfq-entry/components/VendorSearchSelect';
+import type { VendorRecord } from '../../../services/api';
+import { vendorApi, poApi } from '../../../services/api';
+import RfqVendorQuoteTable, {
+  type RfqQuoteTableRow,
+} from '../../requester/rfq-entry/components/RfqVendorQuoteTable';
+
+export type ManualPrDetails = {
+  prNumber: string;
+  title: string;
+  department: string;
+  requester: string;
+  justification: string;
+  scopeOfWork: string;
+  paymentTerms: string;
+  requestType: string;
+  priority: string;
+};
+
+export type ManualVendorQuoteRow = {
+  key: string;
+  vendorId: string;
+  vendorName: string;
+  vendorEmail: string;
+  quotedPrice: string;
+  leadTime: string;
+  paymentTerms: string;
+  recommended: boolean;
+  files: File[];
+  storedFiles?: Array<{ fileName: string; storedName?: string; mimeType?: string | null }>;
+};
+
+export type ManualComparisonRound = {
+  key: string;
+  round: number;
+  label: string;
+  notes: string;
+  vendorQuotes: ManualVendorQuoteRow[];
+};
+
+export function emptyManualVendorQuote(key = `vq-${Date.now()}`): ManualVendorQuoteRow {
+  return {
+    key,
+    vendorId: '',
+    vendorName: '',
+    vendorEmail: '',
+    quotedPrice: '',
+    leadTime: '',
+    paymentTerms: 'Net 30 Days',
+    recommended: false,
+    files: [],
+  };
+}
+
+export function emptyComparisonRound(roundNum = 1): ManualComparisonRound {
+  return {
+    key: `round-${Date.now()}-${roundNum}`,
+    round: roundNum,
+    label: `Round ${roundNum}`,
+    notes: '',
+    vendorQuotes: [],
+  };
+}
+
+function vendorStableKey(q: ManualVendorQuoteRow): string {
+  if (q.vendorId) return `id:${q.vendorId}`;
+  const email = q.vendorEmail.trim().toLowerCase();
+  if (email) return `email:${email}`;
+  const name = q.vendorName.trim().toLowerCase();
+  if (name) return `name:${name}`;
+  return `key:${q.key}`;
+}
+
+function quoteHasData(q: ManualVendorQuoteRow) {
+  return (
+    Number(q.quotedPrice) > 0 ||
+    q.files.length > 0 ||
+    (q.storedFiles?.length ?? 0) > 0 ||
+    q.vendorName.trim() ||
+    q.vendorEmail.trim()
+  );
+}
+
+type PivotedVendor = {
+  vendorKey: string;
+  vendorId: string;
+  vendorName: string;
+  vendorEmail: string;
+  quotesByRound: Map<number, ManualVendorQuoteRow>;
+};
+
+function pivotVendors(rounds: ManualComparisonRound[]): PivotedVendor[] {
+  const map = new Map<string, PivotedVendor>();
+  for (const round of rounds) {
+    for (const q of round.vendorQuotes) {
+      const vk = vendorStableKey(q);
+      let entry = map.get(vk);
+      if (!entry) {
+        entry = {
+          vendorKey: vk,
+          vendorId: q.vendorId,
+          vendorName: q.vendorName,
+          vendorEmail: q.vendorEmail,
+          quotesByRound: new Map(),
+        };
+        map.set(vk, entry);
+      }
+      entry.quotesByRound.set(round.round, q);
+      if (q.vendorName.trim()) entry.vendorName = q.vendorName.trim();
+      if (q.vendorEmail.trim()) entry.vendorEmail = q.vendorEmail.trim();
+      if (q.vendorId) entry.vendorId = q.vendorId;
+    }
+  }
+  return Array.from(map.values());
+}
+
+function maxRoundNum(rounds: ManualComparisonRound[]) {
+  return Math.max(1, ...rounds.map((r) => Number(r.round) || 1));
+}
+
+export function findRecommendedManualQuote(
+  rounds: ManualComparisonRound[]
+): ManualVendorQuoteRow | undefined {
+  for (const round of rounds) {
+    const hit = round.vendorQuotes.find((row) => row.recommended);
+    if (hit) return hit;
+  }
+  const lastRound = rounds[rounds.length - 1];
+  return lastRound?.vendorQuotes[0];
+}
+
+type StoredManualQuote = {
+  round?: number;
+  vendorId?: string;
+  vendorName?: string;
+  vendorEmail?: string;
+  quotedPrice?: number | string;
+  leadTime?: string;
+  paymentTerms?: string;
+  recommended?: boolean;
+  files?: Array<{ fileName?: string; storedName?: string; mimeType?: string | null }>;
+};
+
+type StoredComparisonRound = {
+  round?: number;
+  label?: string;
+  notes?: string;
+  vendorQuotes?: StoredManualQuote[];
+};
+
+export function hydrateComparisonRoundsFromStored(
+  storedRounds: StoredComparisonRound[] = [],
+  flatQuotes: StoredManualQuote[] = []
+): ManualComparisonRound[] {
+  let rounds: StoredComparisonRound[] =
+    storedRounds.length > 0
+      ? storedRounds
+      : [];
+
+  // Flat quotes with per-quote round must not all collapse into Round 1
+  if (!rounds.length && flatQuotes.length) {
+    const byRound = new Map<number, StoredManualQuote[]>();
+    for (const q of flatQuotes) {
+      const roundNum = Math.max(1, Number(q.round) || 1);
+      if (!byRound.has(roundNum)) byRound.set(roundNum, []);
+      byRound.get(roundNum)!.push(q);
+    }
+    rounds = [...byRound.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([roundNum, quotes]) => ({
+        round: roundNum,
+        label: `Round ${roundNum}`,
+        notes: '',
+        vendorQuotes: quotes,
+      }));
+  }
+
+  return rounds.map((round, roundIdx) => {
+    const roundNum = Number(round.round) || roundIdx + 1;
+    return {
+      key: `round-stored-${roundNum}-${roundIdx}`,
+      round: roundNum,
+      label: String(round.label || `Round ${roundNum}`),
+      notes: String(round.notes || ''),
+      vendorQuotes: (round.vendorQuotes || []).map((q, qi) => {
+        const vendorId = String(q.vendorId || '');
+        const vendorName = String(q.vendorName || '');
+        const vendorEmail = String(q.vendorEmail || '');
+        const stable = `${vendorId || vendorEmail || vendorName || 'v'}-${qi}`.replace(/\s+/g, '_');
+        return {
+          key: `vq-stored-${roundNum}-${stable}`,
+          vendorId,
+          vendorName,
+          vendorEmail,
+          quotedPrice: q.quotedPrice != null ? String(q.quotedPrice) : '',
+          leadTime: String(q.leadTime || ''),
+          paymentTerms: String(q.paymentTerms || 'Net 30 Days'),
+          recommended: Boolean(q.recommended),
+          files: [],
+          storedFiles: dedupeStoredFiles(
+            (q.files || [])
+              .filter((f): f is { fileName: string; storedName?: string; mimeType?: string | null } =>
+                Boolean(f?.fileName)
+              )
+              .map((f) => ({
+                fileName: String(f.fileName),
+                storedName: f.storedName,
+                mimeType: f.mimeType,
+              }))
+          ),
+        };
+      }),
+    };
+  });
+}
+
+export function hydrateManualPrDetailsFromStored(
+  prDetails: Partial<ManualPrDetails> | null | undefined,
+  poFallback?: {
+    title?: string;
+    department?: string;
+    requester?: string;
+    prNumber?: string;
+    paymentTerms?: string;
+    scopeOfWork?: string;
+  }
+): ManualPrDetails {
+  return {
+    prNumber: String(prDetails?.prNumber || poFallback?.prNumber || ''),
+    title: String(prDetails?.title || poFallback?.title || ''),
+    department: String(prDetails?.department || poFallback?.department || ''),
+    requester: String(prDetails?.requester || poFallback?.requester || ''),
+    justification: String(prDetails?.justification || ''),
+    scopeOfWork: String(prDetails?.scopeOfWork || poFallback?.scopeOfWork || ''),
+    paymentTerms: String(prDetails?.paymentTerms || poFallback?.paymentTerms || ''),
+    requestType: String(prDetails?.requestType || 'Opex'),
+    priority: String(prDetails?.priority || 'Medium'),
+  };
+}
+
+function fileIdentity(file: File) {
+  return `${file.name}::${file.size}::${file.lastModified}`;
+}
+
+/** Keep one local File per name+size+mtime (stops one pick adding many rows). */
+function dedupeLocalFiles(files: File[]) {
+  const seen = new Set<string>();
+  const out: File[] = [];
+  for (const file of files) {
+    const id = fileIdentity(file);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(file);
+  }
+  return out;
+}
+
+function dedupeStoredFiles(
+  files: Array<{ fileName: string; storedName?: string; mimeType?: string | null }> = []
+) {
+  const seen = new Set<string>();
+  const out: Array<{ fileName: string; storedName?: string; mimeType?: string | null }> = [];
+  for (const file of files) {
+    const name = String(file?.fileName || '').trim();
+    if (!name) continue;
+    const key = `${name}::${String(file.storedName || '').trim()}`;
+    if (seen.has(key) || seen.has(name)) continue;
+    seen.add(key);
+    seen.add(name);
+    out.push(file);
+  }
+  return out;
+}
+
+function quoteFilesForDisplay(q: ManualVendorQuoteRow) {
+  const local = dedupeLocalFiles(q.files).map((f) => ({
+    fileName: f.name,
+    isLocal: true as const,
+    storedName: null as string | null,
+  }));
+  const localNames = new Set(local.map((f) => f.fileName));
+  const stored = dedupeStoredFiles(q.storedFiles)
+    .filter((f) => f?.fileName && !localNames.has(f.fileName))
+    .map((f) => ({
+      fileName: f.fileName,
+      isLocal: false as const,
+      storedName: f.storedName || null,
+    }));
+  return [...local, ...stored];
+}
+
+/** After Save Draft / autosave: attach GCS storedNames without wiping local File blobs. */
+export function mergeStoredFilesIntoRounds(
+  current: ManualComparisonRound[],
+  fromServer: ManualComparisonRound[]
+): ManualComparisonRound[] {
+  const serverByVendorRound = new Map<string, ManualVendorQuoteRow['storedFiles']>();
+  for (const round of fromServer) {
+    for (const q of round.vendorQuotes) {
+      const key = `${round.round}::${vendorStableKey(q)}`;
+      serverByVendorRound.set(key, dedupeStoredFiles(q.storedFiles || []));
+    }
+  }
+  return current.map((round) => ({
+    ...round,
+    vendorQuotes: round.vendorQuotes.map((q) => {
+      const key = `${round.round}::${vendorStableKey(q)}`;
+      const serverStored = serverByVendorRound.get(key);
+      if (!serverStored?.length) {
+        return {
+          ...q,
+          files: dedupeLocalFiles(q.files),
+          storedFiles: dedupeStoredFiles(q.storedFiles),
+        };
+      }
+      // Server list is authoritative for this vendor/round (stops autosave stacking copies)
+      const byName = new Set(serverStored.map((f) => f.fileName));
+      const nextLocal = dedupeLocalFiles(q.files.filter((f) => !byName.has(f.name)));
+      return { ...q, storedFiles: serverStored, files: nextLocal };
+    }),
+  }));
+}
+
+/** Build save payload files: keep stored refs; upload only new locals not already stored. */
+export async function buildManualQuoteFilesPayload(
+  row: Pick<ManualVendorQuoteRow, 'files' | 'storedFiles'>,
+  toAttachment: (file: File) => Promise<{
+    fileName: string;
+    mimeType?: string | null;
+    data?: string;
+    dataBase64?: string;
+  }>
+) {
+  const stored = dedupeStoredFiles(row.storedFiles || []).filter((f) => f.fileName);
+  const storedNames = new Set(stored.map((f) => f.fileName));
+  const locals = dedupeLocalFiles(row.files || []).filter((f) => f.name && !storedNames.has(f.name));
+  const uploaded = await Promise.all(locals.map((file) => toAttachment(file)));
+  const out: Array<{
+    fileName: string;
+    mimeType?: string | null;
+    storedName?: string;
+    data?: string;
+    dataBase64?: string;
+  }> = stored.map((f) => ({
+    fileName: f.fileName,
+    mimeType: f.mimeType || null,
+    storedName: f.storedName,
+  }));
+  const seen = new Set(storedNames);
+  for (const file of uploaded) {
+    const name = String(file.fileName || '').trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push(file);
+  }
+  return out;
+}
+
+type Props = {
+  prDetails: ManualPrDetails;
+  onPrDetailsChange: (next: ManualPrDetails) => void;
+  comparisonRounds: ManualComparisonRound[];
+  onComparisonRoundsChange: (
+    next: ManualComparisonRound[] | ((prev: ManualComparisonRound[]) => ManualComparisonRound[])
+  ) => void;
+  vendors: VendorRecord[];
+  onVendorsChange?: (next: VendorRecord[]) => void;
+  /** Saved PO id — required to Preview quotation files after Save Draft / GCS */
+  poId?: number | null;
+  currencySymbol: string;
+  currency?: string | null;
+  prReferenceStatus?: { state: 'idle' | 'loading' | 'found' | 'missing'; message: string };
+};
+
+export default function ManualPoContextSection({
+  prDetails,
+  onPrDetailsChange,
+  comparisonRounds,
+  onComparisonRoundsChange,
+  vendors,
+  onVendorsChange,
+  poId,
+  currencySymbol,
+  currency,
+  prReferenceStatus,
+}: Props) {
+  const [prDetailsOpen, setPrDetailsOpen] = useState(false);
+  useEffect(() => {
+    if (prReferenceStatus?.state === 'found' || prReferenceStatus?.state === 'loading') {
+      setPrDetailsOpen(true);
+    }
+  }, [prReferenceStatus]);
+  const [preferredTab, setPreferredTab] = useState<number | null>(1);
+  const [editTarget, setEditTarget] = useState<{
+    vendorKey: string;
+    roundNum: number;
+    quoteKey: string;
+    roundKey: string;
+  } | null>(null);
+  const [addVendorOpen, setAddVendorOpen] = useState(false);
+  const [addVendorName, setAddVendorName] = useState('');
+  const [addVendorEmail, setAddVendorEmail] = useState('');
+  const [addVendorSaving, setAddVendorSaving] = useState(false);
+  const [addVendorError, setAddVendorError] = useState('');
+
+  const pivoted = useMemo(() => pivotVendors(comparisonRounds), [comparisonRounds]);
+  const roundCount = maxRoundNum(comparisonRounds);
+
+  const recommendedQuoteKey = useMemo(() => {
+    for (const round of comparisonRounds) {
+      const hit = round.vendorQuotes.find((v) => v.recommended);
+      if (hit) return vendorStableKey(hit);
+    }
+    return '';
+  }, [comparisonRounds]);
+
+  const comparisonRows: RfqQuoteTableRow[] = useMemo(() => {
+    return pivoted.map((v, i) => {
+      const submittedQuotes = Array.from(v.quotesByRound.entries())
+        .filter(([, q]) => quoteHasData(q) && (Number(q.quotedPrice) > 0 || quoteFilesForDisplay(q).length > 0))
+        .map(([roundNum, q]) => {
+          const files = quoteFilesForDisplay(q);
+          return {
+            round: roundNum,
+            quotedPrice: Number(q.quotedPrice) || 0,
+            status: 'submitted' as const,
+            quotationFileName: files[0]?.fileName || '',
+            quotationFiles: files,
+          };
+        });
+      const hasActiveQuote = submittedQuotes.length > 0;
+      const latestRound = submittedQuotes.reduce((m, q) => Math.max(m, q.round), 0);
+      const fileRound = latestRound || 1;
+      const fileQuote = v.quotesByRound.get(fileRound);
+      const rowFiles = fileQuote ? quoteFilesForDisplay(fileQuote) : [];
+      return {
+        id: v.vendorKey,
+        invitationId: i + 1,
+        vendorName: v.vendorName || 'Vendor',
+        inviteMode: 'manual' as const,
+        status: hasActiveQuote ? 'submitted' : 'invited',
+        round: latestRound || 1,
+        hasActiveQuote,
+        canSendBack: hasActiveQuote && latestRound > 0 && latestRound < 20,
+        isRecommended: recommendedQuoteKey === v.vendorKey,
+        quotationFileName: rowFiles[0]?.fileName,
+        quotationFiles: rowFiles,
+        hasLocalQuotationFile: rowFiles.some((f) => f.isLocal),
+        quotes: submittedQuotes,
+      };
+    });
+  }, [pivoted, recommendedQuoteKey, roundCount]);
+
+  const quotedCount = comparisonRows.filter((r) => r.hasActiveQuote).length;
+
+  const ensureRound = (rounds: ManualComparisonRound[], roundNum: number): ManualComparisonRound[] => {
+    if (rounds.some((r) => r.round === roundNum)) return rounds;
+    const next = emptyComparisonRound(roundNum);
+    return [...rounds, next].sort((a, b) => a.round - b.round);
+  };
+
+  const findQuoteInRounds = (vendorKey: string, roundNum: number, rounds = comparisonRounds) => {
+    const round = rounds.find((r) => r.round === roundNum);
+    const quote =
+      round?.vendorQuotes.find((q) => vendorStableKey(q) === vendorKey) ||
+      null;
+    const vendor = pivotVendors(rounds).find((v) => v.vendorKey === vendorKey);
+    return { vendor, quote, round };
+  };
+
+  const upsertQuote = (
+    rounds: ManualComparisonRound[],
+    roundNum: number,
+    quoteKey: string,
+    patch: Partial<ManualVendorQuoteRow>
+  ) => {
+    const withRound = ensureRound(rounds, roundNum);
+    return withRound.map((round) => {
+      if (round.round !== roundNum) return round;
+      const exists = round.vendorQuotes.some((q) => q.key === quoteKey);
+      const nextPatch = {
+        ...patch,
+        files: Array.isArray(patch.files) ? dedupeLocalFiles(patch.files) : patch.files,
+        storedFiles: Array.isArray(patch.storedFiles)
+          ? dedupeStoredFiles(patch.storedFiles)
+          : patch.storedFiles,
+      };
+      if (!exists) {
+        const base = emptyManualVendorQuote(quoteKey);
+        return {
+          ...round,
+          vendorQuotes: [...round.vendorQuotes, { ...base, ...nextPatch, key: quoteKey }],
+        };
+      }
+      return {
+        ...round,
+        vendorQuotes: round.vendorQuotes.map((q) =>
+          q.key === quoteKey
+            ? {
+                ...q,
+                ...nextPatch,
+                files: Array.isArray(nextPatch.files)
+                  ? dedupeLocalFiles(nextPatch.files)
+                  : dedupeLocalFiles(q.files),
+                storedFiles: Array.isArray(nextPatch.storedFiles)
+                  ? dedupeStoredFiles(nextPatch.storedFiles)
+                  : dedupeStoredFiles(q.storedFiles),
+              }
+            : q
+        ),
+      };
+    });
+  };
+
+  const openEdit = (vendorKey: string, targetRound?: number) => {
+    const roundNum = Math.max(1, Number(targetRound) || preferredTab || 1);
+    let rounds = ensureRound(comparisonRounds, roundNum);
+    const { vendor, quote, round } = findQuoteInRounds(vendorKey, roundNum, rounds);
+    const roundRow = round || rounds.find((r) => r.round === roundNum);
+    if (!roundRow) return;
+
+    let quoteKey = quote?.key || '';
+    if (!quoteKey || !quote) {
+      // New round slot: keep vendor identity only — never copy prior round price/files
+      const newQuote = emptyManualVendorQuote(`vq-${Date.now()}-${roundNum}`);
+      if (vendor) {
+        newQuote.vendorId = vendor.vendorId;
+        newQuote.vendorName = vendor.vendorName;
+        newQuote.vendorEmail = vendor.vendorEmail;
+      } else {
+        for (const r of rounds) {
+          const hit = r.vendorQuotes.find((q) => vendorStableKey(q) === vendorKey);
+          if (hit) {
+            newQuote.vendorId = hit.vendorId;
+            newQuote.vendorName = hit.vendorName;
+            newQuote.vendorEmail = hit.vendorEmail;
+            break;
+          }
+        }
+      }
+      quoteKey = newQuote.key;
+      rounds = rounds.map((r) =>
+        r.round === roundNum ? { ...r, vendorQuotes: [...r.vendorQuotes, newQuote] } : r
+      );
+      onComparisonRoundsChange(rounds);
+    }
+
+    setPreferredTab(roundNum);
+    setEditTarget({
+      vendorKey,
+      roundNum,
+      quoteKey,
+      roundKey: roundRow.key,
+    });
+  };
+
+  const addVendor = () => {
+    const roundNum = Math.max(1, Number(preferredTab) || 1);
+    const newQuote = emptyManualVendorQuote(`vq-${Date.now()}-new`);
+    onComparisonRoundsChange((prev) => {
+      const rounds = ensureRound(prev, roundNum).map((r) =>
+        r.round === roundNum ? { ...r, vendorQuotes: [...r.vendorQuotes, newQuote] } : r
+      );
+      return rounds;
+    });
+    setPreferredTab(roundNum);
+    setEditTarget({
+      vendorKey: vendorStableKey(newQuote),
+      roundNum,
+      quoteKey: newQuote.key,
+      roundKey: `round-${roundNum}`,
+    });
+  };
+
+  const removeVendor = (vendorKey: string) => {
+    onComparisonRoundsChange((prev) =>
+      prev.map((round) => ({
+        ...round,
+        vendorQuotes: round.vendorQuotes.filter((q) => vendorStableKey(q) !== vendorKey),
+      }))
+    );
+    if (editTarget?.vendorKey === vendorKey) setEditTarget(null);
+  };
+
+  const setRecommendedVendor = (vendorKey: string) => {
+    onComparisonRoundsChange((prev) =>
+      prev.map((round) => ({
+        ...round,
+        vendorQuotes: round.vendorQuotes.map((q) => ({
+          ...q,
+          recommended: vendorStableKey(q) === vendorKey,
+        })),
+      }))
+    );
+  };
+
+  const addNextRound = (nextRound: number) => {
+    if (nextRound > 20) return;
+    onComparisonRoundsChange((prev) => ensureRound(prev, nextRound));
+    setPreferredTab(nextRound);
+  };
+
+  const removeRound = (roundNum: number) => {
+    if (roundNum <= 1) return;
+    onComparisonRoundsChange((prev) => {
+      const filtered = prev.filter((r) => r.round !== roundNum);
+      return filtered.length ? filtered : [emptyComparisonRound(1)];
+    });
+    if (editTarget?.roundNum === roundNum) setEditTarget(null);
+    setPreferredTab((tab) => {
+      const n = Number(tab) || 1;
+      if (n === roundNum) return Math.max(1, roundNum - 1);
+      if (n > roundNum) return Math.max(1, n - 1);
+      return tab;
+    });
+  };
+
+  const editingQuote = useMemo(() => {
+    if (!editTarget) return null;
+    const round = comparisonRounds.find((r) => r.round === editTarget.roundNum);
+    const quote = round?.vendorQuotes.find((q) => q.key === editTarget.quoteKey) || null;
+    if (!quote) return null;
+    return {
+      ...quote,
+      files: dedupeLocalFiles(quote.files),
+      storedFiles: dedupeStoredFiles(quote.storedFiles),
+    };
+  }, [editTarget, comparisonRounds]);
+
+  const saveEdit = () => {
+    if (!editTarget || !editingQuote) return;
+    if (!editingQuote.vendorName.trim()) {
+      alert('Please select or enter vendor name');
+      return;
+    }
+    onComparisonRoundsChange((prev) =>
+      upsertQuote(prev, editTarget.roundNum, editTarget.quoteKey, {
+        ...editingQuote,
+        files: dedupeLocalFiles(editingQuote.files),
+        storedFiles: dedupeStoredFiles(editingQuote.storedFiles),
+      })
+    );
+    setEditTarget(null);
+  };
+
+  const updateEditingQuote = (
+    patch:
+      | Partial<ManualVendorQuoteRow>
+      | ((current: ManualVendorQuoteRow) => Partial<ManualVendorQuoteRow>)
+  ) => {
+    if (!editTarget) return;
+    onComparisonRoundsChange((prev) => {
+      const round = prev.find((r) => r.round === editTarget.roundNum);
+      const current = round?.vendorQuotes.find((q) => q.key === editTarget.quoteKey);
+      if (!current) return prev;
+      const resolved = typeof patch === 'function' ? patch(current) : patch;
+      return upsertQuote(prev, editTarget.roundNum, editTarget.quoteKey, {
+        ...current,
+        ...resolved,
+      });
+    });
+  };
+
+  const openAddVendor = (typedName = '') => {
+    setAddVendorName(typedName.trim() || editingQuote?.vendorName || '');
+    setAddVendorEmail(editingQuote?.vendorEmail || '');
+    setAddVendorError('');
+    setAddVendorOpen(true);
+  };
+
+  const saveNewVendor = async () => {
+    const name = addVendorName.trim();
+    const email = addVendorEmail.trim();
+    if (!name) {
+      setAddVendorError('Vendor name is required');
+      return;
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setAddVendorError('Valid email is required');
+      return;
+    }
+    setAddVendorSaving(true);
+    setAddVendorError('');
+    try {
+      const res = await vendorApi.create({ name, vendorName: name, email });
+      const created = res.data;
+      if (!created?.id) throw new Error('Vendor was not created');
+      const listRes = await vendorApi.list();
+      const nextList = listRes.data || [];
+      onVendorsChange?.(nextList);
+      updateEditingQuote({
+        vendorId: String(created.id),
+        vendorName: created.name || name,
+        vendorEmail: (created.email || email).trim(),
+      });
+      setAddVendorOpen(false);
+      setAddVendorName('');
+      setAddVendorEmail('');
+    } catch (err) {
+      setAddVendorError(err instanceof Error ? err.message : 'Could not add vendor');
+    } finally {
+      setAddVendorSaving(false);
+    }
+  };
+
+  const openQuoteFile = async (row: RfqQuoteTableRow) => {
+    const vendor = pivoted.find((v) => v.vendorKey === row.id);
+    if (!vendor) return;
+    const roundNum =
+      preferredTab && preferredTab > 0
+        ? preferredTab
+        : row.quotes?.reduce((m, q) => Math.max(m, q.round), 1) || 1;
+    const quote = vendor.quotesByRound.get(roundNum) || vendor.quotesByRound.get(1);
+    const fileName = row.quotationFileName;
+
+    // Prefer local File (just uploaded, not yet saved)
+    const local =
+      quote?.files.find((f) => f.name === fileName) ||
+      (row.hasLocalQuotationFile ? quote?.files[0] : undefined);
+    if (local) {
+      const url = URL.createObjectURL(local);
+      window.open(url, '_blank', 'noopener,noreferrer');
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+      return;
+    }
+
+    // Saved attachment (disk / GCS) after Save Draft
+    const stored =
+      quote?.storedFiles?.find((f) => f.fileName === fileName) || quote?.storedFiles?.[0];
+    const storedName = String(row.quotationStoredName || stored?.storedName || '').trim();
+    const resolvedPoId = Number(poId) || 0;
+    if (!resolvedPoId || !storedName) {
+      alert('Save Draft first so the quotation file is uploaded, then Preview again.');
+      return;
+    }
+    try {
+      const token = localStorage.getItem('p2p_token');
+      const res = await fetch(poApi.getManualQuoteFileUrl(resolvedPoId, storedName), {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        let message = 'Could not open quotation file';
+        try {
+          const body = (await res.json()) as { message?: string };
+          if (body?.message) message = body.message;
+        } catch {
+          /* keep */
+        }
+        throw new Error(message);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener,noreferrer');
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not open quotation file');
+    }
+  };
+
+  useEffect(() => {
+    if (!editTarget) return;
+    const stillThere = comparisonRounds.some((r) =>
+      r.vendorQuotes.some((q) => q.key === editTarget.quoteKey)
+    );
+    if (!stillThere) setEditTarget(null);
+  }, [comparisonRounds, editTarget]);
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setPrDetailsOpen((open) => !open)}
+          className="w-full flex items-center justify-between gap-3 p-5 text-left hover:bg-gray-50/80 transition-colors cursor-pointer"
+        >
+          <div>
+            <h3 className="text-sm font-bold text-gray-900">PR details (reference)</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {prDetailsOpen
+                ? 'Optional PR reference — no approval workflow, data entry only'
+                : 'Click to add optional PR reference fields'}
+            </p>
+          </div>
+          <span className="shrink-0 flex items-center gap-1.5 text-xs font-semibold text-[#1565C0]">
+            {prDetailsOpen ? 'Hide' : 'Show'}
+            <i className={`ri-arrow-${prDetailsOpen ? 'up' : 'down'}-s-line text-base`} />
+          </span>
+        </button>
+        {prDetailsOpen ? (
+          <div className="px-5 pb-5 pt-0 border-t border-gray-100 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">PR reference no.</label>
+            <input
+              value={prDetails.prNumber}
+              onChange={(e) => onPrDetailsChange({ ...prDetails, prNumber: e.target.value })}
+              className="w-full h-11 px-3.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+              placeholder="PR number — fills quotes and details"
+            />
+            {prReferenceStatus?.message ? (
+              <p
+                className={`mt-1.5 text-xs ${
+                  prReferenceStatus.state === 'missing'
+                    ? 'text-amber-700'
+                    : prReferenceStatus.state === 'found'
+                      ? 'text-emerald-700'
+                      : 'text-[#1565C0]'
+                }`}
+              >
+                {prReferenceStatus.message}
+              </p>
+            ) : null}
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Title</label>
+            <input
+              value={prDetails.title}
+              onChange={(e) => onPrDetailsChange({ ...prDetails, title: e.target.value })}
+              className="w-full h-11 px-3.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+              placeholder="Purchase title"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Department</label>
+            <input
+              value={prDetails.department}
+              onChange={(e) => onPrDetailsChange({ ...prDetails, department: e.target.value })}
+              className="w-full h-11 px-3.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+              placeholder="Department"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Requester</label>
+            <input
+              value={prDetails.requester}
+              onChange={(e) => onPrDetailsChange({ ...prDetails, requester: e.target.value })}
+              className="w-full h-11 px-3.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+              placeholder="Requester name"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Request type</label>
+            <select
+              value={prDetails.requestType}
+              onChange={(e) => onPrDetailsChange({ ...prDetails, requestType: e.target.value })}
+              className="w-full h-11 px-3.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+            >
+              <option value="Opex">Opex</option>
+              <option value="Capex">Capex</option>
+              <option value="Service">Service</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Priority</label>
+            <select
+              value={prDetails.priority}
+              onChange={(e) => onPrDetailsChange({ ...prDetails, priority: e.target.value })}
+              className="w-full h-11 px-3.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+            >
+              <option value="Low">Low</option>
+              <option value="Medium">Medium</option>
+              <option value="High">High</option>
+              <option value="Critical">Critical</option>
+            </select>
+          </div>
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Justification</label>
+            <textarea
+              value={prDetails.justification}
+              onChange={(e) => onPrDetailsChange({ ...prDetails, justification: e.target.value })}
+              rows={3}
+              className="w-full px-3.5 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5] resize-none"
+              placeholder="Business justification"
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Scope of Work</label>
+            <textarea
+              value={prDetails.scopeOfWork || ''}
+              onChange={(e) => onPrDetailsChange({ ...prDetails, scopeOfWork: e.target.value })}
+              rows={3}
+              className="w-full px-3.5 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5] resize-none"
+              placeholder="Scope of work / description of services or supply"
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Payment Terms</label>
+            <input
+              value={prDetails.paymentTerms || ''}
+              onChange={(e) => onPrDetailsChange({ ...prDetails, paymentTerms: e.target.value })}
+              className="w-full h-11 px-3.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+              placeholder="e.g. Net 30 Days / 50% Advance 50% on completion"
+            />
+          </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-[#1565C0]">Vendor comparison</p>
+            <h2 className="text-base font-bold text-gray-900 mt-0.5">Get quotes and pick a vendor</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Tap <strong>Edit</strong> on a round to fill the quote, then <strong>Choose</strong> a
+              vendor. Use Q1 / Q2… tabs for negotiation rounds.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="px-3 py-1.5 rounded-full bg-white border border-gray-200 text-xs font-semibold text-gray-600">
+              {quotedCount} of {comparisonRows.length || pivoted.length} quotes received
+            </span>
+            <button
+              type="button"
+              onClick={addVendor}
+              className="px-3 py-1.5 text-xs font-semibold text-[#1565C0] border border-[#90CAF9] rounded-lg hover:bg-[#E3F2FD]"
+            >
+              <i className="ri-add-line mr-1" />
+              Add vendor
+            </button>
+          </div>
+        </div>
+
+        {comparisonRows.length === 0 ? (
+          <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
+            <p className="text-sm text-gray-500 mb-3">No vendors yet.</p>
+            <button
+              type="button"
+              onClick={addVendor}
+              className="px-4 py-2 bg-[#1E88E5] text-white text-sm font-semibold rounded-lg hover:bg-[#1565C0]"
+            >
+              <i className="ri-add-line mr-1" />
+              Add vendor
+            </button>
+          </div>
+        ) : (
+          <RfqVendorQuoteTable
+            rows={comparisonRows}
+            currency={currency}
+            recommendedId={
+              recommendedQuoteKey
+                ? comparisonRows.find((r) => r.id === recommendedQuoteKey)?.invitationId ?? null
+                : null
+            }
+            quotedCount={quotedCount}
+            maxRounds={roundCount}
+            preferredTab={preferredTab}
+            onEdit={(row, targetRound) => openEdit(row.id, targetRound)}
+            onChoose={(row) => {
+              if (!row.hasActiveQuote) return;
+              setRecommendedVendor(row.id);
+            }}
+            onRemove={(row) => removeVendor(row.id)}
+            onViewFile={(row) => void openQuoteFile(row)}
+            onNextRound={addNextRound}
+            onRemoveRound={removeRound}
+          />
+        )}
+
+        {recommendedQuoteKey ? (
+          <p className="text-xs text-[#1565C0] bg-[#E3F2FD] border border-[#BBDEFB] rounded-lg px-3 py-2">
+            Selected vendor will be used on the PO document.
+          </p>
+        ) : (
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+            Tap <strong>Choose</strong> on a vendor with a quote to select them for the PO.
+          </p>
+        )}
+      </div>
+
+      {editTarget && editingQuote && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl">
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/80">
+              <div>
+                <h3 className="text-base font-bold text-gray-900">
+                  Edit quote — {editingQuote.vendorName || 'Vendor'}
+                </h3>
+                <p className="text-xs text-gray-500 mt-1">
+                  Upload the quotation and enter the price ({currencySymbol})
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditTarget(null)}
+                className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-500"
+              >
+                <i className="ri-close-line text-lg" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                    Vendor <span className="text-red-500">*</span>
+                  </label>
+                  <VendorSearchSelect
+                    vendors={vendors}
+                    value={editingQuote.vendorId}
+                    fallbackLabel={editingQuote.vendorName}
+                    onChange={(id) => {
+                      const v = vendors.find((x) => String(x.id) === String(id));
+                      updateEditingQuote({
+                        vendorId: id,
+                        vendorName: v?.name || '',
+                        vendorEmail: (v?.email || '').trim(),
+                      });
+                    }}
+                    onRequestCreate={openAddVendor}
+                    placeholder="Search vendor by name, code, or email"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => openAddVendor(editingQuote.vendorName)}
+                    className="mt-2 text-sm text-[#1565C0] font-semibold inline-flex items-center gap-1.5"
+                  >
+                    <i className="ri-user-add-line" />
+                    Vendor not in the list? Add name &amp; email
+                  </button>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">Email</label>
+                  <input
+                    type="email"
+                    value={editingQuote.vendorEmail}
+                    onChange={(e) => updateEditingQuote({ vendorEmail: e.target.value })}
+                    className="w-full h-11 px-3.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+                    placeholder="Filled from vendor master"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                    Quoted price ({currencySymbol}) <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={editingQuote.quotedPrice}
+                    onChange={(e) => updateEditingQuote({ quotedPrice: e.target.value })}
+                    className="w-full h-11 px-3.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">Lead time</label>
+                  <input
+                    value={editingQuote.leadTime}
+                    onChange={(e) => updateEditingQuote({ leadTime: e.target.value })}
+                    className="w-full h-11 px-3.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+                    placeholder="e.g. 15 days"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-gray-600 mb-1.5">Payment terms</label>
+                  <textarea
+                    rows={3}
+                    value={editingQuote.paymentTerms}
+                    onChange={(e) => updateEditingQuote({ paymentTerms: e.target.value })}
+                    className="w-full min-h-[88px] px-3.5 py-2.5 border border-gray-200 rounded-lg text-sm bg-white text-gray-900 resize-y focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+                    placeholder="e.g. Net 30 Days / 50% advance, balance on delivery"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">Quotation file(s)</label>
+                <label
+                  className="flex flex-wrap items-center gap-3 px-4 py-3.5 border-2 border-dashed border-[#90CAF9] rounded-xl cursor-pointer bg-[#E3F2FD]/40 hover:bg-[#E3F2FD]"
+                >
+                  <i className="ri-upload-cloud-2-line text-[#1E88E5] text-xl" />
+                  <span className="text-sm text-gray-700">Upload PDF, Excel, or image</span>
+                  <input
+                    type="file"
+                    multiple
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                    className="hidden"
+                    onChange={(e) => {
+                      const picked = Array.from(e.target.files || []);
+                      e.target.value = '';
+                      if (!picked.length) return;
+                      updateEditingQuote((current) => ({
+                        files: dedupeLocalFiles([...(current.files || []), ...picked]),
+                      }));
+                    }}
+                  />
+                </label>
+                {editingQuote.files.length || (editingQuote.storedFiles || []).length ? (
+                  <ul className="mt-3 space-y-1.5">
+                    {editingQuote.files.map((f, fi) => (
+                      <li
+                        key={`local-${fileIdentity(f)}`}
+                        className="flex items-center justify-between gap-2 text-sm text-gray-700 bg-gray-50 rounded-lg px-3 py-2"
+                      >
+                        <span className="truncate flex items-center gap-1.5">
+                          <i className="ri-file-line text-[#1E88E5]" />
+                          {f.name}
+                          <span className="text-[10px] text-[#1565C0] font-semibold">New</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateEditingQuote((current) => ({
+                              files: current.files.filter((_, i) => i !== fi),
+                            }))
+                          }
+                          className="text-rose-600 text-xs font-semibold"
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                    {(editingQuote.storedFiles || []).map((f, fi) => (
+                      <li
+                        key={`stored-${f.storedName || f.fileName}-${fi}`}
+                        className="flex items-center justify-between gap-2 text-sm text-gray-700 bg-gray-50 rounded-lg px-3 py-2"
+                      >
+                        <span className="truncate flex items-center gap-1.5 min-w-0">
+                          <i className="ri-file-line text-[#1E88E5]" />
+                          <span className="truncate">{f.fileName}</span>
+                          <span className="text-[10px] text-gray-500 font-semibold shrink-0">Saved</span>
+                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {poId && f.storedName ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void openQuoteFile({
+                                  id: editTarget?.vendorKey || '',
+                                  invitationId: 0,
+                                  vendorName: editingQuote.vendorName,
+                                  status: 'submitted',
+                                  round: editTarget?.roundNum || 1,
+                                  quotationFileName: f.fileName,
+                                  hasActiveQuote: true,
+                                })
+                              }
+                              className="text-[#1565C0] text-xs font-semibold"
+                            >
+                              Preview
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateEditingQuote((current) => ({
+                                storedFiles: (current.storedFiles || []).filter((_, i) => i !== fi),
+                              }))
+                            }
+                            className="text-rose-600 text-xs font-semibold"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            </div>
+            <div className="px-5 py-4 border-t border-gray-100 flex justify-end gap-2 bg-gray-50/80">
+              <button
+                type="button"
+                onClick={() => setEditTarget(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveEdit}
+                className="px-4 py-2 text-sm font-semibold text-white bg-[#1E88E5] rounded-lg hover:bg-[#1565C0]"
+              >
+                Save quote
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {addVendorOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/80 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-gray-900">Add vendor</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Enter name and email — they will appear in the search list</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !addVendorSaving && setAddVendorOpen(false)}
+                className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-500"
+              >
+                <i className="ri-close-line text-lg" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                  Vendor name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={addVendorName}
+                  onChange={(e) => {
+                    setAddVendorName(e.target.value);
+                    setAddVendorError('');
+                  }}
+                  className="w-full h-11 px-3.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+                  placeholder="Company or vendor name"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                  Email <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="email"
+                  value={addVendorEmail}
+                  onChange={(e) => {
+                    setAddVendorEmail(e.target.value);
+                    setAddVendorError('');
+                  }}
+                  className="w-full h-11 px-3.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+                  placeholder="vendor@example.com"
+                />
+              </div>
+              {addVendorError ? (
+                <p className="text-sm text-rose-600 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2">
+                  {addVendorError}
+                </p>
+              ) : null}
+            </div>
+            <div className="px-5 py-4 border-t border-gray-100 flex justify-end gap-2 bg-gray-50/80">
+              <button
+                type="button"
+                disabled={addVendorSaving}
+                onClick={() => setAddVendorOpen(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-white disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={addVendorSaving}
+                onClick={() => void saveNewVendor()}
+                className="px-4 py-2 text-sm font-semibold text-white bg-[#1E88E5] rounded-lg hover:bg-[#1565C0] disabled:opacity-50"
+              >
+                {addVendorSaving ? 'Adding…' : 'Add vendor'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,493 @@
+import { useEffect, useState } from 'react';
+import { prApi } from '../../../services/api';
+import { formatMoney } from '../../../constants/currency';
+
+export type InvoiceUploadPayload = {
+  fileName: string;
+  fileData: string;
+  invoiceDate?: string;
+  invoiceNumber?: string;
+};
+
+interface ApprovalModalProps {
+  isOpen: boolean;
+  type: 'approve' | 'reject' | 'return';
+  prNumber: string;
+  prTitle: string;
+  amount: number;
+  currency?: string;
+  prId?: number;
+  askBusinessApproval?: boolean;
+  /** Cloud Subscription Mugesh invoice-upload task */
+  requireInvoiceUpload?: boolean;
+  /** Requester PO — Mugesh uploads the signed PO */
+  signedUpload?: boolean;
+  /** Load full admin send-back catalog (any step, incl. Edit PR + RFQ Entry) */
+  useAdminTargets?: boolean;
+  onConfirm: (
+    remarks: string,
+    returnTo?: string,
+    goToBusinessApproval?: boolean,
+    invoice?: InvoiceUploadPayload
+  ) => void | Promise<void>;
+  onClose: () => void;
+}
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      const base64 = result.includes(',') ? result.split(',')[1] : result;
+      resolve(base64);
+    };
+    reader.onerror = () => reject(new Error('Failed to read invoice file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+export default function ApprovalModal({
+  isOpen,
+  type,
+  prNumber,
+  prTitle,
+  amount,
+  currency = 'INR',
+  prId,
+  askBusinessApproval = false,
+  requireInvoiceUpload = false,
+  signedUpload = false,
+  useAdminTargets = false,
+  onConfirm,
+  onClose,
+}: ApprovalModalProps) {
+  const [remarks, setRemarks] = useState('');
+  const [returnTo, setReturnTo] = useState('');
+  const [targets, setTargets] = useState<{ key: string; label: string }[]>([]);
+  const [targetsLoading, setTargetsLoading] = useState(false);
+  const [goToBusinessApproval, setGoToBusinessApproval] = useState<boolean | null>(null);
+  const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  /** If API says Business choice is required, force-show Yes/No even if task flag was missing */
+  const [forceAskBusiness, setForceAskBusiness] = useState(false);
+
+  const needsBusinessChoice = Boolean(askBusinessApproval || forceAskBusiness);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setRemarks('');
+      setReturnTo('');
+      setTargets([]);
+      setGoToBusinessApproval(null);
+      setInvoiceDate(new Date().toISOString().slice(0, 10));
+      setInvoiceFile(null);
+      setSubmitting(false);
+      setError('');
+      setForceAskBusiness(false);
+      return;
+    }
+    if (type !== 'return' || !prId) return;
+
+    let cancelled = false;
+    setTargetsLoading(true);
+    prApi
+      .sendBackTargets(prId, useAdminTargets ? { admin: true } : undefined)
+      .then((res) => {
+        if (cancelled) return;
+        const list = res.data || [];
+        setTargets(list);
+        const preferred =
+          res.defaultKey && list.some((t) => t.key === res.defaultKey)
+            ? res.defaultKey
+            : list[list.length - 1]?.key || '';
+        setReturnTo(preferred);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Failed to load previous stages');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setTargetsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, type, prId, useAdminTargets]);
+
+  if (!isOpen) return null;
+
+  const config = {
+    approve: {
+      title: signedUpload
+        ? 'Sign & Upload'
+        : requireInvoiceUpload
+          ? 'Upload Cloud Subscription Invoice'
+          : 'Approve Purchase Request',
+      icon: signedUpload || requireInvoiceUpload ? 'ri-file-upload-line' : 'ri-check-double-line',
+      headerBg: requireInvoiceUpload ? 'bg-[#E3F2FD]' : 'bg-emerald-50',
+      iconBg: requireInvoiceUpload ? 'bg-[#E3F2FD]' : 'bg-emerald-100',
+      iconColor: requireInvoiceUpload ? 'text-[#1E88E5]' : 'text-emerald-600',
+      titleColor: requireInvoiceUpload ? 'text-[#0D47A1]' : 'text-emerald-900',
+      btnBg: requireInvoiceUpload
+        ? 'bg-[#1E88E5] hover:bg-[#1565C0]'
+        : 'bg-emerald-600 hover:bg-emerald-700',
+      btnIcon: requireInvoiceUpload ? 'ri-upload-2-line' : 'ri-check-double-line',
+      btnText: signedUpload ? 'Sign & Upload' : requireInvoiceUpload ? 'Submit Invoice' : 'Confirm Approve',
+      placeholder: 'Enter approval remarks...',
+      requireRemarks: true,
+    },
+    reject: {
+      title: 'Reject Purchase Request',
+      icon: 'ri-close-circle-line',
+      headerBg: 'bg-red-50',
+      iconBg: 'bg-red-100',
+      iconColor: 'text-red-600',
+      titleColor: 'text-red-900',
+      btnBg: 'bg-red-600 hover:bg-red-700',
+      btnIcon: 'ri-close-circle-line',
+      btnText: 'Confirm Reject',
+      placeholder: 'Please provide reason for rejection...',
+      requireRemarks: true,
+    },
+    return: {
+      title: 'Send Back for Rework',
+      icon: 'ri-arrow-go-back-line',
+      headerBg: 'bg-orange-50',
+      iconBg: 'bg-orange-100',
+      iconColor: 'text-orange-600',
+      titleColor: 'text-orange-900',
+      btnBg: 'bg-orange-600 hover:bg-orange-700',
+      btnIcon: 'ri-arrow-go-back-line',
+      btnText: 'Confirm Send Back',
+      placeholder: 'Enter what needs to be reworked...',
+      requireRemarks: true,
+    },
+  }[type];
+
+  const handleSubmit = async () => {
+    if (submitting) return;
+    if (config.requireRemarks && !remarks.trim()) {
+      setError('Please enter remarks');
+      return;
+    }
+    if (type === 'reject' && remarks.trim().length < 10) {
+      setError('Please provide a reason for rejection (minimum 10 characters)');
+      return;
+    }
+    const selectedReturnTo = returnTo || targets[targets.length - 1]?.key || '';
+    if (type === 'return' && prId && !selectedReturnTo) {
+      setError('Select a previous stage to send back to');
+      return;
+    }
+    if (type === 'approve' && needsBusinessChoice && goToBusinessApproval === null) {
+      setError('Select Yes or No for Business / CFO Approval before approving');
+      return;
+    }
+    if (type === 'approve' && (requireInvoiceUpload || signedUpload)) {
+      if (!invoiceFile) {
+        setError(signedUpload ? 'Please upload the signed PO document' : 'Please upload the invoice file');
+        return;
+      }
+    }
+
+    setSubmitting(true);
+    setError('');
+
+    let invoice: InvoiceUploadPayload | undefined;
+    if (type === 'approve' && (requireInvoiceUpload || signedUpload) && invoiceFile) {
+      try {
+        const fileData = await readFileAsBase64(invoiceFile);
+        invoice = {
+          fileName: invoiceFile.name,
+          fileData,
+          invoiceDate: invoiceDate || undefined,
+        };
+      } catch (err) {
+        setSubmitting(false);
+        setError(err instanceof Error ? err.message : 'Failed to read invoice file');
+        return;
+      }
+    }
+
+    try {
+      await onConfirm(
+        remarks.trim(),
+        type === 'return' ? selectedReturnTo : undefined,
+        type === 'approve' && needsBusinessChoice ? Boolean(goToBusinessApproval) : undefined,
+        invoice
+      );
+      // Parent closes modal on success — only reset local fields here
+      setRemarks('');
+      setReturnTo('');
+      setInvoiceFile(null);
+      setError('');
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Approval failed. Please try again or contact support.';
+      if (/business\s*\/\s*cfo|go to business/i.test(message)) {
+        setForceAskBusiness(true);
+      }
+      setError(message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleClose = () => {
+    setRemarks('');
+    setReturnTo('');
+    setInvoiceFile(null);
+    setError('');
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center">
+      <div
+        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+        onClick={submitting ? undefined : handleClose}
+      />
+
+      <div
+        className={`relative bg-white rounded-xl shadow-2xl w-full mx-4 overflow-hidden ${
+          requireInvoiceUpload && type === 'approve' ? 'max-w-lg' : 'max-w-md'
+        }`}
+      >
+        <div className={`px-6 py-4 ${config.headerBg}`}>
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${config.iconBg}`}>
+              <i className={`text-xl ${config.icon} ${config.iconColor}`} />
+            </div>
+            <div>
+              <h3 className={`text-base font-bold ${config.titleColor}`}>{config.title}</h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {requireInvoiceUpload && type === 'approve'
+                  ? 'Upload invoice for this Cloud Subscription — then routed to Accounts'
+                  : 'This action cannot be undone'}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="px-6 py-4 max-h-[70vh] overflow-y-auto">
+          <div className="bg-gray-50 rounded-lg p-3 mb-4">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-bold text-gray-500">{prNumber}</span>
+              <span className="text-sm font-bold text-gray-900">
+                {formatMoney(Number(amount || 0), currency, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}
+              </span>
+            </div>
+            <p className="text-sm font-medium text-gray-800">{prTitle}</p>
+          </div>
+
+          {type === 'approve' && signedUpload && (
+            <div className="mb-4 rounded-lg border border-[#90CAF9] bg-[#E3F2FD]/70 p-3 space-y-3">
+              <p className="text-sm font-semibold text-[#0D47A1]">Signed PO document</p>
+              <p className="text-xs text-[#1565C0] leading-relaxed">
+                Review the PO, sign it, then upload the signed document.
+              </p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Signed document <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg,.webp"
+                  onChange={(e) => {
+                    setInvoiceFile(e.target.files?.[0] || null);
+                    setError('');
+                  }}
+                  className="w-full text-sm text-gray-700 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-[#1E88E5] file:text-white file:text-sm file:font-semibold file:cursor-pointer"
+                />
+                {invoiceFile && (
+                  <p className="text-xs text-[#1565C0] mt-1.5 truncate">Selected: {invoiceFile.name}</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {type === 'approve' && requireInvoiceUpload && !signedUpload && (
+            <div className="mb-4 rounded-lg border border-[#90CAF9] bg-[#E3F2FD]/70 p-3 space-y-3">
+              <p className="text-sm font-semibold text-[#0D47A1]">Upload invoice</p>
+              <p className="text-xs text-[#1565C0] leading-relaxed">
+                Cloud Subscription: Mugesh uploads the invoice here. After submit, mail goes to
+                Requester, L1, L2 (Srivaths), and accounts_rgml_refexev@refex.co.in.
+              </p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Invoice date</label>
+                <input
+                  type="date"
+                  value={invoiceDate}
+                  onChange={(e) => setInvoiceDate(e.target.value)}
+                  className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E88E5]/20 focus:border-[#1E88E5] bg-white"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Invoice file <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx"
+                  onChange={(e) => {
+                    setInvoiceFile(e.target.files?.[0] || null);
+                    setError('');
+                  }}
+                  className="w-full text-sm text-gray-700 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-[#1E88E5] file:text-white file:text-sm file:font-semibold file:cursor-pointer"
+                />
+                {invoiceFile && (
+                  <p className="text-xs text-[#1565C0] mt-1.5 truncate">Selected: {invoiceFile.name}</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {type === 'approve' && needsBusinessChoice && (
+            <div
+              className={`mb-4 rounded-lg border p-3 ${
+                goToBusinessApproval === null
+                  ? 'border-amber-400 bg-amber-50 ring-2 ring-amber-200'
+                  : 'border-amber-200 bg-amber-50'
+              }`}
+            >
+              <p className="text-sm font-semibold text-amber-900 mb-1">
+                Go to Business Approval? <span className="text-red-500">*</span>
+              </p>
+              <p className="text-xs text-amber-800 mb-3 leading-relaxed">
+                Required before L1 approve.
+                <br />
+                <strong>Yes</strong> → L2 Manager → CFO (if a CFO user is available)
+                <br />
+                <strong>No</strong> → L2 Manager → SCM RFQ (skip CFO)
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => {
+                    setGoToBusinessApproval(true);
+                    setError('');
+                  }}
+                  className={`flex-1 px-3 py-2.5 text-sm font-semibold rounded-lg border cursor-pointer text-center disabled:opacity-60 ${
+                    goToBusinessApproval === true
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  Yes — L2 → CFO
+                </button>
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => {
+                    setGoToBusinessApproval(false);
+                    setError('');
+                  }}
+                  className={`flex-1 px-3 py-2.5 text-sm font-semibold rounded-lg border cursor-pointer text-center disabled:opacity-60 ${
+                    goToBusinessApproval === false
+                      ? 'bg-[#1E88E5] text-white border-[#1E88E5]'
+                      : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  No — L2 → SCM RFQ
+                </button>
+              </div>
+            </div>
+          )}
+
+          {type === 'return' && Boolean(prId) && (
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Send back to <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={returnTo}
+                onChange={(e) => {
+                  setReturnTo(e.target.value);
+                  setError('');
+                }}
+                disabled={targetsLoading || !targets.length}
+                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-400 bg-white"
+              >
+                {targetsLoading && <option value="">Loading stages...</option>}
+                {!targetsLoading && !targets.length && <option value="">No stages available</option>}
+                {targets.map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                {useAdminTargets
+                  ? 'Admin: any step — Requester (Edit PR), RFQ Entry, or approval stages.'
+                  : 'PR will return to the selected previous stage for action.'}
+              </p>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              Remarks <span className="text-red-500">*</span>
+            </label>
+            <textarea
+              value={remarks}
+              onChange={(e) => {
+                setRemarks(e.target.value);
+                setError('');
+              }}
+              placeholder={config.placeholder}
+              rows={3}
+              maxLength={500}
+              className={`w-full px-3 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 resize-none ${
+                error
+                  ? 'border-red-300 focus:ring-red-500/20 focus:border-red-400'
+                  : 'border-gray-200 focus:ring-[#1E88E5]/20 focus:border-[#1E88E5]'
+              }`}
+            />
+            <div className="flex items-center justify-between mt-1">
+              <span />
+              <span className="text-xs text-gray-400">{remarks.length}/500</span>
+            </div>
+          </div>
+
+          {error ? (
+            <div
+              role="alert"
+              className="mt-4 rounded-lg border border-red-300 bg-red-50 px-3 py-2.5 text-sm text-red-800 flex items-start gap-2"
+            >
+              <i className="ri-error-warning-fill text-base shrink-0 mt-0.5" />
+              <span className="break-words font-medium">{error}</span>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="px-6 py-4 bg-gray-50 flex items-center justify-end gap-3 border-t border-gray-100">
+          <button
+            onClick={handleClose}
+            disabled={submitting}
+            className="px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer whitespace-nowrap"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => void handleSubmit()}
+            disabled={submitting}
+            className={`px-5 py-2 text-sm font-semibold text-white rounded-lg transition-colors cursor-pointer whitespace-nowrap flex items-center gap-2 shadow-sm ${config.btnBg} disabled:opacity-60`}
+          >
+            <i className={config.btnIcon} />
+            {submitting ? 'Submitting…' : config.btnText}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

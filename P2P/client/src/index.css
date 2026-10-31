@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --brand-primary: #1e88e5;
+  --brand-secondary: #1565c0;
+  --brand-accent: #90caf9;
+  --brand-hero-gradient: linear-gradient(135deg, #1e88e5 0%, #1565c0 55%, #2b5aed 100%);
+  --brand-primary-gradient: linear-gradient(135deg, #1e88e5 0%, #1565c0 100%);
+  --pm-page-bg: linear-gradient(180deg, #edf1ff 0%, #f6f8ff 45%, #f2ecff 100%);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  font-family: Inter, 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
+}
+
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.animate-sheet-up {
+  animation: sheet-up 0.28s ease-out;
+}
+
+/* Mobile-friendly horizontal chip / tab scroller */
+.chip-scroll {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none; /* Firefox */
+  touch-action: pan-x;
+  padding-bottom: 2px;
+}
+.chip-scroll::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+.chip-scroll > * {
+  scroll-snap-align: start;
+  flex-shrink: 0;
+}
+.chip-scroll-fade {
+  position: relative;
+}
+.chip-scroll-fade::before,
+.chip-scroll-fade::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 2px;
+  width: 28px;
+  pointer-events: none;
+  z-index: 1;
+}
+.chip-scroll-fade::before {
+  left: 0;
+  background: linear-gradient(90deg, #fff 0%, rgba(255, 255, 255, 0) 100%);
+}
+.chip-scroll-fade::after {
+  right: 0;
+  background: linear-gradient(270deg, #fff 0%, rgba(255, 255, 255, 0) 100%);
+}
+
+/* Vendor comparison (VendorComparisonMatrix) — subtle theme motion */
+@keyframes vcm-glow { 0%,100% { box-shadow: 0 0 0 0 rgba(255,255,255,.55); } 50% { box-shadow: 0 0 0 5px rgba(255,255,255,0); } }
+.vcm-rec-badge { animation: vcm-glow 2.2s ease-out infinite; }
+@keyframes vcm-nudge { 0%,100% { transform: translateX(0); } 50% { transform: translateX(4px); } }
+.vcm-nudge { display: inline-block; animation: vcm-nudge 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .vcm-rec-badge, .vcm-nudge { animation: none; } }

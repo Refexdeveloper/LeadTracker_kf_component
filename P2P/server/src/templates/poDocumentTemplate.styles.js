@@ -1,0 +1,1637 @@
+/**
+ * PO / Work Order PDF layout
+ *
+ * EVERY printed page (Puppeteer chrome templates — reliable across page breaks):
+ *   TOP    = headerTemplate  (letterhead header logo)
+ *   BODY   = document content (line items / terms / annexure)
+ *   BOTTOM = footerTemplate  (letterhead footer + Page X of Y)
+ *
+ * HTML preview may still use a doc-shell thead/tfoot for on-screen branding.
+ */
+export const PO_PDF_LAYOUT = {
+  /** Space for repeating header logo on every PDF page */
+  top: '24mm',
+  /** Space for full letterhead footer — must exceed chrome footer height */
+  bottom: '72mm',
+  side: '12mm',
+  marginTopPx: 15,
+  marginBottomPx: 38,
+  marginSidePx: 38,
+  get marginMm() {
+    return 10;
+  },
+  get topMm() {
+    return 24;
+  },
+  get bottomMm() {
+    return 48;
+  },
+};
+
+export const PO_STYLES = `
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+
+  body.po-document {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 12.5px;
+    color: #1a1a1a;
+    max-width: calc(210mm - ${PO_PDF_LAYOUT.marginSidePx * 2}px);
+    margin: 0 auto;
+    padding: 12px ${PO_PDF_LAYOUT.marginSidePx}px 20px;
+    line-height: 1.35;
+    background: #fff;
+  }
+
+  /* PDF path: chrome templates own header/footer — body is content only */
+  body.po-document-pdf {
+    max-width: none;
+    width: 100%;
+    margin: 0;
+    padding: 0 !important;
+  }
+
+  body.po-document-pdf-pages {
+    max-width: none;
+    width: 100%;
+    margin: 0;
+    padding: 0 !important;
+    background: #fff;
+  }
+  .pdf-page {
+    width: 210mm;
+    height: 297mm;
+    min-height: 297mm;
+    max-height: 297mm;
+    position: relative;
+    box-sizing: border-box;
+    background: #fff;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    page-break-after: always;
+    break-after: page;
+    overflow: hidden;
+  }
+  .pdf-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+  /* Keep header / body / footer on the same horizontal margins */
+  .pdf-header {
+    grid-row: 1;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 5mm ${PO_PDF_LAYOUT.side} 2mm;
+  }
+  .pdf-content {
+    grid-row: 2;
+    width: 100%;
+    min-height: 0;
+    max-height: 100%;
+    box-sizing: border-box;
+    padding: 2mm ${PO_PDF_LAYOUT.side} 2mm;
+    overflow: hidden;
+    display: block;
+    position: relative;
+    align-content: start;
+  }
+  .pdf-content > * {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    /* Do not stretch Annexure boxes to fill leftover page height (causes huge blank frames). */
+    height: auto;
+    max-height: none;
+  }
+  .pdf-content .table-frame {
+    width: 100%;
+    max-width: 100%;
+  }
+  .pdf-footer {
+    grid-row: 3;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-end;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 2mm ${PO_PDF_LAYOUT.side} 5mm;
+    background: #fff;
+    text-align: center;
+    position: relative;
+  }
+  .pdf-footer-brand {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
+    text-align: center;
+  }
+  .pdf-footer-brand,
+  .pdf-footer-brand * {
+    text-align: center !important;
+    box-sizing: border-box;
+  }
+  .pdf-footer-brand .pdf-run-footer,
+  .pdf-footer-brand .pdf-run-footer-inner,
+  .pdf-footer-brand .run-footer-html,
+  .pdf-footer-brand .footer,
+  .pdf-footer-brand .footer-master-content,
+  .pdf-footer-brand .doc-footer {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+  .pdf-footer-brand table {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    table-layout: fixed;
+  }
+  .pdf-footer-brand img {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+  .pdf-footer-brand .offices,
+  .pdf-footer-brand .reg {
+    display: flex !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    gap: 12px;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .pdf-footer-brand .office-col {
+    flex: 1 1 0;
+    min-width: 0;
+    text-align: left !important;
+  }
+  .pdf-page-no,
+  .pagenum {
+    display: block;
+    width: 100%;
+    text-align: center !important;
+    font-size: 10px;
+    font-weight: 700;
+    color: #333;
+    margin: 6px 0 0;
+    padding: 0;
+    float: none !important;
+    position: static !important;
+    left: auto !important;
+  }
+
+  @media print {
+    body.po-document-pdf-pages .pdf-page {
+      margin: 0;
+      box-shadow: none;
+      page-break-after: always;
+      break-after: page;
+    }
+    body.po-document-pdf-pages .pdf-page:last-child {
+      page-break-after: auto;
+      break-after: auto;
+    }
+  }
+  .line-item,
+  .po-line-item,
+  .po-line-item td {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  table.terms:not(.annexure-table) .terms-row {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  table.terms:not(.annexure-table) tr.terms-row-continued {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+  table.terms:not(.annexure-table) tr.terms-row-continued th.terms-head-continued {
+    border-top: none !important;
+    border-bottom: none !important;
+    background: #fff;
+  }
+  table.terms:not(.annexure-table) tr.terms-row-continued td {
+    border-top: none !important;
+  }
+  body.po-document-pdf-pages table.terms tr.terms-row-continued > th,
+  body.po-document-pdf-pages table.terms tr.terms-row-continued > td {
+    border-top: none !important;
+  }
+  body.po-document-pdf-pages table.terms tr.terms-row-continued td {
+    padding-top: 0;
+  }
+  table.terms:not(.annexure-table) td p,
+  table.terms:not(.annexure-table) td ul,
+  table.terms:not(.annexure-table) td ol {
+    margin: 3px 0;
+    line-height: 1.35;
+  }
+  table.terms:not(.annexure-table) td ul,
+  table.terms:not(.annexure-table) td ol {
+    padding-left: 18px;
+  }
+  table.terms:not(.annexure-table) td li {
+    margin: 2px 0;
+  }
+  table.annexure-table tr.terms-row,
+  table.annexure-table tbody tr {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+  table.annexure-table tbody tr > td,
+  table.annexure-table tbody tr > th {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+  table.annexure-table tr.terms-row-continued td.sno-col,
+  table.annexure-table tr.terms-row-continued td.head-col {
+    border-top: none !important;
+    border-bottom: none !important;
+    background: #fff;
+  }
+  table.annexure-table tr.terms-row-continued td {
+    border-top: none !important;
+  }
+  body.po-document-pdf-pages table.annexure-table tr.terms-row-continued > td,
+  body.po-document-pdf-pages table.annexure-table tr.terms-row-continued > th {
+    border-top: none !important;
+  }
+  body.po-document-pdf-pages table.annexure-table tr.terms-row-continued td.sno-col,
+  body.po-document-pdf-pages table.annexure-table tr.terms-row-continued td.head-col {
+    border-bottom: none !important;
+  }
+  body.po-document-pdf-pages table.annexure-table tbody tr.terms-row:not(.terms-row-continued) + tr.terms-row-continued > td {
+    border-top: none !important;
+  }
+  table.annexure-table td p,
+  table.annexure-table td ul,
+  table.annexure-table td ol {
+    margin: 3px 0;
+    line-height: 1.35;
+  }
+  table.annexure-table td ul,
+  table.annexure-table td ol {
+    padding-left: 18px;
+  }
+  table.annexure-table td li {
+    margin: 2px 0;
+  }
+
+  body.po-document-pdf-pages table.price,
+  body.po-document-pdf-pages table.terms,
+  table.po-table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    border-spacing: 0;
+    border: 1px solid #000;
+  }
+  /* Line items (Price Schedule): clear black borders in PDF */
+  body.po-document-pdf-pages table.price,
+  body.po-document-pdf-pages table.po-table.price {
+    border: 1.5px solid #000;
+  }
+  body.po-document-pdf-pages table.price th,
+  body.po-document-pdf-pages table.price td,
+  body.po-document-pdf-pages table.terms th,
+  body.po-document-pdf-pages table.terms td,
+  table.po-table th,
+  table.po-table td {
+    border: 1px solid #000;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+    word-break: normal;
+    white-space: normal;
+  }
+  body.po-document-pdf-pages table.price th,
+  body.po-document-pdf-pages table.price td,
+  body.po-document-pdf-pages table.po-table.price th,
+  body.po-document-pdf-pages table.po-table.price td {
+    border: 1.5px solid #000;
+  }
+  body.po-document-pdf-pages table.price th.col-uom,
+  body.po-document-pdf-pages table.price td.col-uom,
+  body.po-document-pdf-pages table.price th.col-tax,
+  body.po-document-pdf-pages table.price td.col-tax,
+  body.po-document-pdf-pages table.price th.col-total,
+  body.po-document-pdf-pages table.price th.col-qty,
+  body.po-document-pdf-pages table.price th.col-sl {
+    white-space: nowrap !important;
+    word-break: keep-all !important;
+    overflow-wrap: normal !important;
+  }
+  body.po-document-pdf-pages .table-frame {
+    border: none;
+  }
+  body.po-document-pdf-pages .table-frame table.price tr > *:first-child,
+  body.po-document-pdf-pages .table-frame table.terms tr > *:first-child,
+  body.po-document-pdf-pages .table-frame table.price tr > *:last-child,
+  body.po-document-pdf-pages .table-frame table.terms tr > *:last-child,
+  body.po-document-pdf-pages .table-frame table.price thead tr:first-child > *,
+  body.po-document-pdf-pages .table-frame table.terms thead tr:first-child > *,
+  body.po-document-pdf-pages .table-frame table.price tbody tr:last-child > *,
+  body.po-document-pdf-pages .table-frame table.terms tbody tr:last-child > * {
+    border: 1px solid #000 !important;
+  }
+  body.po-document-pdf-pages .table-frame table.price tr > *:first-child,
+  body.po-document-pdf-pages .table-frame table.price tr > *:last-child,
+  body.po-document-pdf-pages .table-frame table.price thead tr:first-child > *,
+  body.po-document-pdf-pages .table-frame table.price tbody tr:last-child > * {
+    border-color: #000 !important;
+  }
+  td.description,
+  td.col-description {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: normal;
+    vertical-align: top;
+  }
+  body.po-document-pdf-pages table.price td.amount-cell,
+  body.po-document-pdf-pages table.price td.unit-rate-cell,
+  body.po-document-pdf-pages table.price td.total-amount-cell,
+  body.po-document-pdf-pages table.price td.col-rate,
+  body.po-document-pdf-pages table.price td.col-unit-rate,
+  body.po-document-pdf-pages table.price td.col-total {
+    white-space: nowrap !important;
+    word-break: keep-all !important;
+    overflow-wrap: normal !important;
+    word-wrap: normal !important;
+    text-align: right;
+    padding-left: 4px;
+    padding-right: 4px;
+  }
+
+  /* ===== Document shell — logo bands repeat on every printed page ===== */
+  table.doc-shell {
+    width: 100%;
+    border-collapse: collapse;
+    border: none !important;
+    margin: 0;
+  }
+  table.doc-shell > thead { display: table-header-group; }
+  table.doc-shell > tfoot { display: table-footer-group; }
+  table.doc-shell > tbody { display: table-row-group; }
+  table.doc-shell > thead > tr > td,
+  table.doc-shell > tfoot > tr > td,
+  table.doc-shell > tbody > tr > td.doc-shell-body {
+    border: none !important;
+    padding: 0 !important;
+    background: transparent;
+    vertical-align: top;
+  }
+
+  /* PDF: reserve header/footer space on every printed page */
+  body.po-document-pdf table.doc-shell {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  body.po-document-pdf table.doc-shell > thead > tr > td {
+    padding: 8mm 10mm 5mm 10mm !important;
+    vertical-align: bottom;
+  }
+  body.po-document-pdf table.doc-shell > tfoot > tr > td {
+    padding: 4mm 10mm 8mm 10mm !important;
+    vertical-align: top;
+  }
+  body.po-document-pdf table.doc-shell > tbody > tr > td.doc-shell-body {
+    padding: 0 10mm !important;
+  }
+  body.po-document-pdf table.doc-shell > tbody > tr.doc-shell-row {
+    page-break-inside: auto;
+    break-inside: auto;
+  }
+  body.po-document-pdf .pdf-run-header,
+  body.po-document-pdf .pdf-run-footer {
+    margin: 0;
+    padding: 0;
+  }
+
+  .pdf-run-header {
+    display: block;
+    width: 100%;
+    background: #fff;
+    margin: 0 0 10px;
+    padding: 2px 0 4px;
+  }
+  .pdf-run-header-inner {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    min-height: 44px;
+    padding: 2px 0 4px;
+  }
+  .pdf-run-header-inner .run-header-img,
+  .pdf-run-header-inner img {
+    max-height: 44px !important;
+    max-width: 200px !important;
+    height: auto !important;
+    width: auto !important;
+    object-fit: contain;
+    display: block;
+    margin-left: auto;
+  }
+  .pdf-run-header-inner .logo { font-size: 26px; margin-left: auto; }
+  .pdf-run-header-inner .run-header-text {
+    font-size: 14px;
+    font-weight: 700;
+    color: #111;
+    margin-left: auto;
+  }
+  .pdf-run-footer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    width: 100%;
+    background: #fff;
+    margin: 8px 0 0;
+    padding: 4px 0 2px;
+    border: none;
+    text-align: center;
+  }
+  .pdf-run-footer-inner {
+    width: 100%;
+    text-align: center;
+    font-size: 13px;
+    line-height: 1.45;
+    color: #222;
+    border: none;
+  }
+  .pdf-run-footer-inner,
+  .pdf-run-footer-inner * {
+    text-align: center !important;
+  }
+  .pdf-run-footer-inner table {
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .pdf-run-footer-inner .run-footer-img,
+  .pdf-run-footer-inner img {
+    max-height: 90px !important;
+    max-width: 100% !important;
+    height: auto !important;
+    width: auto !important;
+    object-fit: contain;
+    display: block;
+    margin: 0 auto;
+  }
+  .pdf-run-footer-inner .run-footer-text {
+    font-size: 13px;
+    font-weight: 700;
+    color: #111;
+  }
+  .pdf-run-footer-inner .run-footer-html {
+    font-size: 13px;
+    line-height: 1.45;
+    text-align: center;
+  }
+  .pdf-run-footer-inner .run-footer-html p {
+    margin: 2px 0;
+    text-align: center;
+  }
+  .pdf-run-footer-inner .run-footer-html hr,
+  .pdf-run-footer-inner hr {
+    display: none !important;
+  }
+
+  .page-sheet {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    page-break-after: auto;
+    break-after: auto;
+  }
+
+  .page-terms,
+  .page-annexure,
+  .page-annexure-ii,
+  .page-notes {
+    page-break-before: always !important;
+    break-before: page !important;
+  }
+  /* First content sheet (header + line items) must not force a blank lead-in page */
+  .page-sheet:first-child {
+    page-break-before: auto !important;
+    break-before: auto !important;
+  }
+
+  /* Keep section title with at least one row when a table continues */
+  table.terms thead,
+  table.price thead {
+    display: table-header-group !important;
+  }
+  table.terms tr,
+  table.price tr.total {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  table.annexure-table tr,
+  table.annexure-table tbody tr {
+    page-break-inside: auto !important;
+    break-inside: auto !important;
+  }
+
+  .page-body { width: 100%; }
+
+  @media screen {
+    body.po-document-preview {
+      background: #d1d5db;
+      max-width: none;
+      width: 100%;
+      margin: 0;
+      padding: 18px 12px 32px;
+    }
+    body.po-document-preview .page-sheet {
+      background: #fff;
+      width: 210mm;
+      max-width: 100%;
+      min-height: 297mm;
+      margin: 0 auto 18px;
+      padding: 10mm 12mm 12mm;
+      box-shadow: 0 2px 12px rgba(0,0,0,.16);
+      display: flex;
+      flex-direction: column;
+    }
+    body.po-document-preview .page-annexure.page-sheet,
+    body.po-document-preview .page-terms.page-sheet,
+    body.po-document-preview .page-notes.page-sheet,
+    body.po-document-preview .page-ack.page-sheet {
+      min-height: auto;
+    }
+    body.po-document-preview .page-sheet .page-body { flex: 1 1 auto; }
+    body.po-document-preview .page-sheet .pdf-run-footer { margin-top: auto; width: 100%; }
+  }
+
+  @media print {
+    html, body {
+      background: #fff !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+
+    body.po-document {
+      max-width: none;
+      width: 100%;
+      margin: 0;
+      padding: 0 !important;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    body.po-document-pdf {
+      padding: 3mm 2mm 4mm 2mm !important;
+    }
+
+    table.doc-shell > thead { display: table-header-group !important; }
+    table.doc-shell > tfoot { display: table-footer-group !important; }
+
+    .pdf-run-header { margin: 0 0 8px; }
+    .pdf-run-footer {
+      display: flex !important;
+      flex-direction: column;
+      align-items: center;
+      margin: 6px 0 0;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    /* PDF: chrome templates own header/footer. Tables must not stretch to fill the page. */
+    body.po-document-pdf .page-sheet {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      min-height: 0 !important;
+      height: auto !important;
+    }
+    body.po-document-pdf .table-frame,
+    body.po-document-pdf table.price,
+    body.po-document-pdf table.terms {
+      height: auto !important;
+      min-height: 0 !important;
+    }
+    body.po-document-pdf table.price th,
+    body.po-document-pdf table.price td,
+    body.po-document-pdf table.terms th,
+    body.po-document-pdf table.terms td {
+      height: auto !important;
+      vertical-align: top;
+    }
+    body.po-document-pdf .pdf-run-header,
+    body.po-document-pdf .pdf-run-footer {
+      display: none !important;
+    }
+
+    /* Full cell borders so a split table still has left/right/top/bottom */
+    body.po-document-pdf .table-frame {
+      border: none;
+    }
+    body.po-document-pdf .table-frame table.price tr > *:first-child,
+    body.po-document-pdf .table-frame table.terms tr > *:first-child {
+      border-left: 1px solid #000 !important;
+    }
+    body.po-document-pdf .table-frame table.price tr > *:last-child,
+    body.po-document-pdf .table-frame table.terms tr > *:last-child {
+      border-right: 1px solid #000 !important;
+    }
+    body.po-document-pdf .table-frame table.price thead tr:first-child > *,
+    body.po-document-pdf .table-frame table.terms thead tr:first-child > * {
+      border-top: 1px solid #000 !important;
+    }
+    body.po-document-pdf .table-frame table.price tbody tr:last-child > *,
+    body.po-document-pdf .table-frame table.terms tbody tr:last-child > *,
+    body.po-document-pdf .table-frame table.price tfoot td,
+    body.po-document-pdf .table-frame table.terms tfoot td {
+      border-bottom: 1px solid #000 !important;
+      border-left: 1px solid #000 !important;
+      border-right: 1px solid #000 !important;
+    }
+    body.po-document-pdf .table-frame table.price tr > *:first-child {
+      border-left-color: #000 !important;
+    }
+    body.po-document-pdf .table-frame table.price tr > *:last-child {
+      border-right-color: #000 !important;
+    }
+    body.po-document-pdf .table-frame table.price thead tr:first-child > * {
+      border-top-color: #000 !important;
+    }
+    body.po-document-pdf .table-frame table.price tbody tr:last-child > *,
+    body.po-document-pdf .table-frame table.price tfoot td {
+      border-bottom-color: #000 !important;
+      border-left-color: #000 !important;
+      border-right-color: #000 !important;
+    }
+    body.po-document-pdf table.price th,
+    body.po-document-pdf table.price td {
+      border-color: #000 !important;
+    }
+    body.po-document-pdf table.price tfoot,
+    body.po-document-pdf table.terms tfoot {
+      display: table-footer-group !important;
+    }
+    body.po-document-pdf table.price tfoot td,
+    body.po-document-pdf table.terms tfoot td {
+      height: 0;
+      padding: 0 !important;
+      font-size: 0;
+      line-height: 0;
+      border-top: 1px solid #000 !important;
+    }
+
+    /* Match on-screen PO Document Preview: each sheet is a full A4 page */
+    body.po-document-preview .page-sheet {
+      background: #fff;
+      width: 210mm;
+      max-width: 100%;
+      min-height: 297mm;
+      margin: 0;
+      padding: 10mm 12mm 12mm !important;
+      box-shadow: none;
+      display: flex;
+      flex-direction: column;
+      page-break-after: always;
+      break-after: page;
+    }
+    body.po-document-preview .page-sheet:last-child {
+      page-break-after: auto;
+      break-after: auto;
+    }
+    body.po-document-preview .page-sheet .page-body { flex: 1 1 auto; }
+    body.po-document-preview .page-sheet .pdf-run-footer { margin-top: auto; width: 100%; }
+    body.po-document-preview .page-terms,
+    body.po-document-preview .page-annexure,
+    body.po-document-preview .page-annexure-ii,
+    body.po-document-preview .page-notes {
+      page-break-before: always !important;
+      break-before: page !important;
+    }
+    body.po-document-preview .page-sheet:first-child {
+      page-break-before: auto !important;
+      break-before: auto !important;
+    }
+
+    .page-body,
+    .info-box,
+    .table-frame,
+    .annexure-card,
+    .annexure-ii,
+    .special-notes,
+    .ack-box,
+    .amount-words-inner,
+    table.price,
+    table.terms {
+      width: 100% !important;
+      max-width: 100% !important;
+    }
+
+    .info-box,
+    .table-frame,
+    .annexure-ii,
+    .special-notes,
+    .ack-box {
+      -webkit-box-decoration-break: clone;
+      box-decoration-break: clone;
+    }
+  }
+
+  .logo { font-size: 30px; font-weight: 800; font-style: italic; letter-spacing: -1px; }
+  .logo .r1 { color: #2e3192; } .logo .e1 { color: #27aae1; } .logo .f { color: #39b54a; }
+  .logo .e2 { color: #8dc63f; } .logo .x { color: #f7941d; }
+
+  .title { text-align: center; font-weight: bold; font-size: 16px; letter-spacing: 1px; margin: 8px 0 12px 0; }
+  .po-meta { display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 10px; font-size: 13px; width: 100%; }
+  .nowrap { white-space: nowrap !important; word-break: keep-all !important; overflow-wrap: normal !important; }
+
+  .info-box {
+    border: 1px solid #000;
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    page-break-inside: avoid;
+    break-inside: avoid;
+    width: 100%;
+  }
+  .info-box p { margin: 1px 0; line-height: 1.3; }
+  .info-box a { color: #1155cc; text-decoration: underline; }
+  .letterhead-block { margin-bottom: 6px; width: 100%; }
+  .letterhead-block p { margin: 1px 0; line-height: 1.3; }
+  .letterhead-block p:empty,
+  .letterhead-block p:has(> br:only-child) { display: none; }
+
+  .table-frame {
+    width: 100%;
+    border: 1px solid #000;
+    margin: 6px 0 0;
+    page-break-inside: auto;
+    break-inside: auto;
+  }
+  .table-frame:has(table.price) {
+    border: 1.5px solid #000;
+  }
+  .annexure-card {
+    width: 100%;
+    border: none;
+    background: #fff;
+    page-break-inside: auto;
+    break-inside: auto;
+  }
+  .annexure-card-title {
+    border: 1px solid #000;
+    border-bottom: none;
+    padding: 8px 10px;
+    text-align: center;
+    background: #f2f2f2;
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+  .annexure-card .annexure-table { border: none; width: 100%; }
+
+  .annexure-ii {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    border: 1px solid #000;
+    background: #fff;
+    page-break-inside: auto;
+    break-inside: auto;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none;
+    overflow: visible;
+  }
+  .annexure-ii-title {
+    border-bottom: 1px solid #000;
+    padding: 8px 10px;
+    text-align: center;
+    background: #f2f2f2;
+    font-weight: bold;
+    font-size: 13px;
+    letter-spacing: 0.3px;
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+  .annexure-ii-meta {
+    padding: 6px 14px 0;
+    font-size: 11px;
+    font-weight: 700;
+    color: #333;
+  }
+  .annexure-ii-header {
+    padding: 8px 14px 6px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #111;
+    border-bottom: 1px solid #000;
+    background: #fff;
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+  .annexure-ii-header p {
+    margin: 0;
+  }
+  /* Force pasted Word/editor sizes to match Annexure I body (~10.5px) */
+  .annexure-ii-header,
+  .annexure-ii-header *:not(img) {
+    font-size: 11px !important;
+    font-family: Arial, Helvetica, sans-serif !important;
+    line-height: 1.4 !important;
+  }
+  .annexure-ii-comments { margin-top: 10px; }
+  .annexure-ii-body {
+    padding: 12px 14px;
+    font-size: 10.5px;
+    line-height: 1.4;
+    color: #111;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+    box-sizing: border-box;
+    max-width: 100%;
+    overflow: visible;
+  }
+  .annexure-ii-body,
+  .annexure-ii-body *:not(img) {
+    font-size: 10.5px !important;
+    font-family: Arial, Helvetica, sans-serif !important;
+    line-height: 1.4 !important;
+  }
+  .annexure-ii-body strong,
+  .annexure-ii-body b,
+  .annexure-ii-header strong,
+  .annexure-ii-header b {
+    font-weight: 700 !important;
+  }
+  /* Full-bleed tables (like Annexure I) — avoid double inset that clips the right border */
+  .annexure-ii-body:has(> table),
+  .annexure-ii-body:has(> .annexure-ii-table) {
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .annexure-ii-body:has(> table:first-child),
+  .annexure-ii-body:has(> table.annexure-ii-table:first-child) {
+    padding-top: 0;
+  }
+  .annexure-ii-body p { margin: 6px 0; }
+  .annexure-ii-body ul,
+  .annexure-ii-body ol { margin: 6px 0 6px 22px; padding: 0; }
+  .annexure-ii-body li { margin: 3px 0; }
+  .annexure-ii-body h1,
+  .annexure-ii-body h2,
+  .annexure-ii-body h3,
+  .annexure-ii-body h4,
+  .annexure-ii-body h5,
+  .annexure-ii-body h6 {
+    margin: 6px 0;
+    font-weight: 700;
+    font-size: 10.5px !important;
+  }
+  .annexure-ii-body img {
+    max-width: 100%;
+    max-height: none;
+    height: auto;
+    display: block;
+    margin: 10px 0;
+    page-break-inside: avoid;
+    break-inside: avoid;
+    object-fit: contain;
+  }
+  body.po-document-pdf-pages .annexure-ii-body > figure:only-child,
+  body.po-document-pdf-pages .annexure-ii-body > p:only-child {
+    margin: 0;
+    text-align: left;
+    width: 100%;
+  }
+  .annexure-ii-body figure {
+    margin: 12px 0;
+    text-align: left;
+    width: 100%;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .annexure-ii-body figcaption {
+    font-size: 11px;
+    color: #333;
+    margin-top: 4px;
+  }
+  /* Match Annexure I table chrome: full black grid, fixed layout, no overflow clip */
+  .annexure-ii-body table,
+  .annexure-ii-body table.annexure-ii-table {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    border-collapse: collapse !important;
+    border-spacing: 0 !important;
+    table-layout: fixed !important;
+    margin: 0 0 8px 0;
+    border: 1px solid #000 !important;
+    page-break-inside: auto;
+    break-inside: auto;
+  }
+  .annexure-ii-body table td,
+  .annexure-ii-body table th,
+  .annexure-ii-body table.annexure-ii-table td,
+  .annexure-ii-body table.annexure-ii-table th {
+    box-sizing: border-box !important;
+    border: 1px solid #000 !important;
+    padding: 6px 8px !important;
+    font-size: 11px;
+    line-height: 1.4;
+    vertical-align: top !important;
+    text-align: left;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    white-space: normal !important;
+    overflow: visible !important;
+  }
+  .annexure-ii-body table th,
+  .annexure-ii-body table.annexure-ii-table th {
+    background: #f2f2f2;
+    font-weight: 700;
+    text-align: center;
+  }
+  /* 3-column Annexure-I style: S.No | Header | Description */
+  .annexure-ii-body table.annexure-ii-table-3col col.col-sno,
+  .annexure-ii-body table.annexure-ii-table-3col td:first-child,
+  .annexure-ii-body table.annexure-ii-table-3col th:first-child {
+    width: 8% !important;
+    text-align: center;
+    font-weight: 700;
+  }
+  .annexure-ii-body table.annexure-ii-table-3col col.col-head,
+  .annexure-ii-body table.annexure-ii-table-3col td:nth-child(2),
+  .annexure-ii-body table.annexure-ii-table-3col th:nth-child(2) {
+    width: 22% !important;
+    font-weight: 700;
+  }
+  .annexure-ii-body table.annexure-ii-table-3col col.col-desc,
+  .annexure-ii-body table.annexure-ii-table-3col td:nth-child(3),
+  .annexure-ii-body table.annexure-ii-table-3col th:nth-child(3) {
+    width: 70% !important;
+  }
+  .annexure-ii-body table td p,
+  .annexure-ii-body table th p {
+    margin: 3px 0;
+    line-height: 1.35;
+  }
+  .annexure-ii-body table td ul,
+  .annexure-ii-body table td ol {
+    margin: 3px 0;
+    padding-left: 18px;
+  }
+  .annexure-ii-body table td li {
+    margin: 2px 0;
+  }
+  body.po-document-pdf-pages .annexure-ii-body table,
+  body.po-document-pdf-pages .annexure-ii-body table.annexure-ii-table {
+    width: 100% !important;
+    max-width: 100% !important;
+    table-layout: fixed !important;
+    box-sizing: border-box !important;
+    border: 1px solid #000 !important;
+  }
+  body.po-document-pdf-pages .annexure-ii-body table td,
+  body.po-document-pdf-pages .annexure-ii-body table th {
+    font-size: 10px;
+    line-height: 1.35;
+    padding: 5px 7px !important;
+    border: 1px solid #000 !important;
+    box-sizing: border-box !important;
+    white-space: normal !important;
+    word-break: break-word !important;
+    overflow-wrap: anywhere !important;
+    overflow: visible !important;
+  }
+  body.po-document-pdf-pages .annexure-ii.annexure-ii-cont {
+    border-top: none;
+  }
+  body.po-document-pdf-pages .annexure-ii.annexure-ii-cont .annexure-ii-body {
+    padding-top: 4px;
+  }
+  table.terms-compact th,
+  table.terms-compact td { padding: 5px 7px; font-size: 11px; }
+  /* PDF paginated pages — tighter terms so long Scope of Work fits with less overlap */
+  body.po-document-pdf-pages table.terms-compact th,
+  body.po-document-pdf-pages table.terms-compact td {
+    padding: 2px 4px;
+    font-size: 9.5px;
+    line-height: 1.22;
+  }
+  body.po-document-pdf-pages table.terms-compact th.head-col {
+    font-size: 9.5px;
+    vertical-align: top;
+  }
+  body.po-document-pdf-pages table.terms-compact td p,
+  body.po-document-pdf-pages table.terms-compact td ul,
+  body.po-document-pdf-pages table.terms-compact td ol {
+    margin: 1px 0;
+    line-height: 1.22;
+  }
+  body.po-document-pdf-pages table.terms-compact td ul,
+  body.po-document-pdf-pages table.terms-compact td ol {
+    padding-left: 14px;
+    margin: 1px 0 2px;
+  }
+  body.po-document-pdf-pages table.terms-compact td li {
+    margin: 0;
+    padding: 0;
+  }
+  body.po-document-pdf-pages table.terms-compact tbody tr {
+    height: auto;
+  }
+  body.po-document-pdf-pages table.terms-compact tbody td,
+  body.po-document-pdf-pages table.terms-compact tbody th {
+    height: auto;
+    min-height: 0;
+  }
+
+  /* PDF paginated pages — tighter price schedule / line items */
+  body.po-document-pdf-pages table.price th,
+  body.po-document-pdf-pages table.price td,
+  body.po-document-pdf-pages table.po-table th,
+  body.po-document-pdf-pages table.po-table td {
+    padding: 2px 4px !important;
+    font-size: 9.5px;
+    line-height: 1.22;
+  }
+  body.po-document-pdf-pages table.price th.section-title,
+  body.po-document-pdf-pages table.po-table th.section-title {
+    padding: 3px 5px !important;
+    font-size: 10px;
+  }
+  body.po-document-pdf-pages table.price thead tr.col-heads th,
+  body.po-document-pdf-pages table.po-table thead tr.col-heads th {
+    font-size: 9px;
+    padding: 2px 3px !important;
+  }
+  body.po-document-pdf-pages table.price .spec-block p,
+  body.po-document-pdf-pages table.po-table .spec-block p {
+    margin: 1px 0;
+    line-height: 1.22;
+  }
+  body.po-document-pdf-pages table.price tbody tr,
+  body.po-document-pdf-pages table.po-table tbody tr {
+    height: auto;
+  }
+  body.po-document-pdf-pages table.price tr.amount-words-row .amount-words-inner,
+  body.po-document-pdf-pages table.po-table tr.amount-words-row .amount-words-inner {
+    font-size: 9.5px;
+    line-height: 1.22;
+    gap: 6px;
+  }
+
+  /* Preview / draft PDF — moderately compact line items */
+  body.po-document-preview table.price th,
+  body.po-document-preview table.price td,
+  body.po-document-pdf table.price th,
+  body.po-document-pdf table.price td {
+    padding: 4px 5px;
+    font-size: 10.5px;
+    line-height: 1.25;
+  }
+  body.po-document-preview table.price th.section-title,
+  body.po-document-pdf table.price th.section-title {
+    padding: 4px 6px;
+    font-size: 11px;
+  }
+  body.po-document-preview table.price thead tr.col-heads th,
+  body.po-document-pdf table.price thead tr.col-heads th {
+    font-size: 10px;
+    padding: 3px 4px;
+  }
+  body.po-document-preview table.price .spec-block p,
+  body.po-document-pdf table.price .spec-block p {
+    margin: 2px 0;
+    line-height: 1.25;
+  }
+  body.po-document-preview table.price tr.amount-words-row .amount-words-inner,
+  body.po-document-pdf table.price tr.amount-words-row .amount-words-inner {
+    font-size: 10.5px;
+    line-height: 1.25;
+    gap: 8px;
+  }
+
+  /* PDF paginated pages — tighter PO header / vendor details */
+  body.po-document-pdf-pages .title {
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    margin: 2px 0 4px 0;
+  }
+  body.po-document-pdf-pages .po-meta {
+    font-size: 9.5px;
+    margin-bottom: 4px;
+  }
+  body.po-document-pdf-pages .info-box {
+    padding: 4px 6px;
+    margin-bottom: 6px;
+    font-size: 9.5px;
+  }
+  body.po-document-pdf-pages .info-box p {
+    margin: 0;
+    line-height: 1.2;
+  }
+  body.po-document-pdf-pages .letterhead-block {
+    margin-bottom: 3px;
+  }
+  body.po-document-pdf-pages .letterhead-block p {
+    margin: 0;
+    line-height: 1.2;
+    font-size: 9.5px;
+  }
+  body.po-document-pdf-pages .table-frame {
+    margin: 3px 0 0;
+  }
+
+  /*
+    Uploaded pictures in the PO body.
+    Show the whole image. If it is taller or wider than the page body, scale it down to fit.
+    Letterhead and signature images are excluded.
+  */
+  body.po-document-pdf-pages .annexure-ii-body img,
+  body.po-document-pdf-pages .annexure-ii img,
+  body.po-document-pdf-pages .annexure-figure img,
+  body.po-document-pdf-pages .page-annexure-ii img,
+  body.po-document-pdf-pages .annexure-ii-body table td img,
+  body.po-document-pdf-pages .annexure-ii-body table th img,
+  body.po-document-pdf-pages tr[data-annexure-ii] td img,
+  body.po-document-pdf-pages table.annexure-table td img,
+  body.po-document-pdf-pages table.annexure-table th img,
+  body.po-document-pdf-pages table.terms td img,
+  body.po-document-pdf-pages table.terms th img,
+  body.po-document-pdf-pages table.terms-compact td img,
+  body.po-document-pdf-pages table.terms-compact th img {
+    display: block !important;
+    box-sizing: border-box !important;
+    width: auto !important;
+    height: auto !important;
+    max-width: 100% !important;
+    max-height: calc(var(--pdf-content-h, 920px) - 16px) !important;
+    object-fit: contain !important;
+    object-position: top center !important;
+    margin: 4px auto !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  body.po-document-pdf-pages table.terms td figure,
+  body.po-document-pdf-pages table.annexure-table td figure,
+  body.po-document-pdf-pages .annexure-figure {
+    margin: 0;
+    max-width: 100%;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  /* Preview / draft PDF — moderately compact PO header / vendor details */
+  body.po-document-preview .title,
+  body.po-document-pdf .title {
+    font-size: 13px;
+    letter-spacing: 0.5px;
+    margin: 4px 0 6px 0;
+  }
+  body.po-document-preview .po-meta,
+  body.po-document-pdf .po-meta {
+    font-size: 10.5px;
+    margin-bottom: 6px;
+  }
+  body.po-document-preview .info-box,
+  body.po-document-pdf .info-box {
+    padding: 5px 8px;
+    margin-bottom: 8px;
+    font-size: 10.5px;
+  }
+  body.po-document-preview .info-box p,
+  body.po-document-pdf .info-box p {
+    margin: 0;
+    line-height: 1.22;
+  }
+  body.po-document-preview .letterhead-block,
+  body.po-document-pdf .letterhead-block {
+    margin-bottom: 4px;
+  }
+  body.po-document-preview .letterhead-block p,
+  body.po-document-pdf .letterhead-block p {
+    margin: 0;
+    line-height: 1.22;
+    font-size: 10.5px;
+  }
+  body.po-document-preview .table-frame,
+  body.po-document-pdf .table-frame {
+    margin: 4px 0 0;
+  }
+
+  /* PDF paginated pages — tighter Special Notes & Acknowledgment */
+  body.po-document-pdf-pages .special-notes,
+  body.po-document-pdf-pages .ack-box {
+    padding: 4px 6px;
+    font-size: 9.5px;
+    line-height: 1.22;
+  }
+  body.po-document-pdf-pages .special-notes p,
+  body.po-document-pdf-pages .ack-box p {
+    margin: 1px 0;
+    line-height: 1.22;
+  }
+  body.po-document-pdf-pages .sig-space {
+    min-height: 36px;
+    margin: 4px 0 6px;
+  }
+  body.po-document-pdf-pages .sig-space .sig-img {
+    max-height: 56px;
+    max-width: 180px;
+    padding-bottom: 2px;
+  }
+  body.po-document-pdf-pages .sig-space .dsc-box {
+    margin-top: 4px;
+    padding: 4px 6px;
+    font-size: 8.5px;
+    line-height: 1.25;
+  }
+  body.po-document-pdf-pages .sig-space .dsc-box .dsc-title {
+    font-size: 9px;
+    margin-bottom: 2px;
+  }
+  body.po-document-pdf-pages .sig-space .sig-img.sig-dsc {
+    max-height: 72px;
+    max-width: 240px;
+  }
+  body.po-document-pdf-pages .ack-box .sig-gap {
+    height: 36px;
+  }
+  body.po-document-pdf-pages .notes-ack-stack .special-notes {
+    margin-bottom: 4px;
+  }
+
+  /* Preview / draft PDF — moderately compact Special Notes & Acknowledgment */
+  body.po-document-preview .special-notes,
+  body.po-document-preview .ack-box,
+  body.po-document-pdf .special-notes,
+  body.po-document-pdf .ack-box {
+    padding: 6px 8px;
+    font-size: 10.5px;
+    line-height: 1.25;
+  }
+  body.po-document-preview .special-notes p,
+  body.po-document-preview .ack-box p,
+  body.po-document-pdf .special-notes p,
+  body.po-document-pdf .ack-box p {
+    margin: 2px 0;
+    line-height: 1.25;
+  }
+  body.po-document-preview .sig-space,
+  body.po-document-pdf .sig-space {
+    min-height: 44px;
+    margin: 5px 0 8px;
+  }
+  body.po-document-preview .sig-space .sig-img,
+  body.po-document-pdf .sig-space .sig-img {
+    max-height: 64px;
+    max-width: 200px;
+  }
+  body.po-document-preview .sig-space .dsc-box,
+  body.po-document-pdf .sig-space .dsc-box {
+    margin-top: 5px;
+    padding: 5px 7px;
+    font-size: 9px;
+    line-height: 1.3;
+  }
+  body.po-document-preview .ack-box .sig-gap,
+  body.po-document-pdf .ack-box .sig-gap {
+    height: 44px;
+  }
+  body.po-document-preview .notes-ack-stack .special-notes,
+  body.po-document-pdf .notes-ack-stack .special-notes {
+    margin-bottom: 6px;
+  }
+
+  body.po-document-pdf-pages .pdf-content .table-frame + .table-frame {
+    margin-top: 0;
+  }
+  body.po-document-pdf-pages table.annexure-table th,
+  body.po-document-pdf-pages table.annexure-table td {
+    padding: 2px 4px;
+    font-size: 9.5px;
+    line-height: 1.22;
+  }
+  table.annexure-table th,
+  table.annexure-table td {
+    padding: 3px 5px;
+    font-size: 10.5px;
+    line-height: 1.28;
+  }
+  table.annexure-table td p {
+    margin: 2px 0;
+    line-height: 1.28;
+  }
+  table.annexure-table td ul,
+  table.annexure-table td ol {
+    margin: 2px 0 2px 16px;
+    padding: 0;
+  }
+  table.annexure-table td li {
+    margin: 1px 0;
+  }
+  .notes-ack-stack .special-notes {
+    margin-bottom: 8px;
+  }
+  .notes-ack-stack {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .notes-ack-stack .special-notes,
+  .notes-ack-stack .ack-box {
+    page-break-before: auto;
+    break-before: auto;
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+
+  /*
+   * separate + spacing 0 keeps full black borders on page-break continuations.
+   * collapse often drops the right/top edge on the next page in Chromium.
+   */
+  table.price, table.terms {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    margin: 0;
+    border: none;
+  }
+  table.price th, table.price td,
+  table.terms th, table.terms td {
+    border-top: 1px solid #000;
+    border-left: 1px solid #000;
+    border-right: 1px solid #000;
+    border-bottom: 1px solid #000;
+    padding: 7px 9px;
+    vertical-align: top;
+    font-size: 12px;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+  }
+  table.price th,
+  table.price td {
+    border-top: 1.5px solid #000;
+    border-left: 1.5px solid #000;
+    border-right: 1.5px solid #000;
+    border-bottom: 1.5px solid #000;
+  }
+  /* Avoid double lines between cells */
+  table.price tr > * + *,
+  table.terms tr > * + * {
+    border-left: none;
+  }
+  table.price tr + tr > *,
+  table.terms tr + tr > * {
+    border-top: none;
+  }
+
+  /* Section title row inside thead — repeats on every continued page */
+  table.terms th.section-title,
+  table.price th.section-title {
+    text-align: center;
+    font-weight: bold;
+    background: #f2f2f2;
+    padding: 6px 8px;
+    border: 1px solid #000;
+  }
+  table.price th.section-title {
+    border: 1px solid #000;
+  }
+  table.terms thead tr.col-heads th,
+  table.price thead tr.col-heads th {
+    border-top: none;
+  }
+
+  table.price th, table.terms th { background: #f2f2f2; text-align: center; font-weight: bold; }
+  table.price td, table.terms td { vertical-align: top; height: auto; }
+  table.terms {
+    table-layout: fixed;
+  }
+  table.terms th.head-col,
+  table.terms td.head-col {
+    width: 22%;
+    text-align: left;
+    font-weight: bold;
+    vertical-align: top;
+  }
+  table.terms td { text-align: left; }
+  table.terms td b,
+  table.terms td strong,
+  table.terms td .head-col b,
+  table.terms td .head-col strong { font-weight: 700; }
+  table.terms td i,
+  table.terms td em { font-style: italic; }
+  table.terms td u { text-decoration: underline; }
+  table.terms col.col-sno,
+  table.terms td.sno-col,
+  table.terms th.sno-col {
+    width: 8mm;
+    max-width: 10mm;
+    text-align: center;
+    vertical-align: top;
+    white-space: nowrap;
+    padding-left: 2px;
+    padding-right: 2px;
+    font-weight: 700;
+  }
+  table.terms col.col-terms,
+  table.terms th.col-terms,
+  table.terms td.col-terms {
+    width: auto;
+  }
+  table.price {
+    table-layout: fixed;
+  }
+  table.price col.col-sl,
+  table.price th.col-sl,
+  table.price td.col-sl {
+    width: 5%;
+    text-align: center;
+    vertical-align: top;
+    white-space: nowrap;
+    padding-left: 2px;
+    padding-right: 2px;
+  }
+  table.price col.col-description { width: 40%; }
+  table.price col.col-uom { width: 8%; }
+  table.price col.col-qty { width: 6%; }
+  table.price col.col-unit-rate,
+  table.price col.col-rate { width: 15%; }
+  table.price col.col-tax { width: 8%; }
+  table.price col.col-total { width: 18%; }
+  table.price th.col-uom,
+  table.price td.col-uom,
+  table.price th.col-qty,
+  table.price td.col-qty,
+  table.price th.col-tax,
+  table.price td.col-tax,
+  table.price th.col-sl,
+  table.price th.col-total,
+  table.price th.col-rate,
+  table.price th.col-unit-rate {
+    white-space: nowrap !important;
+    word-break: keep-all !important;
+    overflow-wrap: normal !important;
+    word-wrap: normal !important;
+  }
+  table.price td.center, table.price th { text-align: center; }
+  table.price td.right { text-align: right; }
+  table.price td.amount-cell,
+  table.price td.unit-rate-cell,
+  table.price td.total-amount-cell,
+  table.price td.col-rate,
+  table.price td.col-unit-rate,
+  table.price td.col-total {
+    white-space: nowrap !important;
+    word-break: keep-all !important;
+    overflow-wrap: normal !important;
+    word-wrap: normal !important;
+    text-align: right;
+    vertical-align: top;
+    padding-left: 4px;
+    padding-right: 4px;
+  }
+  table.price tr.total td { font-weight: bold; }
+  table.price .spec-block p { margin: 6px 0; }
+
+  table.terms thead, table.price thead { display: table-header-group; }
+  table.terms tbody, table.price tbody { display: table-row-group; }
+  table.terms tr { page-break-inside: avoid; break-inside: avoid; }
+  table.annexure-table tr { page-break-inside: auto; break-inside: auto; }
+  table.price tbody.price-items tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  table.price tbody.price-totals,
+  table.price tbody.price-totals tr,
+  table.price tr.amount-words-row {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  table.price tr.total {
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+
+  /* One 1px frame on left, right, and bottom — same as top. Cell outer edges sit on the frame. */
+  .table-frame table.price,
+  .table-frame table.terms {
+    border: none;
+  }
+  .table-frame table.price tr > *:first-child,
+  .table-frame table.terms tr > *:first-child {
+    border-left: none;
+  }
+  .table-frame table.price tr > *:last-child,
+  .table-frame table.terms tr > *:last-child {
+    border-right: none;
+  }
+  .table-frame table.price thead tr:first-child > *,
+  .table-frame table.terms thead tr:first-child > * {
+    border-top: none;
+  }
+  .table-frame table.price tbody tr:last-child > *,
+  .table-frame table.terms tbody tr:last-child > * {
+    border-bottom: none;
+  }
+
+  /* Closing row only at the end of the table — do not repeat as a page footer
+     (repeating tfoot stretches empty column lines down the page). */
+  table.price tfoot,
+  table.terms tfoot {
+    display: table-row-group !important;
+  }
+  table.price tfoot td,
+  table.terms tfoot td {
+    padding: 0 !important;
+    height: 0;
+    font-size: 0;
+    line-height: 0;
+    border-top: 1px solid #000;
+    border-bottom: 1px solid #000;
+    border-left: 1px solid #000;
+    border-right: 1px solid #000;
+  }
+  .table-frame table.price tfoot td,
+  .table-frame table.terms tfoot td {
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+  }
+
+  .amount-words-inner {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+    width: 100%;
+    font-size: 12.5px;
+  }
+  .amount-words-inner .label { font-weight: bold; white-space: nowrap; }
+  .amount-words-inner .value {
+    font-weight: bold;
+    text-align: right;
+    flex: 1;
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  table.price tr.amount-words-row td {
+    font-weight: bold;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  h2.annexure-title { text-align: center; margin: 0 0 2px 0; font-size: 14px; font-weight: 700; letter-spacing: 0.5px; }
+  h3.annexure-sub { text-align: center; margin: 0; font-size: 12px; font-weight: 600; color: #333; }
+  .special-notes, .ack-box {
+    width: 100%;
+    border: 1px solid #000;
+    padding: 12px 16px;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .special-notes p, .ack-box p { margin: 6px 0; }
+  .special-notes .lbl { font-weight: bold; }
+  .special-notes .inv-addr-plain { font-weight: normal; font-style: normal; font-family: inherit; }
+  .sig-space { min-height: 72px; margin: 8px 0 12px; }
+  .sig-space .sig-img {
+    max-height: 90px;
+    max-width: 260px;
+    object-fit: contain;
+    display: block;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+  }
+  .sig-space .dsc-box {
+    margin-top: 8px;
+    max-width: 320px;
+    border: 1.5px solid #1d4ed8;
+    background: #eff6ff;
+    padding: 8px 10px;
+    font-size: 10px;
+    line-height: 1.45;
+    color: #1e3a8a;
+  }
+  .sig-space .dsc-box .dsc-title {
+    font-weight: 800;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #1d4ed8;
+    margin-bottom: 4px;
+  }
+  .sig-space .sig-img.sig-dsc {
+    max-height: 120px;
+    max-width: 360px;
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+  .ack-box .sig-gap { height: 70px; }
+`;

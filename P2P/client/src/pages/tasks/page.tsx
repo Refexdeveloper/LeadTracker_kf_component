@@ -1,0 +1,1641 @@
+import { useState, useMemo, useEffect, useCallback, useRef, type CSSProperties } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import DashboardLayout from '../../components/feature/DashboardLayout';
+import StatusBadge from '../../components/base/StatusBadge';
+import PriorityBadge from '../../components/base/PriorityBadge';
+import ApprovalModal from './components/ApprovalModal';
+import TaskDetailDrawer, { type ApprovalProgress } from './components/TaskDetailDrawer';
+import TaskStats, { type TaskStatCard, type TaskStatFilter } from './components/TaskStats';
+import { taskApi, prApi, poApi, cloudSubscriptionApi } from '../../services/api';
+import { useAuth } from '../../contexts/AuthContext';
+import { getUserDesignation } from '../../utils/roleDisplay';
+import { formatDisplayDate } from '../../utils/formatDate';
+import { formatMoney, normalizeCurrency } from '../../constants/currency';
+import TasksMobileFilters from './components/TasksMobileFilters';
+import PeriodPicker from '../dashboard/components/PeriodPicker';
+import '../../styles/dashboard-fx.css';
+import { statusFx } from '../../utils/fx';
+
+function greetingForNow() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+const STAGE_LABELS: Record<string, string> = {
+  SUBMITTED: 'PR Submitted',
+  HOD_REVIEW: 'L1 Manager Review',
+  PR_MANAGER_REVIEW: 'L2 Manager Review',
+  CFO_REVIEW: 'Mugesh Approval',
+  RFQ_MANAGER_REVIEW: 'L1 Vendor Final',
+  RFQ_L2_REVIEW: 'L2 Manager Review',
+  RFQ_CFO_REVIEW: 'Mugesh Approval',
+  RFQ_SCM_BUYER_SELECTION: 'SCM RFQ',
+  BUSINESS_REVIEW: 'SCM Manager Review',
+  SCM_PO_CREATE: 'Create PO',
+  PO_CREATED: 'PO Created',
+  SASS_INVOICE_UPLOAD: 'Mugesh Invoice Upload',
+};
+
+function formatApproverStage(pr: Record<string, unknown>, task: { status: string; currentApprover: string }) {
+  const ui = String(pr.statusUI || pr.statusFrontend || '').trim();
+  const stageRaw = String(pr.currentStage || '').trim();
+  const stageNice = STAGE_LABELS[stageRaw] || (stageRaw ? stageRaw.replace(/_/g, ' ') : '');
+  if (task.status === 'pending_approval') {
+    if (ui && !/^completed$/i.test(ui)) return ui;
+    if (stageNice && !/^completed$/i.test(stageNice)) return stageNice;
+    return 'Awaiting your approval';
+  }
+  if (ui) return ui;
+  if (stageNice) return stageNice;
+  return task.currentApprover && task.currentApprover !== 'Completed' ? task.currentApprover : '—';
+}
+
+interface TaskItem {
+  id: string;
+  prId: number;
+  prNumber: string;
+  title: string;
+  requester: string;
+  department: string;
+  entityName: string;
+  entityCode: string;
+  totalAmount: number;
+  currency?: string;
+  priority: string;
+  status: string;
+  submittedDate: string;
+  dueDate: string;
+  slaRemaining: number;
+  isOverdue: boolean;
+  currentApprover: string;
+  lineItems: number;
+  requestType: string;
+  requesterAvatar: string;
+  requesterRole: string;
+  isPostRfq?: boolean;
+  actionPath?: string;
+  statusUI?: string;
+  poId?: number;
+  isPoSign?: boolean;
+  isPoRevise?: boolean;
+  isRequesterCreatePo?: boolean;
+  isRequesterPoL1?: boolean;
+  isMugeshSign?: boolean;
+  vendorSelection?: 'own' | 'scm';
+  askBusinessApproval?: boolean;
+  requireInvoiceUpload?: boolean;
+  purchaseType?: string;
+  purchaseTypeLabel?: string;
+  isSass?: boolean;
+  isSassInvoiceUpload?: boolean;
+  isSubscriptionRenewal?: boolean;
+  renewalId?: number;
+  invoiceId?: number;
+}
+
+function isSassTask(task: { isSass?: boolean; purchaseType?: string }) {
+  if (task.isSass) return true;
+  const t = String(task.purchaseType || '')
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  return (
+    t === 'sass' ||
+    t === 'saas' ||
+    t === 'cloud_subscription' ||
+    t === 'online_purchase' ||
+    t === 'op'
+  );
+}
+
+function SassBadge({ label = 'Cloud Subscription' }: { label?: string }) {
+  return (
+    <span className="px-1.5 py-0.5 bg-[#E3F2FD] text-[#1565C0] text-[10px] font-bold rounded tracking-wide flex-shrink-0">
+      {label}
+    </span>
+  );
+}
+
+export default function TasksPage() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinkHandled = useRef(false);
+  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [actionUpdates, setActionUpdates] = useState<Record<string, string>>({});
+  const loadTasks = useCallback(async () => {
+    try {
+      const res = await taskApi.list();
+      const mapped = (res.data as Array<Record<string, unknown>>).map((t) => {
+        const rawStatus = String(t.status || 'pending_approval');
+        const status =
+          rawStatus === 'approved' ||
+          rawStatus === 'rejected' ||
+          rawStatus === 'returned' ||
+          rawStatus === 'pending_approval'
+            ? rawStatus
+            : 'pending_approval';
+        return {
+          id: String(t.id),
+          prId: Number(t.prId),
+          prNumber: String(t.prNumber),
+          title: String(t.title),
+          requester: String(t.requester),
+          department: String(t.department || ''),
+          entityName: String(t.entityName || ''),
+          entityCode: String(t.entityCode || ''),
+          totalAmount: Number(t.totalAmount),
+          currency: normalizeCurrency(String(t.currency || 'INR')),
+          priority: String(t.priority),
+          status,
+          submittedDate: String(t.submittedDate || ''),
+          dueDate: String(t.dueDate || ''),
+          slaRemaining: Number(t.slaRemaining) || 0,
+          isOverdue: Boolean(t.isOverdue),
+          currentApprover: status === 'pending_approval' ? 'Awaiting your approval' : '—',
+          lineItems: Number(t.lineItems) || 0,
+          requestType: String(t.requestType || 'Opex'),
+          requesterAvatar: String(t.requesterAvatar || 'R'),
+          requesterRole: String(t.requesterRole || 'Requester'),
+          isPostRfq: Boolean(t.isPostRfq),
+          actionPath: t.actionPath ? String(t.actionPath) : undefined,
+          statusUI: t.statusUI ? String(t.statusUI) : undefined,
+          poId: t.poId ? Number(t.poId) : undefined,
+          isPoSign: Boolean(t.isPoSign),
+          isPoRevise: Boolean(t.isPoRevise),
+          isRequesterCreatePo: Boolean(t.isRequesterCreatePo),
+          isRequesterPoL1: Boolean(t.isRequesterPoL1),
+          isMugeshSign: Boolean(t.isMugeshSign),
+          vendorSelection: t.vendorSelection === 'own' ? 'own' : 'scm',
+          askBusinessApproval: Boolean(t.askBusinessApproval),
+          requireInvoiceUpload: Boolean(t.requireInvoiceUpload),
+          purchaseType: t.purchaseType ? String(t.purchaseType) : 'purchase_order',
+          purchaseTypeLabel: t.purchaseTypeLabel ? String(t.purchaseTypeLabel) : undefined,
+          isSass: Boolean(t.isSass),
+          isSassInvoiceUpload: Boolean(t.isSassInvoiceUpload),
+          isSubscriptionRenewal: Boolean(t.isSubscriptionRenewal),
+          renewalId: t.renewalId != null ? Number(t.renewalId) : undefined,
+          invoiceId: t.invoiceId != null ? Number(t.invoiceId) : undefined,
+        };
+      });
+      setTasks(mapped);
+      setActionUpdates({});
+    } catch {
+      setTasks([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadTasks();
+  }, [loadTasks]);
+
+  // Persist email deep-link so Approve/Reject/Send Back still open after SSO redirect
+  useEffect(() => {
+    const prId = searchParams.get('prId');
+    const action = searchParams.get('action');
+    if (!prId || !action) return;
+    try {
+      sessionStorage.setItem(
+        'p2p_tasks_deep_link',
+        JSON.stringify({ prId, action, savedAt: Date.now() })
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (loading || deepLinkHandled.current) return;
+
+    let prId = searchParams.get('prId');
+    let rawAction = searchParams.get('action');
+    if (!prId || !rawAction) {
+      try {
+        const raw = sessionStorage.getItem('p2p_tasks_deep_link');
+        if (raw) {
+          const parsed = JSON.parse(raw) as { prId?: string; action?: string; savedAt?: number };
+          const age = Date.now() - Number(parsed.savedAt || 0);
+          if (age < 15 * 60 * 1000) {
+            prId = prId || parsed.prId || null;
+            rawAction = rawAction || parsed.action || null;
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    if (!prId) return;
+
+    const task = tasks.find((t) => t.prId === Number(prId));
+    if (!task || task.status !== 'pending_approval') return;
+
+    // Emails may send action=rework for L2 send-back; treat as return modal
+    const action =
+      !rawAction || rawAction === 'approve'
+        ? 'approve'
+        : rawAction === 'rework'
+          ? 'return'
+          : rawAction;
+
+    if (!['approve', 'reject', 'return'].includes(action)) return;
+
+    try {
+      sessionStorage.removeItem('p2p_tasks_deep_link');
+    } catch {
+      /* ignore */
+    }
+
+    if (task.isPostRfq) {
+      deepLinkHandled.current = true;
+      navigate(`/rfq-approval/${task.prId}?action=${action}&from=tasks`);
+      setSearchParams({}, { replace: true });
+      return;
+    }
+
+    deepLinkHandled.current = true;
+    setSelectedTask(task.id);
+    setModalState({
+      isOpen: true,
+      type: action as 'approve' | 'reject' | 'return',
+      taskId: task.id,
+      prNumber: task.prNumber,
+      prTitle: task.title,
+      amount: task.totalAmount,
+      currency: task.currency || 'INR',
+      askBusinessApproval: Boolean(task.askBusinessApproval),
+      requireInvoiceUpload: Boolean(
+        action === 'approve' && (task.requireInvoiceUpload || task.isSassInvoiceUpload)
+      ),
+    });
+    setSearchParams({}, { replace: true });
+  }, [loading, tasks, searchParams, setSearchParams, navigate]);
+
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filter, setFilter] = useState<string>('pending_approval');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [taskPage, setTaskPage] = useState(1);
+  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [selectedTask, setSelectedTask] = useState<string | null>(null);
+  const [drawerDetail, setDrawerDetail] = useState<{
+    id: string;
+    prNumber: string;
+    title: string;
+    requester: string;
+    requesterRole: string;
+    requesterAvatar: string;
+    department: string;
+    entityName: string;
+    entityCode: string;
+    entityCostCenter?: string;
+    requestType: string;
+    requestCategory?: string;
+    projectDetail?: string;
+    expectedDeliveryTimeline?: string;
+    paymentTerms?: string;
+    specialNotes?: string;
+    category: string;
+    priority: string;
+    status: string;
+    totalAmount: number;
+    currency: string;
+    submittedDate: string;
+    requiredDate: string;
+    currentApprover: string;
+    currentStepOwner?: { name?: string; role?: string } | null;
+    approvalProgress?: ApprovalProgress | null;
+    statusUI?: string;
+    justification: string;
+    sendBackRemarks?: string;
+    vendorSelection?: 'own' | 'scm';
+    vendorQuoteRounds?: Array<{
+      invitationId: number;
+      vendorName: string;
+      isRecommended?: boolean;
+      recommendationJustification?: string;
+      rounds: Array<{
+        submissionId?: number;
+        round: number;
+        quotedPrice: number;
+        leadTime?: number | null;
+        paymentTerms?: string;
+        quotationFileName?: string;
+      }>;
+    }>;
+    attachments?: Array<{ id: number; fileName: string; size?: number }>;
+  purchaseType?: string;
+  isSass?: boolean;
+  requireInvoiceUpload?: boolean;
+  isSassInvoiceUpload?: boolean;
+  billingLocation?: string;
+    billingGstNo?: string;
+    billingAddress?: string;
+    placeOfDelivery?: string;
+    deliveryPoc?: string;
+    lineItems: Array<{
+      itemName?: string;
+      description: string;
+      qty: number;
+      unit: string;
+      unitCost: number;
+      total: number;
+    }>;
+    approvalHistory: Array<{
+      step: string;
+      approver: string;
+      role: string;
+      date: string;
+      status: string;
+      remarks: string;
+    }>;
+    slaHours: number;
+    slaRemaining: number;
+    isOverdue: boolean;
+    prId?: number;
+  } | null>(null);
+  const [drawerLoading, setDrawerLoading] = useState(false);
+
+  const [modalState, setModalState] = useState<{
+    isOpen: boolean;
+    type: 'approve' | 'reject' | 'return';
+    taskId: string;
+    prNumber: string;
+    prTitle: string;
+    amount: number;
+    currency?: string;
+    askBusinessApproval?: boolean;
+    requireInvoiceUpload?: boolean;
+  }>({
+    isOpen: false,
+    type: 'approve',
+    taskId: '',
+    prNumber: '',
+    prTitle: '',
+    amount: 0,
+    currency: 'INR',
+    askBusinessApproval: false,
+    requireInvoiceUpload: false,
+  });
+
+  const showToast = (text: string, type: 'success' | 'error') => {
+    if (/invalid or expired token/i.test(text)) return;
+    setToastMessage({ text, type });
+    setTimeout(() => setToastMessage(null), 6000);
+  };
+
+  const openPostRfqPage = (task: TaskItem, action?: 'approve' | 'reject' | 'return') => {
+    if (task.isRequesterCreatePo || (user?.role === 'Requester' && task.actionPath?.includes('/scm/create-po'))) {
+      navigate(task.actionPath || `/scm/create-po?prId=${task.prId}&from=tasks`);
+      return;
+    }
+    // Buyer Create PO queue → go straight to Create PO
+    if (
+      user?.role === 'SCM Buyer' &&
+      (task.statusUI === 'Pending SCM PO' || task.actionPath?.includes('/rfq-approval/')) &&
+      (!action || action === 'approve')
+    ) {
+      navigate(`/scm/create-po?prId=${task.prId}&from=tasks`);
+      return;
+    }
+    const base = task.actionPath || `/rfq-approval/${task.prId}`;
+    const params = new URLSearchParams();
+    params.set('from', 'tasks');
+    if (action) params.set('action', action);
+    navigate(`${base}?${params.toString()}`);
+  };
+
+  const openTaskDetail = async (taskId: string) => {
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+
+    // Post-RFQ Manager task → vendor comparison page (not PR drawer)
+    if (task.isRequesterCreatePo || (user?.role === 'Requester' && task.actionPath?.includes('/scm/create-po'))) {
+      navigate(task.actionPath || `/scm/create-po?prId=${task.prId}&from=tasks`);
+      return;
+    }
+    if (task.isPostRfq || task.actionPath?.includes('/rfq-approval/')) {
+      openPostRfqPage(task);
+      return;
+    }
+    if (task.isPoSign || task.actionPath?.includes('/scm/po-approval')) {
+      const params = new URLSearchParams();
+      params.set('from', 'tasks');
+      if (task.poId) params.set('poId', String(task.poId));
+      navigate(`/scm/po-approval?${params.toString()}`);
+      return;
+    }
+    if (task.isPoRevise || task.actionPath?.includes('/scm/create-po')) {
+      navigate(task.actionPath || `/scm/create-po?poId=${task.poId || ''}&from=tasks`);
+      return;
+    }
+    if (task.actionPath?.includes('/scm/buyer-final-verify')) {
+      navigate(`${task.actionPath}?from=tasks`);
+      return;
+    }
+
+    setSelectedTask(taskId);
+    setDrawerLoading(true);
+    setDrawerDetail({
+      id: task.id,
+      prNumber: task.prNumber,
+      title: task.title,
+      requester: task.requester,
+      requesterRole: task.requesterRole,
+      requesterAvatar: task.requesterAvatar,
+      department: task.department,
+      entityName: task.entityName,
+      entityCode: task.entityCode,
+      entityCostCenter: '',
+      requestType: task.requestType,
+      requestCategory: '',
+      projectDetail: '',
+      expectedDeliveryTimeline: '',
+      paymentTerms: '',
+      specialNotes: '',
+      category: '—',
+      priority: task.priority,
+      status: task.status,
+      totalAmount: task.totalAmount,
+      currency: normalizeCurrency(task.currency),
+      submittedDate: task.submittedDate,
+      requiredDate: '',
+      currentApprover: task.currentApprover,
+      justification: 'Loading…',
+      vendorSelection: task.vendorSelection === 'own' ? 'own' : 'scm',
+      purchaseType: task.purchaseType,
+      isSass: isSassTask(task),
+      requireInvoiceUpload: Boolean(task.requireInvoiceUpload),
+      isSassInvoiceUpload: Boolean(task.isSassInvoiceUpload),
+      billingLocation: '',
+      billingGstNo: '',
+      billingAddress: '',
+      placeOfDelivery: '',
+      deliveryPoc: '',
+      vendorQuoteRounds: [],
+      attachments: [],
+      lineItems: [],
+      approvalHistory: [],
+      slaHours: 48,
+      slaRemaining: task.slaRemaining,
+      isOverdue: task.isOverdue,
+      prId: task.prId,
+    });
+
+    try {
+      const res = await prApi.get(task.prId);
+      const pr = res.data as Record<string, unknown>;
+      const lineItems = ((pr.lineItems as Array<Record<string, unknown>>) || []).map((li) => {
+        const qty = Number(li.quantity ?? li.qty);
+        const unitRaw = String(li.unit || '').trim();
+        const description = String(li.description || li.item || '');
+        const itemName = String(li.itemName || li.item_name || li.item || description || '');
+        return {
+          itemName,
+          description,
+          qty: Number.isFinite(qty) && qty > 0 ? qty : 0,
+          unit: !unitRaw || /^\d+(\.\d+)?$/.test(unitRaw) ? 'Nos' : unitRaw,
+          unitCost: Number(li.unitCost || li.unitPrice || 0),
+          total: Number(li.total || 0),
+        };
+      });
+      const approvalHistory = ((pr.approvalHistory as Array<Record<string, unknown>>) || []).map((h) => ({
+        step: String(h.stage || h.step || 'Step'),
+        approver: String(h.user || h.approver || 'System'),
+        role: String(h.role || ''),
+        date: String(h.date || h.timestamp || ''),
+        status: String(h.status || h.action || ''),
+        remarks: String(h.remarks || ''),
+      }));
+      const firstCategory = lineItems.length
+        ? String(((pr.lineItems as Array<Record<string, unknown>>)[0]?.category) || 'General')
+        : 'General';
+      const vendorSelection =
+        pr.vendorSelection === 'own' || task.vendorSelection === 'own' ? 'own' : 'scm';
+
+      const purchaseType = String(pr.purchaseType || task.purchaseType || 'purchase_order');
+      const isSass =
+        isSassTask(task) ||
+        ['sass', 'saas', 'cloud_subscription'].includes(
+          purchaseType.toLowerCase().replace(/[\s-]+/g, '_')
+        );
+
+      setDrawerDetail({
+        id: task.id,
+        prNumber: String(pr.prNumber || task.prNumber),
+        title: String(pr.title || task.title),
+        requester: String(pr.requester || task.requester),
+        requesterRole: task.requesterRole,
+        requesterAvatar: task.requesterAvatar,
+        department: String(pr.department || task.department),
+        entityName: String(pr.entityName || task.entityName || ''),
+        entityCode: String(pr.entityCode || task.entityCode || ''),
+        entityCostCenter: String(pr.entityCostCenter || pr.costCenter || ''),
+        requestType: String(pr.requestType || task.requestType),
+        requestCategory: String(pr.requestCategory || firstCategory || ''),
+        projectDetail: String(pr.projectDetail || ''),
+        expectedDeliveryTimeline: String(pr.expectedDeliveryTimeline || ''),
+        paymentTerms: String(pr.paymentTerms || ''),
+        specialNotes: String(pr.specialNotes || ''),
+        category: firstCategory,
+        priority: String(pr.priorityLower || pr.priority || task.priority).toLowerCase(),
+        status: task.status === 'pending_approval' ? 'pending_approval' : task.status,
+        totalAmount: Number(pr.totalAmount ?? task.totalAmount),
+        currency: normalizeCurrency(
+          String(pr.currency || task.currency || 'INR')
+        ),
+        submittedDate: String(pr.submittedDate || task.submittedDate),
+        requiredDate: String(pr.requiredDate || ''),
+        currentApprover: formatApproverStage(pr, task),
+        currentStepOwner: (() => {
+          const ca = pr.currentApprover as { name?: string; role?: string } | string | null | undefined;
+          if (ca && typeof ca === 'object') {
+            return {
+              name: String(ca.name || '').trim(),
+              role: String(ca.role || '').trim(),
+            };
+          }
+          if (typeof ca === 'string' && ca.trim()) return { name: ca.trim(), role: '' };
+          return { name: '', role: '' };
+        })(),
+        approvalProgress: (pr.approvalProgress as ApprovalProgress | null | undefined) || null,
+        statusUI: String(pr.statusUI || pr.statusFrontend || '').trim(),
+        justification: String(pr.justification || 'No justification provided.'),
+        sendBackRemarks: String(pr.sendBackRemarks || ''),
+        vendorSelection,
+        purchaseType,
+        isSass,
+        requireInvoiceUpload: Boolean(task.requireInvoiceUpload),
+        isSassInvoiceUpload: Boolean(task.isSassInvoiceUpload),
+        isMugeshSign: Boolean(task.isMugeshSign),
+        billingLocation: String(pr.billingLocation || ''),
+        billingGstNo: String(pr.billingGstNo || ''),
+        billingAddress: String(pr.billingAddress || ''),
+        placeOfDelivery: String(pr.placeOfDelivery || ''),
+        deliveryPoc: String(pr.deliveryPoc || ''),
+        vendorQuoteRounds: Array.isArray(pr.vendorQuoteRounds) ? pr.vendorQuoteRounds : [],
+        attachments: Array.isArray(pr.attachments)
+          ? (pr.attachments as Array<{ id: number; fileName: string; size?: number }>).filter(
+              (file) => Number(file?.id) > 0 && String(file?.fileName || '').trim()
+            )
+          : [],
+        lineItems,
+        approvalHistory,
+        slaHours: 48,
+        slaRemaining: task.slaRemaining,
+        isOverdue: task.isOverdue,
+        prId: task.prId,
+      });
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to load PR details', 'error');
+      setSelectedTask(null);
+      setDrawerDetail(null);
+    } finally {
+      setDrawerLoading(false);
+    }
+  };
+
+  const openModal = (taskId: string, type: 'approve' | 'reject' | 'return') => {
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+    // Post-RFQ: go to vendor comparison page, then open approval popup there
+    if (task.isPostRfq || task.actionPath?.includes('/rfq-approval/')) {
+      openPostRfqPage(task, type);
+      return;
+    }
+    if (task.isRequesterCreatePo || task.isPoRevise) {
+      navigate(task.actionPath || `/scm/create-po?poId=${task.poId || ''}&prId=${task.prId}&from=tasks`);
+      return;
+    }
+    if (task.isPoSign && type === 'approve') {
+      const params = new URLSearchParams();
+      params.set('from', 'tasks');
+      if (task.poId) params.set('poId', String(task.poId));
+      navigate(`/scm/po-approval?${params.toString()}`);
+      return;
+    }
+    setModalState({
+      isOpen: true,
+      type,
+      taskId,
+      prNumber: task.prNumber,
+      prTitle: task.title,
+      amount: task.totalAmount,
+      currency: task.currency || 'INR',
+      askBusinessApproval: Boolean(task.askBusinessApproval),
+      requireInvoiceUpload: Boolean(
+        type === 'approve' && (task.requireInvoiceUpload || task.isSassInvoiceUpload)
+      ),
+    });
+  };
+
+  const handleConfirm = async (
+    remarks: string,
+    returnTo?: string,
+    goToBusinessApproval?: boolean,
+    invoice?: {
+      fileName: string;
+      fileData: string;
+      invoiceDate?: string;
+      invoiceNumber?: string;
+    }
+  ) => {
+    const { taskId, type, prNumber } = modalState;
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) {
+      throw new Error('Task not found — refresh My Tasks and try again');
+    }
+    const action = type === 'approve' ? 'approve' : type === 'return' ? 'return' : 'reject';
+    try {
+      if (task.isMugeshSign && task.poId && type === 'approve') {
+        if (!invoice?.fileName || !invoice?.fileData) {
+          throw new Error('Signed PO document is required');
+        }
+        await poApi.mugeshSign(task.poId, {
+          fileName: invoice.fileName,
+          fileData: invoice.fileData,
+          remarks,
+        });
+      } else if (task.isRequesterPoL1 && task.poId) {
+        const l1Action = type === 'return' ? 'send_back' : type === 'reject' ? 'reject' : 'approve';
+        await poApi.requesterL1(task.poId, l1Action, remarks);
+      } else if (task.isPoSign && task.poId) {
+        if (type === 'return') {
+          await poApi.sendBack(task.poId, remarks);
+        } else if (type === 'reject') {
+          await poApi.reject(task.poId, remarks);
+        } else {
+          throw new Error('PO sign approval must be done from the PO Approval page');
+        }
+      } else if (task.isSassInvoiceUpload && type === 'approve') {
+        if (!invoice?.fileName || !invoice?.fileData) {
+          throw new Error('Invoice file is required');
+        }
+        await prApi.submitSassInvoice(task.prId, {
+          invoiceNumber: String(invoice.invoiceNumber || '').trim() || `CS-${task.prId}`,
+          fileName: invoice.fileName,
+          fileData: invoice.fileData,
+          invoiceDate: invoice.invoiceDate,
+          remarks,
+        });
+      } else if (task.isSubscriptionRenewal && task.renewalId) {
+        if (type === 'return') {
+          throw new Error('Send-back is not available for subscription renewals — approve or reject');
+        }
+        await cloudSubscriptionApi.approveRenewal(
+          task.renewalId,
+          type === 'approve' ? 'approve' : 'reject',
+          remarks
+        );
+      } else {
+        await prApi.approve(task.prId, action, remarks, {
+          ...(type === 'return' && returnTo ? { returnTo } : {}),
+          ...(typeof goToBusinessApproval === 'boolean' ? { goToBusinessApproval } : {}),
+          ...(invoice ? { invoice } : {}),
+        });
+      }
+      setActionUpdates((prev) => ({
+        ...prev,
+        [taskId]: type === 'approve' ? 'approved' : type === 'return' ? 'returned' : 'rejected',
+      }));
+      showToast(
+        type === 'approve'
+          ? task.isSassInvoiceUpload
+            ? `${prNumber} invoice uploaded successfully`
+            : `${prNumber} has been approved successfully`
+          : type === 'return'
+          ? task.isPoSign
+            ? `${prNumber} sent back to SCM Buyer for revision`
+            : `${prNumber} has been sent back for rework`
+          : `${prNumber} has been rejected`,
+        type === 'reject' ? 'error' : 'success'
+      );
+      setModalState((prev) => ({ ...prev, isOpen: false }));
+      setSelectedTask(null);
+      setDrawerDetail(null);
+      if (type === 'approve') setFilter('approved');
+      else if (type === 'reject') setFilter('rejected');
+      else setFilter('returned');
+      await loadTasks();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Action failed';
+      showToast(message, 'error');
+      throw err instanceof Error ? err : new Error(message);
+    }
+  };
+
+  const processedTasks = useMemo(() => {
+    return tasks.map((t) => ({
+      ...t,
+      status: actionUpdates[t.id] || t.status,
+    }));
+  }, [tasks, actionUpdates]);
+
+  const filteredTasks = useMemo(() => {
+    let result = [...processedTasks];
+
+    if (searchTerm) {
+      const q = searchTerm.toLowerCase();
+      result = result.filter(
+        (t) =>
+          t.prNumber.toLowerCase().includes(q) ||
+          t.title.toLowerCase().includes(q) ||
+          t.requester.toLowerCase().includes(q) ||
+          t.department.toLowerCase().includes(q) ||
+          t.entityName.toLowerCase().includes(q) ||
+          t.entityCode.toLowerCase().includes(q)
+      );
+    }
+
+    if (filter === 'overdue') {
+      result = result.filter((t) => t.isOverdue && t.status === 'pending_approval');
+    } else if (filter !== 'all') {
+      result = result.filter((t) => t.status === filter);
+    }
+
+    if (dateFrom || dateTo) {
+      const fromTs = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : null;
+      const toTs = dateTo ? new Date(`${dateTo}T23:59:59.999`).getTime() : null;
+      result = result.filter((t) => {
+        const ts = new Date(t.submittedDate).getTime();
+        if (Number.isNaN(ts)) return false;
+        if (fromTs != null && ts < fromTs) return false;
+        if (toTs != null && ts > toTs) return false;
+        return true;
+      });
+    }
+
+    result.sort(
+      (a, b) =>
+        new Date(b.submittedDate).getTime() - new Date(a.submittedDate).getTime()
+    );
+
+    // Push completed tasks to the bottom
+    result.sort((a, b) => {
+      const aCompleted =
+        a.status === 'approved' || a.status === 'rejected' || a.status === 'returned';
+      const bCompleted =
+        b.status === 'approved' || b.status === 'rejected' || b.status === 'returned';
+      if (aCompleted && !bCompleted) return 1;
+      if (!aCompleted && bCompleted) return -1;
+      return 0;
+    });
+
+    return result;
+  }, [processedTasks, searchTerm, filter, dateFrom, dateTo]);
+
+  const isScmManager = user?.role === 'SCM Manager';
+  const taskPageSize =
+    isScmManager && (filter === 'all' || filter === 'approved')
+      ? 5
+      : filter === 'approved'
+        ? 10
+        : 0;
+  const isPagedView = taskPageSize > 0;
+  const taskTotalPages = isPagedView
+    ? Math.max(1, Math.ceil(filteredTasks.length / taskPageSize))
+    : 1;
+  const taskPageSafe = Math.min(taskPage, taskTotalPages);
+  const pagedTasks = isPagedView
+    ? filteredTasks.slice((taskPageSafe - 1) * taskPageSize, taskPageSafe * taskPageSize)
+    : filteredTasks;
+
+  useEffect(() => {
+    setTaskPage(1);
+  }, [filter, searchTerm, dateFrom, dateTo]);
+
+  const stats = useMemo(() => {
+    const pending = processedTasks.filter(
+      (t) => t.status === 'pending_approval'
+    ).length;
+    const approved = processedTasks.filter((t) => t.status === 'approved')
+      .length;
+    const rejected = processedTasks.filter((t) => t.status === 'rejected')
+      .length;
+    const overdue = processedTasks.filter(
+      (t) => t.isOverdue && t.status === 'pending_approval'
+    ).length;
+    return { pending, approved, rejected, overdue };
+  }, [processedTasks]);
+
+  const tabCounts: Record<string, number> = {
+    all: processedTasks.length,
+    pending_approval: stats.pending,
+    approved: stats.approved,
+    rejected: stats.rejected,
+    returned: processedTasks.filter((t) => t.status === 'returned').length,
+    overdue: stats.overdue,
+  };
+
+  const formatDate = (dateStr: string) => formatDisplayDate(dateStr);
+
+  const formatAmount = (amount: number, currency?: string) =>
+    formatMoney(amount, currency, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const getSlaInfo = (task: typeof processedTasks[0]) => {
+    if (task.status !== 'pending_approval') return null;
+    if (task.isOverdue) return { label: 'Overdue', cls: 'text-red-600 bg-red-50' };
+    if (task.slaRemaining <= 8)
+      return { label: `${task.slaRemaining}h left`, cls: 'text-red-600 bg-red-50' };
+    if (task.slaRemaining <= 24)
+      return { label: `${task.slaRemaining}h left`, cls: 'text-sky-700 bg-sky-50' };
+    return {
+      label: `${Math.ceil(task.slaRemaining / 24)}d left`,
+      cls: 'text-emerald-600 bg-emerald-50',
+    };
+  };
+
+  const widgetCards: TaskStatCard[] = [
+    {
+      title: 'Pending Approval',
+      filter: 'pending_approval',
+      value: stats.pending,
+      icon: 'ri-time-line',
+    },
+    {
+      title: 'Approved',
+      filter: 'approved',
+      value: stats.approved,
+      icon: 'ri-check-double-line',
+    },
+    {
+      title: 'Rejected',
+      filter: 'rejected',
+      value: stats.rejected,
+      icon: 'ri-close-circle-line',
+    },
+    {
+      title: 'Overdue SLA',
+      filter: 'overdue',
+      value: stats.overdue,
+      icon: 'ri-alarm-warning-line',
+    },
+  ];
+
+  const roleLabel = getUserDesignation(user) || user?.role || 'Approver';
+
+  const selectCardFilter = (next: TaskStatFilter) => {
+    setFilter(next);
+    requestAnimationFrame(() => {
+      document.getElementById('tasks-pr-table')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    });
+  };
+
+  const renderRowActions = (task: TaskItem, isPending: boolean, compact = false) => (
+    <div
+      className={`flex items-center ${compact ? 'gap-1.5 flex-wrap justify-end' : 'gap-1.5'}`}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {(task.isPostRfq || task.actionPath?.includes('/rfq-approval/')) && (
+        <button
+          onClick={() => openPostRfqPage(task)}
+          className="cursor-pointer rounded-xl bg-[#EEF2FF] p-2 text-[#2563EB] transition-colors hover:bg-[#DBEAFE]"
+          title="Vendor Comparison"
+        >
+          <i className="ri-table-line"></i>
+        </button>
+      )}
+      <button
+        onClick={() => openTaskDetail(task.id)}
+        className="cursor-pointer rounded-xl bg-[#DBEAFE] p-2 text-[#2563EB] transition-colors hover:bg-[#BFDBFE]"
+        title={
+          task.isPostRfq || task.actionPath?.includes('/rfq-approval/')
+            ? 'Open Vendor Comparison'
+            : 'View Details'
+        }
+      >
+        <i className="ri-eye-line"></i>
+      </button>
+      {isPending && task.isPoRevise && (
+        <button
+          onClick={() => openModal(task.id, 'approve')}
+          className="cursor-pointer rounded-xl bg-[#FFEDD5] p-2 text-[#F97316] transition-colors hover:bg-orange-100"
+          title="Revise PO"
+        >
+          <i className="ri-edit-line"></i>
+        </button>
+      )}
+      {isPending && !task.isPoRevise && (
+        <>
+          <button
+            onClick={() => openModal(task.id, 'approve')}
+            className={`cursor-pointer rounded-xl p-2 transition-colors ${
+              task.isSassInvoiceUpload || task.requireInvoiceUpload
+                ? 'bg-[#E3F2FD] text-[#1E88E5] hover:bg-[#BBDEFB]'
+                : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
+            }`}
+            title={
+              task.isMugeshSign
+                ? 'Sign & Upload'
+                : task.isRequesterCreatePo
+                  ? 'Create PO'
+                : task.isSassInvoiceUpload || task.requireInvoiceUpload
+                  ? 'Upload Invoice'
+                  : task.isPostRfq || task.actionPath?.includes('/rfq-approval/')
+                    ? 'Approve (Vendor Comparison)'
+                    : task.isPoSign
+                      ? 'Sign & Approve'
+                      : task.actionPath?.includes('/scm/buyer-final-verify')
+                        ? 'Verify'
+                        : 'Approve'
+            }
+          >
+            <i
+              className={
+                task.isMugeshSign || task.isSassInvoiceUpload || task.requireInvoiceUpload
+                  ? 'ri-file-upload-line'
+                  : task.isRequesterCreatePo
+                    ? 'ri-file-add-line'
+                  : task.isPoSign
+                    ? 'ri-quill-pen-line'
+                    : 'ri-check-line'
+              }
+            ></i>
+          </button>
+          {!task.actionPath?.includes('/scm/buyer-final-verify') &&
+            !task.isSassInvoiceUpload &&
+            !task.isMugeshSign &&
+            !task.isRequesterCreatePo &&
+            !task.isSubscriptionRenewal && (
+            <>
+              <button
+                onClick={() => openModal(task.id, 'return')}
+                className="cursor-pointer rounded-xl bg-[#FFEDD5] p-2 text-[#F97316] transition-colors hover:bg-orange-100"
+                title={task.isPoSign ? 'Send Back to Buyer' : 'Send Back'}
+              >
+                <i className="ri-arrow-go-back-line"></i>
+              </button>
+              <button
+                onClick={() => openModal(task.id, 'reject')}
+                className="cursor-pointer rounded-xl bg-[#FFE4E6] p-2 text-[#F43F5E] transition-colors hover:bg-rose-100"
+                title="Reject"
+              >
+                <i className="ri-close-line"></i>
+              </button>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+
+  return (
+    <DashboardLayout>
+      <div className="tasks-fx min-h-full font-sans text-[#0F172A]">
+      <section className="tfx-hero tfx-hero--plain">
+        <div className="tfx-bubbles" aria-hidden="true">
+          <i /><i /><i /><i /><i /><i /><i />
+        </div>
+        <div className="tfx-hero-content">
+          <div className="tfx-hi">
+            {greetingForNow()}, <span className="tfx-wave">👋</span>
+          </div>
+          <h1>
+            <span className="tfx-shimmer">{user?.name || 'User'}</span>
+          </h1>
+          <p>
+            Here&apos;s what&apos;s happening with your purchase requests today
+            <span className="tfx-role-inline"> · {roleLabel}</span>
+          </p>
+        </div>
+        <div className="tfx-period hidden min-[992px]:block">
+          <p className="tfx-period-lbl">Period</p>
+          <PeriodPicker
+            hideLabel
+            dateFrom={dateFrom}
+            dateTo={dateTo}
+            fullWidth
+            onChange={({ dateFrom: from, dateTo: to }) => {
+              setDateFrom(from);
+              setDateTo(to);
+            }}
+          />
+        </div>
+      </section>
+
+      <section className="tfx-kpis mb-4">
+        <div className="tfx-mobile-filters mb-3 min-[992px]:hidden">
+          <TasksMobileFilters
+            value={{
+              search: searchTerm,
+              status: filter,
+              dateFrom,
+              dateTo,
+            }}
+            onApply={(next) => {
+              setSearchTerm(next.search);
+              setFilter(next.status);
+              setDateFrom(next.dateFrom);
+              setDateTo(next.dateTo);
+            }}
+          />
+        </div>
+        {loading ? (
+          <div className="grid grid-cols-1 items-stretch gap-3 sm:grid-cols-2 sm:gap-4 md:gap-5 lg:grid-cols-4">
+            {[0, 1, 2, 3].map((i) => (
+              <div
+                key={i}
+                className="min-h-[170px] animate-pulse rounded-[18px] bg-white/90 shadow-[0_10px_30px_rgba(20,90,120,0.08)]"
+              />
+            ))}
+          </div>
+        ) : (
+          <TaskStats
+            cards={widgetCards}
+            selectedFilter={filter}
+            onSelect={selectCardFilter}
+            total={processedTasks.length}
+          />
+        )}
+      </section>
+
+      <div className="p-2 pb-4 pt-0 sm:p-3 sm:pt-0 lg:p-6 lg:pt-0">
+      <div
+        id="tasks-pr-table"
+        className="tfx-panel relative scroll-mt-24 overflow-hidden rounded-2xl border border-white/70 bg-white/95 shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] sm:rounded-[18px]"
+      >
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              'radial-gradient(120% 90% at 100% 0%, rgba(23, 162, 180, 0.10) 0%, rgba(248,250,252,0) 55%)',
+          }}
+        />
+
+        {/* Desktop (≥992px) inline filters */}
+        <div className="relative z-[1] hidden border-b border-slate-100/80 min-[992px]:block">
+          <div className="flex flex-col gap-2 px-3 py-3 sm:px-4">
+            <div className="flex items-center gap-3.5 pb-1">
+              <div className="tfx-panel-ic flex h-12 w-12 items-center justify-center rounded-xl">
+                <i className="ri-task-line text-lg" aria-hidden />
+              </div>
+              <div>
+                <h2 className="tfx-panel-title text-lg font-semibold text-slate-900">
+                  Purchase Request Approvals
+                </h2>
+                <p className="mt-1.5 text-sm text-slate-500">
+                  Review and take action on pending purchase requests
+                </p>
+              </div>
+            </div>
+            <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
+              <div className="relative shrink-0">
+                <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                <input
+                  type="text"
+                  placeholder="Search PR number, title, requester..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="tfx-input h-10 w-72 rounded-xl border bg-white pl-9 pr-3 text-sm shadow-[0_8px_24px_-12px_rgba(15,23,42,0.10)] outline-none focus:border-[#93C5FD] focus:ring-2 focus:ring-[#2563EB]/15"
+                />
+              </div>
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                  {[
+                    { key: 'all', label: 'All' },
+                    { key: 'pending_approval', label: 'Pending' },
+                    { key: 'approved', label: 'Approved' },
+                    { key: 'rejected', label: 'Rejected' },
+                    { key: 'returned', label: 'Returned' },
+                    { key: 'overdue', label: 'Overdue' },
+                  ].map((tab) => (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => {
+                        // Play the matching KPI card's animation on the card itself.
+                        const card = document.querySelector<HTMLElement>(`.tfx-kpi.${tab.key}`);
+                        if (card) statusFx(tab.key, card);
+                        setFilter(tab.key);
+                      }}
+                      className={`tfx-tab inline-flex h-10 items-center gap-2 cursor-pointer whitespace-nowrap rounded-xl px-3 text-xs font-semibold ${
+                        filter === tab.key ? 'is-active ' : ''
+                      }${
+                        filter === tab.key
+                          ? 'border border-transparent text-white'
+                          : 'border border-[#e3eaef] bg-white text-slate-700'
+                      }`}
+                    >
+                      {tab.label}
+                      <span className="tfx-cnt">{tabCounts[tab.key] ?? 0}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+          <div className="flex flex-wrap items-center gap-2 px-3 pb-3 sm:px-4">
+            {(searchTerm || dateFrom || dateTo) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchTerm('');
+                  setDateFrom('');
+                  setDateTo('');
+                }}
+                className="inline-flex h-9 cursor-pointer items-center gap-1 whitespace-nowrap rounded-xl px-3 text-sm text-slate-600 transition-colors hover:bg-white hover:text-slate-900"
+              >
+                <i className="ri-filter-off-line"></i> Clear Filters
+              </button>
+            )}
+
+            <span className="ml-auto self-center whitespace-nowrap text-sm text-slate-500">
+              {isPagedView && filteredTasks.length > 0 ? (
+                <>
+                  Showing{' '}
+                  <strong className="text-slate-800">
+                    {(taskPageSafe - 1) * taskPageSize + 1}–
+                    {Math.min(taskPageSafe * taskPageSize, filteredTasks.length)}
+                  </strong>{' '}
+                  of <strong className="text-slate-800">{filteredTasks.length}</strong>
+                </>
+              ) : (
+                <>
+                  Showing{' '}
+                  <strong className="text-slate-800">{filteredTasks.length}</strong>{' '}
+                  request{filteredTasks.length !== 1 ? 's' : ''}
+                </>
+              )}
+            </span>
+          </div>
+        </div>
+
+        {/* Phone / tablet — Filters bottom sheet */}
+        <div className="relative z-[1] border-b border-slate-100/80 px-4 pb-2 pt-4 min-[992px]:hidden">
+          <div className="mb-3 flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#E3F2FD] text-[#1E88E5]">
+              <i className="ri-task-line text-lg" aria-hidden />
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                Approvals
+              </p>
+              <h2 className="text-base font-semibold text-slate-800">Purchase Request Approvals</h2>
+            </div>
+          </div>
+          <p className="text-sm text-slate-500">
+            {isPagedView && filteredTasks.length > 0 ? (
+              <>
+                Showing{' '}
+                <strong className="text-slate-800">
+                  {(taskPageSafe - 1) * taskPageSize + 1}–
+                  {Math.min(taskPageSafe * taskPageSize, filteredTasks.length)}
+                </strong>{' '}
+                of <strong className="text-slate-800">{filteredTasks.length}</strong>
+              </>
+            ) : (
+              <>
+                Showing <strong className="text-slate-800">{filteredTasks.length}</strong>{' '}
+                request{filteredTasks.length !== 1 ? 's' : ''}
+              </>
+            )}
+          </p>
+        </div>
+
+        {/* Mobile — soft spaced cards */}
+        <div className="relative z-[1] space-y-3 p-3 sm:space-y-4 sm:p-4 min-[992px]:hidden">
+          {pagedTasks.map((task, rowIndex) => {
+            const slaInfo = getSlaInfo(task);
+            const isPending = task.status === 'pending_approval';
+            const sass = isSassTask(task);
+            return (
+              <div
+                key={task.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => openTaskDetail(task.id)}
+                style={{ '--r': rowIndex } as CSSProperties}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    openTaskDetail(task.id);
+                  }
+                }}
+                className={`tfx-card cursor-pointer overflow-hidden rounded-2xl border border-transparent bg-white p-4 shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] transition-[box-shadow,border-color] duration-200 hover:border-[#93C5FD] hover:shadow-[0_14px_32px_-14px_rgba(15,23,42,0.18)] sm:rounded-[18px] sm:p-5 ${
+                  task.isOverdue && isPending
+                    ? 'ring-1 ring-red-200'
+                    : sass
+                      ? 'ring-1 ring-[#BBDEFB]'
+                      : ''
+                }`}
+              >
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-col items-start gap-1">
+                      <p className="text-sm font-bold text-[#2563EB]">{task.prNumber}</p>
+                      {sass && (
+                        <SassBadge
+                          label={
+                            String(task.purchaseType || '')
+                              .toLowerCase()
+                              .replace(/[\s-]+/g, '_')
+                              .includes('online')
+                              ? 'Online Purchase'
+                              : 'Cloud Subscription'
+                          }
+                        />
+                      )}
+                      {(task.isPostRfq || task.actionPath?.includes('/rfq-approval/')) && (
+                        <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
+                          Post-RFQ
+                        </span>
+                      )}
+                    </div>
+                    {sass && (
+                      <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-[#1565C0]">
+                        Cloud Subscription request
+                      </p>
+                    )}
+                    <p className="mt-1 line-clamp-2 text-sm font-semibold text-[#2C3E50]">{task.title}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {task.lineItems} item{task.lineItems !== 1 ? 's' : ''} · {task.requestType}
+                    </p>
+                  </div>
+                  <p className="whitespace-nowrap text-sm font-bold tabular-nums text-[#2C3E50]">
+                    {formatAmount(task.totalAmount, task.currency)}
+                  </p>
+                </div>
+
+                <div className="mb-3 flex items-center gap-2">
+                  <div
+                    className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                      isPending
+                        ? 'bg-sky-100 text-sky-800'
+                        : task.status === 'approved'
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : 'bg-red-100 text-red-700'
+                    }`}
+                  >
+                    {task.requesterAvatar}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-[#2C3E50]">{task.requester}</p>
+                    <p className="truncate text-xs text-slate-500">
+                      {task.entityName || '—'}
+                      {task.entityCode ? ` (${task.entityCode})` : ''}
+                      {' · '}
+                      {task.department || '—'}
+                      {' · '}
+                      {formatDate(task.submittedDate)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <PriorityBadge priority={task.priority} size="sm" />
+                    <StatusBadge status={task.status} size="sm" />
+                    {slaInfo ? (
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-semibold ${slaInfo.cls}`}
+                      >
+                        {task.isOverdue && <i className="ri-alarm-warning-line text-xs"></i>}
+                        {slaInfo.label}
+                      </span>
+                    ) : null}
+                  </div>
+                  {renderRowActions(task, isPending, true)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Desktop table — soft card rows (matches requester) */}
+        <div className="relative z-[1] hidden overflow-x-auto px-3 pb-3 pt-1 min-[992px]:block sm:px-4 sm:pb-4">
+          <table className="w-max min-w-full border-separate border-spacing-x-0 border-spacing-y-3">
+            <thead>
+              <tr>
+                {[
+                  'PR Number',
+                  'Title',
+                  'Requester',
+                  'Entity',
+                  'Department',
+                  'Amount',
+                  'Priority',
+                  'Status',
+                  'SLA',
+                  'Date',
+                  'Actions',
+                ].map((label) => (
+                  <th
+                    key={label}
+                    className={`tfx-th py-3.5 text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500 sm:text-xs ${
+                      label === 'PR Number' || label === 'Actions' ? 'px-5' : 'px-3'
+                    } ${label === 'Title' ? 'w-[240px] max-w-[240px]' : 'whitespace-nowrap'} ${
+                      label === 'Amount' || label === 'Actions' ? 'text-right' : 'text-left'
+                    }`}
+                  >
+                    {label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {pagedTasks.map((task, rowIndex) => {
+                const slaInfo = getSlaInfo(task);
+                const isPending = task.status === 'pending_approval';
+                const sass = isSassTask(task);
+                const rowOverdue = Boolean(task.isOverdue && isPending);
+                const cellBase =
+                  'border-transparent bg-white py-4 transition-[border-color] group-hover:border-[#93C5FD] sm:py-5';
+                const ringHint = rowOverdue
+                  ? 'group-hover:border-red-200'
+                  : sass
+                    ? 'group-hover:border-[#90CAF9]'
+                    : 'group-hover:border-[#93C5FD]';
+
+                return (
+                  <tr
+                    key={task.id}
+                    onClick={() => openTaskDetail(task.id)}
+                    className="tfx-row group cursor-pointer"
+                    style={{ '--r': rowIndex } as CSSProperties}
+                  >
+                    <td
+                      className={`tfx-first rounded-l-2xl border border-r-0 pl-5 pr-3 text-sm font-semibold text-[#0f6b7a] shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] transition-[box-shadow,border-color] group-hover:shadow-[0_14px_32px_-14px_rgba(15,23,42,0.18)] sm:rounded-l-[18px] ${cellBase} ${ringHint}`}
+                    >
+                      <div className="flex flex-col items-start gap-1">
+                        <span className="whitespace-nowrap" title={task.prNumber}>{task.prNumber}</span>
+                        {sass && (
+                          <SassBadge
+                            label={
+                              String(task.purchaseType || '')
+                                .toLowerCase()
+                                .replace(/[\s-]+/g, '_')
+                                .includes('online')
+                                ? 'Online Purchase'
+                                : 'Cloud Subscription'
+                            }
+                          />
+                        )}
+                      </div>
+                    </td>
+                    <td className={`w-[240px] max-w-[240px] border border-x-0 px-3 text-sm text-[#2C3E50] ${cellBase} ${ringHint}`}>
+                      <div className="min-w-0">
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <p className="min-w-0 truncate font-semibold" title={task.title}>
+                            {task.title}
+                          </p>
+                          {(task.isPostRfq || task.actionPath?.includes('/rfq-approval/')) && (
+                            <span className="flex-shrink-0 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
+                              Post-RFQ
+                            </span>
+                          )}
+                        </div>
+                        {sass && (
+                          <p className="mt-0.5 truncate text-[10px] font-bold uppercase tracking-wide text-[#1565C0]">
+                            Cloud Subscription request
+                          </p>
+                        )}
+                        <p className="mt-0.5 truncate text-xs text-slate-500">
+                          {task.lineItems} item{task.lineItems !== 1 ? 's' : ''} · {task.requestType}
+                        </p>
+                      </div>
+                    </td>
+                    <td className={`whitespace-nowrap border border-x-0 px-3 text-sm text-[#2C3E50] ${cellBase} ${ringHint}`}>
+                      <div>
+                        <p className="font-medium" title={task.requester}>
+                          {task.requester}
+                        </p>
+                        <p className="text-xs text-slate-500">{task.requesterRole}</p>
+                      </div>
+                    </td>
+                    <td className={`whitespace-nowrap border border-x-0 px-3 text-sm text-[#2C3E50] ${cellBase} ${ringHint}`}>
+                      <p className="font-medium" title={task.entityName || undefined}>
+                        {task.entityName || '—'}
+                      </p>
+                      {task.entityCode ? (
+                        <p className="text-xs text-slate-500">{task.entityCode}</p>
+                      ) : null}
+                    </td>
+                    <td className={`whitespace-nowrap border border-x-0 px-3 text-sm text-[#2C3E50] ${cellBase} ${ringHint}`}>
+                      {task.department || '—'}
+                    </td>
+                    <td
+                      className={`whitespace-nowrap border border-x-0 px-3 text-right text-sm font-bold tabular-nums text-[#2C3E50] ${cellBase} ${ringHint}`}
+                    >
+                      {formatAmount(task.totalAmount, task.currency)}
+                    </td>
+                    <td className={`whitespace-nowrap border border-x-0 px-3 ${cellBase} ${ringHint}`}>
+                      <PriorityBadge priority={task.priority} size="sm" />
+                    </td>
+                    <td className={`whitespace-nowrap border border-x-0 px-3 ${cellBase} ${ringHint}`}>
+                      <StatusBadge status={task.status} size="sm" />
+                    </td>
+                    <td className={`whitespace-nowrap border border-x-0 px-3 text-sm ${cellBase} ${ringHint}`}>
+                      {slaInfo ? (
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-semibold ${slaInfo.cls}`}
+                        >
+                          {task.isOverdue && <i className="ri-alarm-warning-line text-xs"></i>}
+                          {slaInfo.label}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-400">—</span>
+                      )}
+                    </td>
+                    <td
+                      className={`whitespace-nowrap border border-x-0 px-3 text-sm text-slate-500 ${cellBase} ${ringHint}`}
+                    >
+                      {formatDate(task.submittedDate)}
+                    </td>
+                    <td
+                      className={`whitespace-nowrap rounded-r-2xl border border-l-0 py-4 pl-3 pr-5 sm:rounded-r-[18px] sm:py-5 ${cellBase} ${ringHint}`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex items-center justify-end gap-0.5">
+                        {renderRowActions(task, isPending)}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {isPagedView && filteredTasks.length > 0 && (
+          <div className="relative z-[1] flex flex-col gap-3 border-t border-slate-100/80 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:py-5">
+            <p className="text-xs text-slate-500">
+              Page {taskPageSafe} of {taskTotalPages}
+            </p>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                disabled={taskPageSafe <= 1}
+                onClick={() => setTaskPage((p) => Math.max(1, p - 1))}
+                className="cursor-pointer rounded-xl border border-transparent bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[0_8px_24px_-12px_rgba(15,23,42,0.10)] hover:border-[#93C5FD] disabled:opacity-40"
+              >
+                Previous
+              </button>
+              {Array.from({ length: taskTotalPages }, (_, i) => i + 1)
+                .filter((p) => p === 1 || p === taskTotalPages || Math.abs(p - taskPageSafe) <= 1)
+                .reduce<(number | '…')[]>((acc, p, idx, arr) => {
+                  if (idx > 0 && p - arr[idx - 1] > 1) acc.push('…');
+                  acc.push(p);
+                  return acc;
+                }, [])
+                .map((p, idx) =>
+                  p === '…' ? (
+                    <span key={`ellipsis-${idx}`} className="px-2 text-xs text-slate-400">
+                      …
+                    </span>
+                  ) : (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setTaskPage(p)}
+                      className={`flex h-8 min-w-[2rem] cursor-pointer items-center justify-center rounded-xl text-xs font-semibold transition-all ${
+                        taskPageSafe === p
+                          ? 'bg-[#2563EB] text-white shadow-sm'
+                          : 'border border-transparent bg-white text-slate-700 shadow-[0_8px_24px_-12px_rgba(15,23,42,0.08)] hover:border-[#93C5FD]'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  )
+                )}
+              <button
+                type="button"
+                disabled={taskPageSafe >= taskTotalPages}
+                onClick={() => setTaskPage((p) => Math.min(taskTotalPages, p + 1))}
+                className="cursor-pointer rounded-xl border border-transparent bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[0_8px_24px_-12px_rgba(15,23,42,0.10)] hover:border-[#93C5FD] disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
+
+        {loading && (
+          <div className="relative z-[1] p-8 text-center text-sm text-slate-500">Loading your tasks...</div>
+        )}
+
+        {!loading && filteredTasks.length === 0 && (
+          <div className="relative z-[1] p-12 text-center sm:p-14">
+            <i className="ri-file-list-3-line mb-4 block text-5xl text-slate-200"></i>
+            <p className="text-sm text-slate-500">
+              {filter === 'approved'
+                ? 'No approved items yet'
+                : filter === 'rejected'
+                  ? 'No rejected items'
+                  : filter === 'returned'
+                    ? 'No sent-back items'
+                    : filter === 'overdue'
+                      ? 'No overdue tasks'
+                      : 'No pending tasks for your approval'}
+            </p>
+            <p className="mt-1 text-xs text-slate-400">
+              {filter === 'approved'
+                ? 'PRs you approve as User Approval or L2 Manager show here'
+                : 'PRs appear here after the previous approver completes their step'}
+            </p>
+            {(searchTerm || filter !== 'all' || dateFrom || dateTo) && (
+              <button
+                onClick={() => {
+                  setSearchTerm('');
+                  setFilter('all');
+                  setDateFrom('');
+                  setDateTo('');
+                }}
+                className="mt-3 cursor-pointer whitespace-nowrap rounded-xl bg-[#EEF4FF] px-4 py-2 text-sm font-medium text-[#2563EB] transition-colors hover:bg-[#DBEAFE]"
+              >
+                Clear all filters
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Detail Drawer */}
+      {selectedTask && drawerDetail && (
+        <TaskDetailDrawer
+          task={drawerDetail}
+          loading={drawerLoading}
+          canAct={
+            (processedTasks.find((t) => t.id === selectedTask)?.status || drawerDetail.status) ===
+            'pending_approval'
+          }
+          onClose={() => {
+            setSelectedTask(null);
+            setDrawerDetail(null);
+          }}
+          onApprove={(id) => openModal(id, 'approve')}
+          onReject={(id) => openModal(id, 'reject')}
+          onReturn={(id) => openModal(id, 'return')}
+        />
+      )}
+
+      {/* Approval/Rejection Modal */}
+      <ApprovalModal
+        isOpen={modalState.isOpen}
+        type={modalState.type}
+        prNumber={modalState.prNumber}
+        prTitle={modalState.prTitle}
+        amount={modalState.amount}
+        currency={modalState.currency || 'INR'}
+        prId={
+          tasks.find((t) => t.id === modalState.taskId)?.isPoSign ||
+          tasks.find((t) => t.id === modalState.taskId)?.isRequesterPoL1 ||
+          tasks.find((t) => t.id === modalState.taskId)?.isMugeshSign
+            ? undefined
+            : tasks.find((t) => t.id === modalState.taskId)?.prId
+        }
+        askBusinessApproval={Boolean(
+          modalState.askBusinessApproval ||
+            tasks.find((t) => t.id === modalState.taskId)?.askBusinessApproval
+        )}
+        requireInvoiceUpload={Boolean(
+          modalState.requireInvoiceUpload ||
+            (modalState.type === 'approve' &&
+              tasks.find((t) => t.id === modalState.taskId)?.requireInvoiceUpload)
+        )}
+        signedUpload={Boolean(
+          modalState.type === 'approve' &&
+            tasks.find((t) => t.id === modalState.taskId)?.isMugeshSign
+        )}
+        useAdminTargets={Boolean(
+          user?.isSuperAdmin ||
+            user?.role === 'Super Admin' ||
+            user?.role === 'SCM Manager' ||
+            user?.role === 'SCM Buyer'
+        )}
+        onConfirm={handleConfirm}
+        onClose={() =>
+          setModalState((prev) => ({ ...prev, isOpen: false }))
+        }
+      />
+
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-[90] animate-slide-up">
+          <div
+            className={`flex max-w-md items-center gap-2 rounded-xl px-5 py-3 text-sm font-medium shadow-lg ${
+              toastMessage.type === 'success'
+                ? 'bg-emerald-700 text-white'
+                : 'bg-red-700 text-white'
+            }`}
+          >
+            <i
+              className={
+                toastMessage.type === 'success'
+                  ? 'ri-check-double-line'
+                  : 'ri-close-circle-line'
+              }
+            ></i>
+            <span className="break-words">{toastMessage.text}</span>
+          </div>
+        </div>
+      )}
+      </div>
+      </div>
+    </DashboardLayout>
+  );
+}

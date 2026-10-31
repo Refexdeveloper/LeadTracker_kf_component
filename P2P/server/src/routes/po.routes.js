@@ -1,0 +1,1144 @@
+import express, { Router } from 'express';
+import { authenticate, requireRoles, requireRolesOrPermissions } from '../middleware/auth.js';
+import { isMugeshActor } from '../templates/emailUtils.js';
+import {
+  getPoCreateContext,
+  getManualPoPrefillByPrNumber,
+  createPurchaseOrder,
+  createManualPurchaseOrder,
+  savePurchaseOrderDraft,
+  buildPoPreviewDocument,
+  buildManualPoPreviewDocument,
+  listPurchaseOrders,
+  listTrackPurchaseOrders,
+  listVendorAcceptancePOs,
+  getPurchaseOrderById,
+  getPurchaseOrderByNumber,
+  nextAmendmentPoNumber,
+  getPurchaseOrderVendorComparison,
+  signPurchaseOrder,
+  rejectPurchaseOrder,
+  sendBackPurchaseOrder,
+  adminSendBackToBuyerVerify,
+  cancelPurchaseOrder,
+  retrieveCancelledPurchaseOrder,
+  finalVerifyPurchaseOrder,
+  rejectBuyerFinalVerify,
+  sendBackBuyerFinalVerify,
+  updatePurchaseOrder,
+  buildPoPreviewForPo,
+  sendVendorAcceptanceMail,
+  submitManualVendorAcceptance,
+  updateVendorAcceptanceDocument,
+  getVendorAcceptanceByToken,
+  submitVendorAcceptanceByToken,
+  resolveVendorAcceptanceFile,
+  resolveCancellationAttachment,
+  resolveManualQuoteAttachment,
+  assertVendorAcceptanceActor,
+  getCfoPoInsights,
+  assertRequesterPoDocumentAccess,
+  decideRequesterPoL1,
+  uploadMugeshSignedPo,
+  sendBackMugeshPoToRequester,
+} from '../services/poService.js';
+import { getPoFulfillmentSummary } from '../services/accountsFulfillmentService.js';
+import { listPoDocuments, addPoDocument, getPoDocumentFile } from '../services/poDocumentService.js';
+import { getPurchaseRequestById } from '../services/prService.js';
+import { sendStoredFile } from '../utils/sendStoredFile.js';
+import { adminDeletePurchaseOrder } from '../services/adminDeleteService.js';
+import {
+  resolveScmManagerUser,
+  getPreferredScmManagerEmail,
+  getPreferredScmManagerName,
+} from '../utils/scmAssignee.js';
+import {
+  listLetterheads,
+  getLetterheadByType,
+  saveLetterhead,
+} from '../services/poLetterheadService.js';
+import {
+  listLetterheadMasters,
+  getLetterheadMasterById,
+  createLetterheadMaster,
+  updateLetterheadMaster,
+  getLetterheadBranding,
+  saveLetterheadBranding,
+} from '../services/letterheadBrandingService.js';
+import {
+  buildPoHtml,
+  resolvePoDocumentPath,
+  ensurePoPdf,
+  renderPoPdfToFile,
+} from '../services/poPdfService.js';
+import fs from 'fs';
+import {
+  getPoExcelImportTemplateCsv,
+  validatePoExcelImport,
+  importPoExcelRows,
+  getPoExcelImportDefaultStatus,
+} from '../services/poExcelImportService.js';
+import {
+  listUserSignatures,
+  saveUserSignature,
+  deleteUserSignature,
+} from '../services/signatureService.js';
+
+const router = Router();
+
+function sendCsv(res, filename, csv) {
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(csv);
+}
+
+/** Public vendor acceptance link (no login) */
+router.get('/vendor-accept/:token', async (req, res) => {
+  try {
+    const data = await getVendorAcceptanceByToken(req.params.token);
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/vendor-accept/:token', async (req, res) => {
+  try {
+    const data = await submitVendorAcceptanceByToken(req.params.token, req.body || {});
+    res.json({ data, message: 'Vendor response recorded' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/vendor-accept/:token/pdf', async (req, res) => {
+  try {
+    const pool = (await import('../config/db.js')).default;
+    const [rows] = await pool.query(
+      `SELECT * FROM purchase_orders WHERE vendor_acceptance_token = ? LIMIT 1`,
+      [String(req.params.token || '').trim()]
+    );
+    if (!rows.length) return res.status(404).json({ message: 'Invalid link' });
+    const doc = await resolvePoDocumentPath({
+      signedPdfPath: rows[0].signed_pdf_path,
+      pdfPath: rows[0].pdf_path,
+    });
+    if (doc.buffer) {
+      res.setHeader('Content-Disposition', `attachment; filename="${rows[0].po_number}_signed.pdf"`);
+      res.setHeader('Content-Type', 'application/pdf');
+      return res.send(doc.buffer);
+    }
+    res.download(doc.fullPath, `${rows[0].po_number}_signed.pdf`);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+async function loadPublicInsightPo(poId) {
+  const id = Number(poId);
+  if (!id) return null;
+  const po = await getPurchaseOrderById(id);
+  if (!po) return null;
+  const status = String(po.statusRaw || po.status || '').toLowerCase();
+  if (status === 'draft' || status === 'cancelled') return null;
+  return po;
+}
+
+async function sendPoHtml(res, po) {
+  let doc = po;
+  try {
+    const { overlayVendorMasterOnPo } = await import('../services/poService.js');
+    doc = await overlayVendorMasterOnPo(po);
+  } catch {
+    /* keep enrichPO result */
+  }
+  const { buildSignatureRenderOptionsAsync } = await import('../services/signatureService.js');
+  const html = buildPoHtml(doc, {
+    signature: await buildSignatureRenderOptionsAsync(doc),
+  });
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+}
+
+async function sendPoPdf(res, po) {
+  let doc = po;
+  try {
+    const { overlayVendorMasterOnPo } = await import('../services/poService.js');
+    doc = await overlayVendorMasterOnPo(po);
+  } catch {
+    /* keep enrichPO result */
+  }
+  const mugeshPo =
+    String(doc.poCreationBy || '') === 'requester' ||
+    ['l1', 'mugesh', 'requester', 'signed'].includes(String(doc.poSignStep || ''));
+  const meetPo = String(doc.signatureName || '').trim().toLowerCase().startsWith('meet');
+  const isSigned = Boolean(doc.signedPdfPath || doc.signatureImagePath || doc.signedAt);
+  const poNumber = String(doc.poNumber || '').trim() || `PO-${doc.id}`;
+  const safePoNumber = poNumber.replace(/[^\w.-]+/g, '_').replace(/_+/g, '_');
+  const preferredName = isSigned
+    ? doc.signedPdfPath || `${safePoNumber}_signed.pdf`
+    : `${safePoNumber}_draft.pdf`;
+  const { buildSignatureRenderOptionsAsync } = await import('../services/signatureService.js');
+  const signatureOpts = await buildSignatureRenderOptionsAsync(doc);
+  const status = String(doc.statusRaw || doc.status || '').toLowerCase();
+  const storedLooksStale =
+    Boolean(doc.pdfPath) &&
+    !String(doc.pdfPath).includes(poNumber) &&
+    !String(doc.pdfPath).startsWith(safePoNumber);
+  const vendorBlockIncomplete = !isSigned && !String(doc.vendorAddress || '').trim();
+  const { fullPath, fileName, buffer } = await ensurePoPdf(doc, {
+    fileName: preferredName,
+    signed: isSigned,
+    signature: signatureOpts,
+    forceRegenerate: mugeshPo || meetPo
+      ? true
+      : isSigned
+        ? false
+        : status === 'draft' || storedLooksStale || vendorBlockIncomplete,
+  });
+  if (!isSigned && doc.pdfPath !== fileName) {
+    try {
+      const pool = (await import('../config/db.js')).default;
+      await pool.query(`UPDATE purchase_orders SET pdf_path = ? WHERE id = ?`, [fileName, doc.id]);
+    } catch {
+      /* non-fatal */
+    }
+  }
+  res.setHeader('Content-Type', 'application/pdf');
+  const downloadBase = safePoNumber || `PO-${doc.id}`;
+  const downloadName = `${downloadBase}${isSigned ? '_signed' : ''}.pdf`;
+  res.setHeader('Content-Disposition', `inline; filename="${downloadName}"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  if (buffer?.length) {
+    res.setHeader('Content-Length', buffer.length);
+    return res.end(buffer);
+  }
+  if (!fullPath || !fs.existsSync(fullPath)) {
+    return res.status(404).json({ message: 'PO PDF not found' });
+  }
+  fs.createReadStream(fullPath).pipe(res);
+}
+
+function insightListFilters(query = {}) {
+  return {
+    department: typeof query.department === 'string' ? query.department : '',
+    category: typeof query.category === 'string' ? query.category : '',
+    dateFrom: typeof query.dateFrom === 'string' ? query.dateFrom : '',
+    dateTo: typeof query.dateTo === 'string' ? query.dateTo : '',
+    poStatus: typeof query.poStatus === 'string' ? query.poStatus : '',
+    vendor: typeof query.vendor === 'string' ? query.vendor : '',
+    entityId: typeof query.entityId === 'string' ? query.entityId : '',
+    amountMin: typeof query.amountMin === 'string' ? query.amountMin : '',
+    amountMax: typeof query.amountMax === 'string' ? query.amountMax : '',
+    poPage: query.poPage,
+    poPageSize: query.poPageSize,
+  };
+}
+
+/** Public read-only Financial Insights for embedding. No login. Does not expose write actions. */
+router.get('/public/insights', async (req, res) => {
+  try {
+    const data = await getCfoPoInsights(null, insightListFilters(req.query));
+    res.json({ data });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/** Public expand row: PO, PR, approval history, and the PO document. Draft and cancelled stay private. */
+router.get('/public/insights/po/:id', async (req, res) => {
+  try {
+    const po = await loadPublicInsightPo(req.params.id);
+    if (!po) return res.status(404).json({ message: 'PO not found' });
+    let pr = null;
+    if (po.prId) {
+      try {
+        pr = await getPurchaseRequestById(po.prId);
+      } catch {
+        pr = null;
+      }
+    }
+    res.json({ data: { po, pr } });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/public/insights/po/:id/document', async (req, res) => {
+  try {
+    const po = await loadPublicInsightPo(req.params.id);
+    if (!po) return res.status(404).json({ message: 'PO not found' });
+    await sendPoHtml(res, po);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/public/insights/po/:id/pdf', async (req, res) => {
+  try {
+    const po = await loadPublicInsightPo(req.params.id);
+    if (!po) return res.status(404).json({ message: 'PO not found' });
+    await sendPoPdf(res, po);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.use(authenticate);
+
+/** Read PO details / documents — SCM, approvers, requester, and Financial Insights users. */
+const PO_READ_ROLES = [
+  'SCM Buyer',
+  'SCM Manager',
+  'Super Admin',
+  'CFO',
+  'PR Manager',
+  'HOD Approver',
+  'Requester',
+  'Accounts Payable',
+  'Accounts Manager',
+];
+const canReadPo = requireRolesOrPermissions(PO_READ_ROLES, [
+  'nav.cfo_insights',
+  'nav.invoice_verification',
+  'nav.accounts_dashboard',
+]);
+
+router.get(
+  '/stats/cfo',
+  requireRolesOrPermissions(['CFO', 'Super Admin', 'SCM Manager', 'SCM Buyer'], ['nav.cfo_insights']),
+  async (req, res) => {
+    try {
+      const data = await getCfoPoInsights(req.user, insightListFilters(req.query));
+      res.json({ data });
+    } catch (err) {
+      res.status(500).json({ message: err.message });
+    }
+  }
+);
+
+/** Preview next PO/WO number for an entity (does not consume sequence). */
+router.get('/next-number', requireRoles('SCM Buyer', 'SCM Manager', 'Super Admin', 'Requester'), async (req, res) => {
+  try {
+    const entityId = Number(req.query.entityId);
+    if (!entityId) return res.status(400).json({ message: 'entityId is required' });
+    const purchaseType =
+      String(req.query.purchaseType || '').toLowerCase() === 'work_order'
+        ? 'work_order'
+        : 'purchase_order';
+    const { peekNextDocumentNumber, purchaseTypeToDocType } = await import(
+      '../services/documentNumberService.js'
+    );
+    const docType = purchaseTypeToDocType(purchaseType);
+    const poNumber = await peekNextDocumentNumber(docType, entityId);
+    res.json({ data: { poNumber, docType, entityId, purchaseType } });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/signatures', requireRoles('SCM Manager'), async (req, res) => {
+  try {
+    const data = await listUserSignatures(req.user.id);
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/signatures', requireRoles('SCM Manager'), async (req, res) => {
+  try {
+    const data = await saveUserSignature(req.user.id, {
+      image: req.body.image,
+      label: req.body.label,
+    });
+    res.json({ data, message: 'Signature saved to gallery' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.delete('/signatures/:id', requireRoles('SCM Manager'), async (req, res) => {
+  try {
+    await deleteUserSignature(req.user.id, Number(req.params.id));
+    res.json({ message: 'Signature removed from gallery' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+/** Who receives PO approval next (shown on Create / Save confirm) */
+router.get(
+  '/scm-manager',
+  requireRoles('SCM Buyer', 'SCM Manager', 'Super Admin'),
+  async (_req, res) => {
+    try {
+      const mgr = await resolveScmManagerUser();
+      res.json({
+        data: {
+          id: mgr?.id || null,
+          name: mgr?.name || getPreferredScmManagerName(),
+          email: mgr?.email || getPreferredScmManagerEmail(),
+          role: 'SCM Manager',
+        },
+      });
+    } catch (err) {
+      res.status(400).json({ message: err.message });
+    }
+  }
+);
+
+/** Excel / CSV PO import — no approval workflow */
+const poImportRoles = requireRoles('SCM Buyer', 'Super Admin');
+
+router.get('/excel-import/template', poImportRoles, (_req, res) => {
+  sendCsv(res, 'po-import-template.csv', getPoExcelImportTemplateCsv());
+});
+
+router.get('/excel-import/config', poImportRoles, (_req, res) => {
+  res.json({
+    data: {
+      defaultStatus: getPoExcelImportDefaultStatus(),
+      allowedStatuses: ['draft', 'imported'],
+    },
+  });
+});
+
+router.post('/excel-import/validate', poImportRoles, async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    const data = await validatePoExcelImport(rows);
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/excel-import', poImportRoles, async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    const status = req.body?.status;
+    const data = await importPoExcelRows(req.user, rows, { status });
+    res.json({
+      data,
+      message: `Imported ${data.imported} purchase order(s) as ${data.defaultStatus} (no approval workflow)`,
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+const letterheadRoles = requireRoles('SCM Buyer', 'Super Admin');
+const letterheadMasterWriteRoles = requireRoles('SCM Buyer', 'Super Admin', 'Requester');
+const letterheadReadRoles = requireRoles('SCM Buyer', 'SCM Manager', 'Super Admin', 'Requester');
+
+router.get('/letterheads', letterheadReadRoles, async (req, res) => {
+  try {
+    const data = await listLetterheadMasters({
+      search: req.query.search,
+      status: req.query.status,
+    });
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/letterheads/:id', letterheadReadRoles, async (req, res) => {
+  try {
+    const data = await getLetterheadMasterById(Number(req.params.id));
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/letterheads', letterheadMasterWriteRoles, async (req, res) => {
+  try {
+    const data = await createLetterheadMaster(req.body);
+    res.json({ data, message: 'Letterhead created' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.put('/letterheads/:id', letterheadMasterWriteRoles, async (req, res) => {
+  try {
+    const data = await updateLetterheadMaster(Number(req.params.id), req.body);
+    res.json({ data, message: 'Letterhead updated' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/letterhead-branding', letterheadReadRoles, async (req, res) => {
+  try {
+    const data = await getLetterheadBranding();
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.put('/letterhead-branding', letterheadRoles, async (req, res) => {
+  try {
+    const data = await saveLetterheadBranding(req.body);
+    res.json({ data, message: 'Letterhead master saved' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/letterhead', letterheadReadRoles, async (req, res) => {
+  try {
+    const data = await listLetterheads();
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/letterhead/:poType', letterheadReadRoles, async (req, res) => {
+  try {
+    const data = await getLetterheadByType(req.params.poType);
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.put('/letterhead/:poType', letterheadRoles, async (req, res) => {
+  try {
+    const data = await saveLetterhead(req.params.poType, req.body);
+    res.json({ data, message: `${data.poTypeLabel} template saved` });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/pr-reference', requireRoles('SCM Buyer', 'Super Admin'), async (req, res) => {
+  try {
+    const data = await getManualPoPrefillByPrNumber(req.query.number);
+    if (!data) return res.status(404).json({ message: 'Purchase request not found' });
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/pr/:prId/context', requireRoles('SCM Buyer', 'Requester'), async (req, res) => {
+  try {
+    const data = await getPoCreateContext(req.user, Number(req.params.prId));
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/pr/:prId/preview-document', requireRoles('SCM Buyer', 'Requester', 'Super Admin'), async (req, res) => {
+  try {
+    const po = await buildPoPreviewDocument(req.user, Number(req.params.prId), req.body);
+    const html = buildPoHtml(po);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/pr/:prId/preview-pdf', requireRoles('SCM Buyer', 'Requester', 'Super Admin'), async (req, res) => {
+  try {
+    // Same PO payload + HTML path as preview-document → PDF matches preview exactly
+    const po = await buildPoPreviewDocument(req.user, Number(req.params.prId), req.body);
+    const safeName = String(po.poNumber || `PR-${req.params.prId}`).replace(/[^\w.-]+/g, '_');
+    const { filePath, fileName } = await renderPoPdfToFile(po, `${safeName}_preview.pdf`);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    fs.createReadStream(filePath).pipe(res);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/pr/:prId', requireRoles('SCM Buyer', 'Requester', 'Super Admin'), async (req, res) => {
+  try {
+    const data = await createPurchaseOrder(req.user, Number(req.params.prId), req.body);
+    const statusRaw = String(data.statusRaw || data.status || '').toLowerCase();
+    const pendingManager =
+      statusRaw === 'pending_approval' || statusRaw === 'pendingapproval';
+    const toMugesh = String(data.poSignStep || '') === 'mugesh';
+    res.json({
+      data,
+      message: toMugesh
+        ? `PO ${data.poNumber} sent to Mugesh for sign and upload`
+        : pendingManager
+          ? `PO ${data.poNumber} sent to SCM Manager for sign / approval`
+          : `PO ${data.poNumber} created and sent for SCM Manager approval`,
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/manual', requireRoles('SCM Buyer', 'Super Admin'), async (req, res) => {
+  try {
+    const data = await createManualPurchaseOrder(req.user, req.body || {});
+    const statusRaw = String(data.statusRaw || data.status || '').toLowerCase();
+    const pendingManager =
+      statusRaw === 'pending_approval' ||
+      statusRaw === 'pending scm manager sign' ||
+      String(data.status || '').toLowerCase().includes('pending');
+    res.json({
+      data,
+      message: pendingManager
+        ? `PO ${data.poNumber} created — sent to SCM Manager for sign / approval`
+        : `PO ${data.poNumber} created`,
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/draft', requireRoles('SCM Buyer', 'Requester', 'Super Admin'), async (req, res) => {
+  try {
+    const data = await savePurchaseOrderDraft(req.user, req.body || {});
+    res.json({ data, message: `Draft saved — ${data.poNumber}` });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/manual/preview-document', requireRoles('SCM Buyer', 'SCM Manager', 'Super Admin'), async (req, res) => {
+  try {
+    const po = await buildManualPoPreviewDocument(req.user, req.body || {});
+    const html = buildPoHtml(po);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/manual/preview-pdf', requireRoles('SCM Buyer', 'SCM Manager', 'Super Admin'), async (req, res) => {
+  try {
+    const po = await buildManualPoPreviewDocument(req.user, req.body || {});
+    const safeName = String(po.poNumber || 'MANUAL-PO').replace(/[^\w.-]+/g, '_');
+    const { filePath, fileName } = await renderPoPdfToFile(po, `${safeName}_preview.pdf`);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    fs.createReadStream(filePath).pipe(res);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/pending', requireRoles('SCM Manager'), async (req, res) => {
+  try {
+    const data = await listPurchaseOrders(req.user, { pendingOnly: true });
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/pending-buyer-verify', requireRoles('SCM Buyer', 'Requester'), async (req, res) => {
+  try {
+    const data = await listPurchaseOrders(req.user, { buyerVerifyOnly: true });
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/vendor-acceptance', requireRoles('Requester', 'SCM Buyer', 'SCM Manager', 'Super Admin'), async (req, res) => {
+  try {
+    const data = await listVendorAcceptancePOs(req.user);
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/track', requireRoles('SCM Buyer', 'SCM Manager', 'Super Admin', 'Requester'), async (req, res) => {
+  try {
+    const page = req.query.page != null ? Number(req.query.page) : 1;
+    const limit = req.query.limit != null ? Number(req.query.limit) : 10;
+    const search = typeof req.query.search === 'string' ? req.query.search : '';
+    const status = typeof req.query.status === 'string' ? req.query.status : 'all';
+    const purchaseType =
+      typeof req.query.purchaseType === 'string' ? req.query.purchaseType : 'all';
+    const entityId = req.query.entityId != null ? Number(req.query.entityId) : undefined;
+    const department = typeof req.query.department === 'string' ? req.query.department : '';
+    const category = typeof req.query.category === 'string' ? req.query.category : '';
+    const dateFrom = typeof req.query.dateFrom === 'string' ? req.query.dateFrom : '';
+    const dateTo = typeof req.query.dateTo === 'string' ? req.query.dateTo : '';
+    const includeStats =
+      req.query.includeStats === '1' ||
+      req.query.includeStats === 'true' ||
+      req.query.includeStats === true;
+    const result = await listTrackPurchaseOrders(req.user, {
+      page: Number.isFinite(page) ? page : 1,
+      limit: Number.isFinite(limit) ? limit : 10,
+      search,
+      status,
+      purchaseType,
+      entityId: Number.isFinite(entityId) ? entityId : undefined,
+      department,
+      category,
+      dateFrom,
+      dateTo,
+      includeStats,
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/', async (req, res) => {
+  const mugesh = isMugeshActor(req.user);
+  if (!mugesh && !['SCM Buyer', 'SCM Manager'].includes(req.user.role)) {
+    return res.status(403).json({ message: 'Forbidden' });
+  }
+  try {
+    const pendingOnly = req.query.pending === 'true';
+    const buyerVerifyOnly = req.query.buyerVerify === 'true';
+    const approvalQueue = req.query.approvalQueue === 'true' || req.user.role === 'SCM Manager';
+    const data = await listPurchaseOrders(req.user, {
+      pendingOnly,
+      buyerVerifyOnly,
+      approvalQueue: approvalQueue && !buyerVerifyOnly,
+    });
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/by-number/:poNumber', canReadPo, async (req, res) => {
+  try {
+    const data = await getPurchaseOrderByNumber(req.params.poNumber);
+    if (!data) return res.status(404).json({ message: 'PO not found' });
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/:id/amendment', canReadPo, async (req, res) => {
+  try {
+    const po = await getPurchaseOrderById(Number(req.params.id));
+    if (!po) return res.status(404).json({ message: 'PO not found' });
+    const amendmentNumber = await nextAmendmentPoNumber(po.poNumber);
+    res.json({ data: { po, amendmentNumber } });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/:id/document', canReadPo, async (req, res) => {
+  try {
+    let po =
+      req.user.role === 'Requester'
+        ? await assertRequesterPoDocumentAccess(req.user, Number(req.params.id))
+        : await getPurchaseOrderById(Number(req.params.id));
+    if (!po) return res.status(404).json({ message: 'PO not found' });
+    await sendPoHtml(res, po);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/:id/pdf', canReadPo, async (req, res) => {
+  try {
+    let po =
+      req.user.role === 'Requester'
+        ? await assertRequesterPoDocumentAccess(req.user, Number(req.params.id))
+        : await getPurchaseOrderById(Number(req.params.id));
+    if (!po) return res.status(404).json({ message: 'PO not found' });
+    await sendPoPdf(res, po);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/:id/extra-documents', canReadPo, async (req, res) => {
+  try {
+    const data = await listPoDocuments(Number(req.params.id));
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post(
+  '/:id/extra-documents/upload',
+  canReadPo,
+  express.raw({ type: () => true, limit: '30mb' }),
+  async (req, res) => {
+    try {
+      const fileName = decodeURIComponent(
+        String(req.get('x-file-name') || req.query.fileName || 'document').trim()
+      );
+      const notes = decodeURIComponent(String(req.get('x-file-note') || req.query.notes || '').trim());
+      const mimeType = String(req.get('x-file-type') || req.get('content-type') || '').split(';')[0].trim();
+      const buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || []);
+      const data = await addPoDocument(Number(req.params.id), req.user.id, {
+        fileName,
+        buffer,
+        mimeType,
+        notes,
+      });
+      res.status(201).json({ data, message: 'Document saved' });
+    } catch (err) {
+      res.status(400).json({ message: err.message });
+    }
+  }
+);
+
+router.get('/:id/extra-documents/:documentId/file', canReadPo, async (req, res) => {
+  try {
+    const file = await getPoDocumentFile(Number(req.params.id), Number(req.params.documentId));
+    const safeName = String(file.fileName || 'document').replace(/"/g, '');
+    res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+    res.send(file.buffer);
+  } catch (err) {
+    res.status(404).json({ message: err.message });
+  }
+});
+
+router.get('/:id', canReadPo, async (req, res) => {
+  try {
+    const po =
+      req.user.role === 'Requester'
+        ? await assertRequesterPoDocumentAccess(req.user, Number(req.params.id))
+        : await getPurchaseOrderById(Number(req.params.id));
+    if (!po) return res.status(404).json({ message: 'PO not found' });
+    res.json({ data: po });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/:id/fulfillment', canReadPo, async (req, res) => {
+  try {
+    const poId = Number(req.params.id);
+    const po =
+      req.user.role === 'Requester'
+        ? await assertRequesterPoDocumentAccess(req.user, poId)
+        : await getPurchaseOrderById(poId);
+    if (!po) return res.status(404).json({ message: 'PO not found' });
+    const data = await getPoFulfillmentSummary(poId);
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/:id/comparison', requireRoles('SCM Manager', 'SCM Buyer', 'Super Admin'), async (req, res) => {
+  try {
+    const data = await getPurchaseOrderVendorComparison(req.user, Number(req.params.id));
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/:id/preview-document', requireRoles('SCM Manager', 'SCM Buyer', 'Requester', 'Super Admin'), async (req, res) => {
+  try {
+    const po = await buildPoPreviewForPo(req.user, Number(req.params.id), req.body);
+    const { buildSignatureRenderOptionsAsync } = await import('../services/signatureService.js');
+    const html = buildPoHtml(po, { signature: await buildSignatureRenderOptionsAsync(po) });
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/:id/preview-pdf', requireRoles('SCM Manager', 'SCM Buyer', 'Requester', 'Super Admin'), async (req, res) => {
+  try {
+    // Same PO payload + HTML path as preview-document → PDF matches preview exactly
+    const po = await buildPoPreviewForPo(req.user, Number(req.params.id), req.body);
+    const safeName = String(po.poNumber || `PO-${req.params.id}`).replace(/[^\w.-]+/g, '_');
+    const { filePath, fileName } = await renderPoPdfToFile(po, `${safeName}_preview.pdf`);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    fs.createReadStream(filePath).pipe(res);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.put('/:id', requireRoles('SCM Manager', 'SCM Buyer', 'Requester', 'Super Admin'), async (req, res) => {
+  try {
+    const data = await updatePurchaseOrder(req.user, Number(req.params.id), req.body);
+    const statusRaw = String(data.statusRaw || data.status || '').toLowerCase();
+    const sentToManager =
+      statusRaw === 'pending_approval' || statusRaw === 'pendingapproval';
+    const toMugesh = String(data.poSignStep || '') === 'mugesh';
+    res.json({
+      data,
+      message: toMugesh
+        ? `PO ${data.poNumber} sent to Mugesh for sign and upload`
+        : sentToManager
+          ? `PO ${data.poNumber} sent to SCM Manager for sign / approval`
+          : `PO ${data.poNumber} updated successfully`,
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/:id/requester-l1', requireRoles('HOD Approver', 'Super Admin'), async (req, res) => {
+  try {
+    const action = req.body?.action || 'approve';
+    const data = await decideRequesterPoL1(
+      req.user,
+      Number(req.params.id),
+      action,
+      req.body?.remarks
+    );
+    const message =
+      action === 'reject'
+        ? 'PO rejected'
+        : action === 'send_back' || action === 'return'
+          ? 'PO sent back to the requester'
+          : 'PO approved and sent to Mugesh for sign and upload';
+    res.json({ data, message });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/:id/mugesh-sign', async (req, res) => {
+  try {
+    const data = await uploadMugeshSignedPo(req.user, Number(req.params.id), req.body || {});
+    res.json({ data, message: 'PO signed with the default signature. Buyer Final Verify is with the requester.' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/:id/mugesh-send-back', async (req, res) => {
+  try {
+    const data = await sendBackMugeshPoToRequester(req.user, Number(req.params.id), req.body?.remarks);
+    res.json({ data, message: 'PO sent back to the requester. SCM team was not notified.' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/:id/sign', requireRoles('SCM Manager'), async (req, res) => {
+  try {
+    const { remarks, signatureName, signatureImage, signatureId, saveToGallery, dsc } = req.body;
+    const data = await signPurchaseOrder(req.user, Number(req.params.id), {
+      remarks,
+      signatureName,
+      signatureImage,
+      signatureId,
+      saveToGallery,
+      dsc,
+    });
+    res.json({
+      data,
+      message: `PO signed. Next step: SCM Buyer Final Verify. Vendor mail is not sent at this step.`,
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/:id/reject', requireRoles('SCM Manager'), async (req, res) => {
+  try {
+    const { remarks } = req.body;
+    const data = await rejectPurchaseOrder(req.user, Number(req.params.id), remarks);
+    res.json({ data, message: 'PO rejected' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/:id/send-back', requireRoles('SCM Manager', 'Super Admin'), async (req, res) => {
+  try {
+    const data = await sendBackPurchaseOrder(req.user, Number(req.params.id), req.body?.remarks);
+    res.json({
+      data,
+      message: 'PO sent back to SCM Buyer for revision — edit on Create PO, then save to send to Rajeev (SCM Manager)',
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+/** Super Admin Track PO: send back to Buyer Verify from acceptance / GRN / invoice */
+router.post('/:id/admin/send-back-buyer-verify', requireRoles('Super Admin'), async (req, res) => {
+  try {
+    const data = await adminSendBackToBuyerVerify(req.user, Number(req.params.id), req.body?.remarks);
+    res.json({
+      data,
+      message: 'PO sent back to Approved PO verification (Buyer Verify)',
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/:id/cancel', requireRoles('SCM Buyer', 'SCM Manager', 'Super Admin'), async (req, res) => {
+  try {
+    const data = await cancelPurchaseOrder(req.user, Number(req.params.id), req.body || {});
+    res.json({ data, message: 'PO cancelled successfully' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/:id/retrieve', requireRoles('SCM Buyer', 'SCM Manager', 'Super Admin', 'Requester'), async (req, res) => {
+  try {
+    const data = await retrieveCancelledPurchaseOrder(req.user, Number(req.params.id));
+    res.json({ data, message: 'Cancelled PO retrieved as draft' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+/** Super Admin only: permanently delete a purchase order */
+router.delete('/:id', requireRoles('Super Admin'), async (req, res) => {
+  try {
+    const data = await adminDeletePurchaseOrder(req.user, Number(req.params.id));
+    res.json({ data, message: `PO ${data.poNumber} deleted` });
+  } catch (err) {
+    res.status(err.message === 'Purchase order not found' ? 404 : 400).json({ message: err.message });
+  }
+});
+
+router.post('/:id/final-verify', requireRoles('SCM Buyer', 'Requester'), async (req, res) => {
+  try {
+    const data = await finalVerifyPurchaseOrder(req.user, Number(req.params.id), req.body?.remarks);
+    const requesterVerify = req.user.role === 'Requester';
+    const releaseNote = requesterVerify
+      ? 'PO verified. Buyer final verification is complete. SCM team was not notified.'
+      : data?.poReleaseMailSent
+        ? 'PO verified. PO release mail sent to requester, L1, and SCM Manager (Own vendor). Vendor is not emailed.'
+        : 'PO verified. PO release mail skipped (SCM vendor / Manual) — requester, L1, and SCM Manager not notified. Vendor is not emailed.';
+    res.json({
+      data,
+      message: releaseNote,
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/:id/final-verify/reject', requireRoles('SCM Buyer'), async (req, res) => {
+  try {
+    const data = await rejectBuyerFinalVerify(req.user, Number(req.params.id), req.body?.remarks);
+    res.json({ data, message: 'PO rejected at buyer final verify' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/:id/final-verify/send-back', requireRoles('SCM Buyer'), async (req, res) => {
+  try {
+    const data = await sendBackBuyerFinalVerify(req.user, Number(req.params.id), req.body?.remarks);
+    res.json({
+      data,
+      message: 'PO sent back to SCM Manager for re-approval',
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/:id/vendor-acceptance/send-mail', requireRoles('Requester', 'SCM Buyer', 'SCM Manager', 'Super Admin'), async (req, res) => {
+  try {
+    const data = await sendVendorAcceptanceMail(req.user, Number(req.params.id), req.body || {});
+    const to = data.mailTo || data.requesterEmail || 'requester';
+    res.json({
+      data,
+      message: `Mail sent to requester (${to}) to upload Vendor Signed PO`,
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/:id/vendor-acceptance/manual', requireRoles('Requester', 'SCM Buyer', 'SCM Manager', 'Super Admin'), async (req, res) => {
+  try {
+    const data = await submitManualVendorAcceptance(req.user, Number(req.params.id), req.body || {});
+    res.json({ data, message: 'Vendor acceptance recorded manually' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/:id/vendor-acceptance/document', requireRoles('Requester', 'Super Admin'), async (req, res) => {
+  try {
+    const data = await updateVendorAcceptanceDocument(req.user, Number(req.params.id), req.body || {});
+    res.json({ data, message: 'Vendor PO document updated' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/:id/manual-quote-file', canReadPo, async (req, res) => {
+  try {
+    const storedName = String(req.query.storedName || req.query.file || '').trim();
+    const file = await resolveManualQuoteAttachment(Number(req.params.id), storedName);
+    return sendStoredFile(res, {
+      ...file,
+      fileName: file.fileName || String(storedName).split(/[/\\]/).pop() || 'quotation',
+    });
+  } catch (err) {
+    res.status(404).json({ message: err.message || 'Quotation file not found' });
+  }
+});
+
+router.get('/:id/vendor-acceptance/file', canReadPo, async (req, res) => {
+  try {
+    const poId = Number(req.params.id);
+    const po = await getPurchaseOrderById(poId);
+    if (!po) return res.status(404).json({ message: 'PO not found' });
+    const pool = (await import('../config/db.js')).default;
+    const [rows] = await pool.query(
+      `SELECT id, vendor_acceptance_file_name, vendor_acceptance_file_path
+       FROM purchase_orders WHERE id = ? LIMIT 1`,
+      [poId]
+    );
+    const result = await resolveVendorAcceptanceFile({
+      ...po,
+      id: poId,
+      ...(rows[0] || {}),
+    });
+    return sendStoredFile(res, typeof result === 'string' ? { fullPath: result, fileName: po.vendorAcceptanceFileName } : {
+      ...result,
+      fileName:
+        po.vendorAcceptanceFileName ||
+        rows[0]?.vendor_acceptance_file_name ||
+        result.fileName ||
+        'vendor-acceptance.pdf',
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/:id/cancellation/:index/file', canReadPo, async (req, res) => {
+  try {
+    const po = await getPurchaseOrderById(Number(req.params.id));
+    if (!po) return res.status(404).json({ message: 'PO not found' });
+    const attachment = await resolveCancellationAttachment(po, req.params.index);
+    if (attachment?.buffer) {
+      res.setHeader('Content-Disposition', `attachment; filename="${attachment.fileName}"`);
+      res.setHeader('Content-Type', 'application/octet-stream');
+      return res.send(attachment.buffer);
+    }
+    res.download(attachment.fullPath, attachment.fileName);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+export default router;

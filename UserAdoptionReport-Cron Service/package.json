@@ -1,0 +1,18 @@
+{
+  "name": "user-adoption-report-cron",
+  "version": "1.0.0",
+  "description": "Automated User Adoption Report email cron service",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "preview": "node src/scripts/generatePreview.js",
+    "view": "npm run preview && npx --yes serve preview -l 3456",
+    "send": "node src/jobs/sendAdoptionReport.js",
+    "cron": "node src/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "node-cron": "^3.0.3",
+    "nodemailer": "^6.9.16"
+  }
+}

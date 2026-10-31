@@ -1,0 +1,179 @@
+import {
+  escapeHtml,
+  formatCurrency,
+  formatEntity,
+  formatActorWithRole,
+} from './emailUtils.js';
+import { wrapPortalUrlWithSso } from '../services/refexOneSamlService.js';
+
+/**
+ * Requester FYI mail — every workflow step move (approved / submitted / next step).
+ */
+export function buildPrStepProgressEmail({
+  pr,
+  requesterName,
+  action = 'approve',
+  actorRole = '',
+  actorName = '',
+  completedStepLabel = '',
+  nextStepLabel = '',
+  remarks = '',
+  appBaseUrl = null,
+  recipientPerspective = 'requester',
+  actionUrl = null,
+}) {
+  const base = (appBaseUrl || process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
+  const trackUrl = wrapPortalUrlWithSso(`${base}/requester/track-pr`);
+  const ctaUrl = actionUrl ? wrapPortalUrlWithSso(actionUrl) : trackUrl;
+  const entityLabel = formatEntity(pr);
+  const actorLine = formatActorWithRole(actorName, actorRole);
+  const recipientName = requesterName || 'Requester';
+  const perspective = recipientPerspective || 'requester';
+
+  const isSubmit = action === 'submit' || action === 'submitted' || action === 'raised';
+  const isApprove = action === 'approve' || action === 'approved';
+
+  const headline =
+    perspective === 'next_approver'
+      ? isSubmit
+        ? 'New PR — pending your approval'
+        : 'PR approved — pending your action'
+      : perspective === 'actor'
+        ? 'Your approval — workflow moved'
+        : perspective === 'fyi'
+          ? 'Step approved — workflow moved'
+          : isSubmit
+            ? 'Your PR was submitted'
+            : isApprove
+              ? 'Step approved — workflow moved'
+              : 'PR workflow update';
+
+  const subject =
+    perspective === 'next_approver'
+      ? isSubmit
+        ? `${pr.prNumber}: New PR → pending: ${nextStepLabel || 'your approval'}`
+        : `${pr.prNumber}: ${actorLine} approved → pending: ${nextStepLabel || 'your approval'}`
+      : nextStepLabel
+        ? `${pr.prNumber}: ${isSubmit ? 'Submitted' : 'Approved'} → next: ${nextStepLabel}`
+        : `${pr.prNumber}: ${isSubmit ? 'Submitted' : 'Approved'} — ${pr.title}`;
+
+  let intro;
+  if (perspective === 'next_approver') {
+    intro = isSubmit
+      ? `Hello ${escapeHtml(recipientName)}, <strong>${escapeHtml(actorLine)}</strong> raised a purchase request. It is now on your queue for <strong>${escapeHtml(nextStepLabel || 'the next step')}</strong>.`
+      : `Hello ${escapeHtml(recipientName)}, <strong>${escapeHtml(actorLine)}</strong> approved this purchase request. It is now on your queue for <strong>${escapeHtml(nextStepLabel || 'the next step')}</strong>.`;
+  } else if (perspective === 'actor') {
+    intro = `Hello ${escapeHtml(recipientName)}, your approval was recorded. This request has moved to the next step: <strong>${escapeHtml(nextStepLabel || 'In progress')}</strong>.`;
+  } else if (perspective === 'fyi') {
+    intro = `Hello ${escapeHtml(recipientName)}, <strong>${escapeHtml(actorLine)}</strong> approved this purchase request. The workflow has moved to: <strong>${escapeHtml(nextStepLabel || 'the next step')}</strong>.`;
+  } else if (isSubmit) {
+    intro = `Hello ${escapeHtml(recipientName)}, your purchase request was raised successfully and moved to the next step.`;
+  } else {
+    intro = `Hello ${escapeHtml(recipientName)}, <strong>${escapeHtml(actorLine)}</strong> approved your request. The workflow has moved to the next step.`;
+  }
+
+  const ctaLabel =
+    perspective === 'next_approver'
+      ? 'Review & approve →'
+      : perspective === 'fyi'
+        ? 'View in portal →'
+        : 'Track PR status →';
+
+  const completedBlock = completedStepLabel
+    ? `
+        <tr>
+          <td width="50%" valign="top" style="padding:6px;vertical-align:top;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ecfdf5;border:1px solid #bbf7d0;border-radius:10px;">
+              <tr>
+                <td valign="top" height="96" style="padding:12px 14px;vertical-align:top;height:96px;">
+                  <div style="font-size:10px;color:#047857;text-transform:uppercase;font-weight:700;line-height:1.3;">Completed step</div>
+                  <div style="font-size:15px;font-weight:800;color:#047857;margin-top:4px;line-height:1.35;">${escapeHtml(completedStepLabel)}</div>
+                  <div style="font-size:12px;color:#065f46;margin-top:4px;line-height:1.35;">by ${escapeHtml(actorLine)}</div>
+                </td>
+              </tr>
+            </table>
+          </td>
+          <td width="50%" valign="top" style="padding:6px;vertical-align:top;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;">
+              <tr>
+                <td valign="top" height="96" style="padding:12px 14px;vertical-align:top;height:96px;">
+                  <div style="font-size:10px;color:#1d4ed8;text-transform:uppercase;font-weight:700;line-height:1.3;">Next step</div>
+                  <div style="font-size:15px;font-weight:800;color:#1e40af;margin-top:4px;line-height:1.35;">${escapeHtml(nextStepLabel || 'In progress')}</div>
+                  <div style="font-size:12px;color:#1e3a8a;margin-top:4px;line-height:1.35;">Action required by next owner</div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>`
+    : `
+        <tr>
+          <td valign="top" style="padding:6px;vertical-align:top;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;">
+              <tr>
+                <td valign="top" style="padding:12px 14px;vertical-align:top;">
+                  <div style="font-size:10px;color:#1d4ed8;text-transform:uppercase;font-weight:700;line-height:1.3;">Next step</div>
+                  <div style="font-size:15px;font-weight:800;color:#1e40af;margin-top:4px;line-height:1.35;">${escapeHtml(nextStepLabel || 'In progress')}</div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>`;
+
+  const remarksHtml = remarks
+    ? `
+        <div style="margin-top:16px;padding:14px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;">
+          <div style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:700;">Remarks</div>
+          <div style="font-size:14px;color:#334155;margin-top:6px;line-height:1.5;">${escapeHtml(remarks)}</div>
+        </div>`
+    : '';
+
+  const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8" /></head>
+<body style="margin:0;padding:24px;background:#eef2f7;font-family:Arial,sans-serif;">
+  <table width="640" align="center" cellpadding="0" cellspacing="0" border="0" style="background:#fff;border-radius:12px;border:1px solid #e2e8f0;overflow:hidden;">
+    <tr>
+      <td style="padding:24px 28px;background:linear-gradient(135deg,#0f766e,#0d9488);">
+        <div style="color:#fff;font-size:20px;font-weight:800;">${escapeHtml(headline)}</div>
+        <div style="color:#ccfbf1;font-size:14px;margin-top:8px;line-height:1.45;">${intro}</div>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:24px 28px;">
+        <div style="font-size:18px;font-weight:700;color:#0f172a;">${escapeHtml(pr.prNumber)} — ${escapeHtml(pr.title)}</div>
+        <div style="margin-top:10px;font-size:14px;color:#475569;">Entity: <strong>${escapeHtml(entityLabel)}</strong></div>
+        <div style="margin-top:6px;font-size:14px;color:#475569;">Amount: <strong>${formatCurrency(pr.totalAmount, pr.currency || pr.currency_code || 'INR')}</strong></div>
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;">
+          ${completedBlock}
+        </table>
+        ${remarksHtml}
+        <p style="margin:22px 0 0;text-align:center;">
+          <a href="${ctaUrl}" style="display:inline-block;padding:12px 24px;background:#0f766e;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;">
+            ${escapeHtml(ctaLabel)}
+          </a>
+        </p>
+        <p style="margin:14px 0 0;font-size:12px;color:#94a3b8;text-align:center;">
+          ${perspective === 'requester'
+            ? 'You will get another update whenever this PR moves to the next step.'
+            : 'This is a workflow update for your records.'}
+        </p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  const text = [
+    headline,
+    `${pr.prNumber} — ${pr.title}`,
+    completedStepLabel ? `Completed: ${completedStepLabel} by ${actorLine}` : '',
+    nextStepLabel ? `Next step: ${nextStepLabel}` : '',
+    remarks ? `Remarks: ${remarks}` : '',
+    `${ctaLabel}: ${ctaUrl}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return { subject, html, text };
+}

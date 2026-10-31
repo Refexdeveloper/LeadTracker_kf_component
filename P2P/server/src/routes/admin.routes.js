@@ -1,0 +1,344 @@
+import { Router } from 'express';
+import { authenticate, requireRoles } from '../middleware/auth.js';
+import { SUPER_ADMIN_ROLE } from '../services/permissionService.js';
+import {
+  listUsersForAdmin,
+  getPermissionCatalog,
+  getRoleCatalog,
+  updateUserPermissions,
+  updateUser,
+  syncUsersFromRefexOne,
+  resetAllData,
+} from '../services/adminService.js';
+import { listEmailLogs } from '../services/emailLogService.js';
+import { listUserActivityLogs } from '../services/userActivityLogService.js';
+import { retriggerEmailLog } from '../services/emailService.js';
+import { listWhatsAppLogs } from '../services/whatsappLogService.js';
+import {
+  processDailySlaBreachReminders,
+  processDueSlaBreachReminderSlots,
+  processSlaBreaches,
+} from '../services/slaBreachService.js';
+import { SLA_REMINDER_SLOTS, normalizeSlaReminderSlot } from '../utils/sla.js';
+import { repairUnsignedManualPosToPendingApproval, adminNotifyScmManagerPoApproval, adminMovePurchaseOrdersToVendorAcceptance } from '../services/poService.js';
+import { P2P_REPORT_TO, P2P_RAJEEV_PENDING_TASKS_TO, listRajeevSignedPurchaseOrders, sendP2pActivityReport, sendP2pPendingTasksReport, sendRajeevSignedPendingTasksReport } from '../services/p2pActivityReportService.js';
+
+const router = Router();
+router.use(authenticate);
+router.use(requireRoles(SUPER_ADMIN_ROLE));
+
+router.get('/users', async (_req, res) => {
+  try {
+    const data = await listUsersForAdmin();
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/users/sync', async (_req, res) => {
+  try {
+    const { stats, data } = await syncUsersFromRefexOne();
+    res.json({
+      data,
+      stats,
+      message: `Synced ${stats.total} users from RefexOne (${stats.created} new, ${stats.updated} updated)`,
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/permissions', async (_req, res) => {
+  try {
+    const data = await getPermissionCatalog();
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/roles', async (_req, res) => {
+  try {
+    const data = getRoleCatalog();
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.put('/users/:id', async (req, res) => {
+  try {
+    const { role, permissions, entityId } = req.body || {};
+    const data = await updateUser(req.user, Number(req.params.id), { role, permissions, entityId });
+    res.json({ data, message: 'User updated' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.put('/users/:id/permissions', async (req, res) => {
+  try {
+    const permissions = await updateUserPermissions(req.user, Number(req.params.id), req.body.permissions || []);
+    res.json({ data: { permissions }, message: 'User permissions updated' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/reset-data', async (req, res) => {
+  try {
+    const data = await resetAllData(req.user, { confirm: req.body?.confirm });
+    res.json({ data, message: data.message });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/email-logs', async (req, res) => {
+  try {
+    const data = await listEmailLogs({
+      status: req.query.status,
+      emailType: req.query.emailType,
+      prId: req.query.prId,
+      search: req.query.search,
+      page: req.query.page,
+      limit: req.query.limit,
+    });
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post('/email-logs/:id/retrigger', async (req, res) => {
+  try {
+    const data = await retriggerEmailLog(Number(req.params.id), {
+      extraTo: req.body?.extraTo || req.body?.to || '',
+    });
+    res.json({
+      data,
+      message: `Email sent to ${Array.isArray(data.to) ? data.to.join(', ') : data.to}`,
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+/** Super Admin: send the P2P activity report (PR, requester, PO, logins). */
+router.post('/p2p-report/send', async (req, res) => {
+  try {
+    const to = String(req.body?.to || P2P_REPORT_TO).trim() || P2P_REPORT_TO;
+    const data = await sendP2pActivityReport(to);
+    res.json({
+      data: {
+        to: data.to,
+        subject: data.subject,
+        report: data.report,
+      },
+      message: `P2P report sent to ${data.to}`,
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+/** Super Admin: send the pending-tasks mail (vendor acceptance, GRN, invoice entry). */
+router.post('/p2p-pending-tasks/send', async (req, res) => {
+  try {
+    const to = String(req.body?.to || P2P_REPORT_TO).trim() || P2P_REPORT_TO;
+    const data = await sendP2pPendingTasksReport(to);
+    res.json({
+      data: {
+        to: data.to,
+        subject: data.subject,
+        report: {
+          totalPos: data.report.totalPos,
+          vendorAcceptancePending: data.report.vendorAcceptancePending,
+          grnPending: data.report.grnPending,
+          invoiceEntryPending: data.report.invoiceEntryPending,
+        },
+      },
+      message: `Pending tasks mail sent to ${data.to}`,
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+/** Super Admin: Excel rows for the POs counted in the Rajeev pending-tasks mail. */
+router.get('/p2p-rajeev-pending-tasks/export', async (_req, res) => {
+  try {
+    const rows = await listRajeevSignedPurchaseOrders();
+    res.json({ data: rows });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+/** Super Admin: pending-tasks mail for POs Rajeev has signed only. */
+router.post('/p2p-rajeev-pending-tasks/send', async (req, res) => {
+  try {
+    const bodyTo = req.body?.to;
+    const to = bodyTo == null || bodyTo === ''
+      ? P2P_RAJEEV_PENDING_TASKS_TO
+      : bodyTo;
+    const data = await sendRajeevSignedPendingTasksReport(to);
+    res.json({
+      data: {
+        to: data.to,
+        subject: data.subject,
+        report: {
+          totalPos: data.report.totalPos,
+          vendorAcceptancePending: data.report.vendorScreen?.pending || 0,
+          grnPending: (data.report.poStages || []).find((row) => row.key === 'grn_pending')?.count || 0,
+          invoiceEntryPending: (data.report.poStages || []).find((row) => row.key === 'invoice_entry')?.count || 0,
+        },
+      },
+      message: `Rajeev signed pending tasks mail sent to ${data.to}`,
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+/** Super Admin: force-send SCM Manager approval mail for a manual / any PO */
+router.post('/po/notify-scm-manager', async (req, res) => {
+  try {
+    const poKey = req.body?.poNumber || req.body?.poId || req.body?.id || '';
+    const extraTo = String(req.body?.extraTo || req.body?.to || '')
+      .split(/[,;\s]+/)
+      .map((e) => e.trim())
+      .filter(Boolean);
+    const data = await adminNotifyScmManagerPoApproval(poKey, {
+      extraTo,
+      remarks: req.body?.remarks || undefined,
+    });
+    res.json({
+      data,
+      message: `SCM Manager approval mail queued for ${data.poNumber} → ${data.to.join(', ')}`,
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/whatsapp-logs', async (req, res) => {
+  try {
+    const data = await listWhatsAppLogs({
+      status: req.query.status,
+      notifyType: req.query.notifyType,
+      prId: req.query.prId,
+      search: req.query.search,
+      page: req.query.page,
+      limit: req.query.limit,
+    });
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/user-activity-logs', async (req, res) => {
+  try {
+    const data = await listUserActivityLogs({
+      action: req.query.action,
+      userId: req.query.userId,
+      search: req.query.search,
+      page: req.query.page,
+      limit: req.query.limit,
+    });
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.get('/scm-manager-signature', async (_req, res) => {
+  try {
+    const { getDefaultScmManagerSignatureInfo } = await import('../services/signatureService.js');
+    res.json({ data: getDefaultScmManagerSignatureInfo() });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.put('/scm-manager-signature', async (req, res) => {
+  try {
+    const { updateDefaultScmManagerSignature } = await import('../services/signatureService.js');
+    const data = await updateDefaultScmManagerSignature({
+      image: req.body?.image,
+      applyToSignedPos: req.body?.applyToSignedPos !== false,
+    });
+    res.json({
+      data,
+      message: data.backfilled
+        ? `Default signature updated and applied to ${data.backfilled} signed PO(s)`
+        : 'Default SCM Manager signature updated',
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+/** Manual trigger: one-time SLA breach mails (all roles, once via sla_notified_at). */
+router.post('/sla/process-breaches', async (_req, res) => {
+  try {
+    const data = await processSlaBreaches();
+    res.json({ data, message: 'SLA breach check processed' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+/**
+ * Manual trigger: User/L1/L2 SLA breach reminders.
+ * Body: { force?: boolean, slot?: 'MORNING'|'EVENING'|'BOTH' }
+ * Default slot=BOTH with force=true. SCM Buyer / SCM Manager are never included.
+ */
+router.post('/sla/process-daily-reminders', async (req, res) => {
+  try {
+    const force = req.body?.force !== false;
+    const rawSlot = String(req.body?.slot || 'BOTH').trim().toUpperCase();
+    let data;
+    if (rawSlot === 'BOTH' || rawSlot === 'ALL') {
+      data = await processDueSlaBreachReminderSlots({ force });
+    } else {
+      data = await processDailySlaBreachReminders({
+        force,
+        slot: normalizeSlaReminderSlot(rawSlot),
+      });
+    }
+    res.json({ data, message: 'SLA morning/evening reminders processed' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+/** Approved POs that skipped vendor acceptance → Vendor PO Acceptance screen. */
+router.post('/po/move-to-vendor-acceptance', async (req, res) => {
+  try {
+    const data = await adminMovePurchaseOrdersToVendorAcceptance(req.user, req.body?.poNumbers);
+    res.json({
+      data,
+      message: `Moved ${data.moved.length} PO(s) to vendor PO acceptance`,
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+/** Repair manual POs wrongly marked approved/signed → pending SCM Manager sign */
+router.post('/po/repair-manual-pending-approval', async (_req, res) => {
+  try {
+    const data = await repairUnsignedManualPosToPendingApproval();
+    res.json({
+      data,
+      message: `Repaired ${data.repaired} of ${data.scanned} unsigned manual PO(s) back to draft for SCM edit`,
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+export default router;
