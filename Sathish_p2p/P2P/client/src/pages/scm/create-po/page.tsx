@@ -1,0 +1,6432 @@
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import DashboardLayout from '../../../components/feature/DashboardLayout';
+import { getRoleHomePath, useAuth } from '../../../contexts/AuthContext';
+import '../../../styles/dashboard-fx.css';
+import '../../../styles/po-workspace.css';
+import RichTextEditor from '../../../components/base/RichTextEditor';
+import AddableSelect from '../../../components/base/AddableSelect';
+import {
+  ApiError,
+  poApi,
+  prApi,
+  poLetterheadApi,
+  letterheadMasterApi,
+  masterApi,
+  vendorApi,
+  triggerBlobDownload,
+  poPdfDownloadFileName,
+  fileToAttachmentPayload,
+  PoType,
+  PoLetterheadClause,
+  PO_TYPE_LABELS,
+  alignPoTypeWithDocument,
+  coercePoType,
+  defaultPoTypeForDocument,
+  LetterheadMasterRecord,
+  LetterheadLocationRecord,
+  PoSiteLookupRecord,
+  VendorRecord,
+  EntityRecord,
+} from '../../../services/api';
+import ManualPoContextSection, {
+  emptyComparisonRound,
+  findRecommendedManualQuote,
+  hydrateComparisonRoundsFromStored,
+  hydrateManualPrDetailsFromStored,
+  mergeStoredFilesIntoRounds,
+  type ManualPrDetails,
+  type ManualComparisonRound,
+} from './ManualPoContextSection';
+import {
+  consumePoCsvImport,
+  downloadPoImportSampleCsv,
+  type PoCsvImportPayload,
+} from '../../../utils/poCsvImport';
+import PurchaseRequestsPanel, {
+  type PurchaseRequestsPanelHandle,
+} from '../purchase-requests/components/PurchaseRequestsPanel';
+import SearchCreateField from '../../requester/create-pr/SearchCreateField';
+import POApprovalModal from '../po-approval/components/POApprovalModal';
+import PostRfqApprovalModal from '../../rfq-approval/components/PostRfqApprovalModal';
+import { numberToIndianWords } from '../../../utils/amountInWords';
+import {
+  AnnexureIiRow,
+  emptyAnnexureIiRow,
+  parseAnnexureIi,
+  serializeAnnexureIi,
+  annexureIiRowIsEmpty,
+  DEFAULT_ANNEXURE_II_TITLE,
+} from '../../../utils/annexureIi';
+import {
+  CURRENCY_OPTIONS,
+  DEFAULT_CURRENCY,
+  CurrencyCode,
+  currencySymbol,
+  formatMoney,
+  normalizeCurrency,
+} from '../../../constants/currency';
+
+interface LineItem {
+  id: string | number;
+  itemName: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  taxPercentage: number;
+  total: number;
+  unit?: string;
+}
+
+function plainTextFromHtml(html: string) {
+  return String(html || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isQuoteNoHeader(html: string) {
+  const text = plainTextFromHtml(html)
+    .replace(/\//g, ' ')
+    .replace(/\./g, '')
+    .replace(/:/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  if (!text) return false;
+  if (
+    /^(quote|quotation|rfq)\s*(no|number)(\s*(date|c))?$/.test(text) ||
+    /^ref\s*no(\s*date)?$/.test(text)
+  ) {
+    return true;
+  }
+  return /^(quote|rfq|quotation)\s*(no|number)\b/.test(text) && text.length <= 48;
+}
+
+/** Free text in Quote No / RFQ No terms description (ignores SugarCRM placeholders). */
+function extractQuoteNoFromDescription(html: string): string | null {
+  const withoutPlaceholders = String(html || '')
+    .replace(/\$aos_quotes_[a-z0-9_]+/gi, ' ')
+    .replace(/\$[a-z0-9_]+/gi, ' ');
+  const text = plainTextFromHtml(withoutPlaceholders)
+    .replace(/^[—–\-]+|[—–\-]+$/g, '')
+    .trim();
+  if (!text) return null;
+  return text;
+}
+
+function escapeHtmlText(value: string) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function stripQuoteNoFromTermsClauses(clauses: PoLetterheadClause[]): PoLetterheadClause[] {
+  return (clauses || []).filter((clause) => !isQuoteNoHeader(String(clause.termsHeader || '')));
+}
+
+function renameRfqHeadersToQuoteNo(clauses: PoLetterheadClause[]): PoLetterheadClause[] {
+  return (clauses || []).map((clause) => {
+    if (!isQuoteNoHeader(String(clause.termsHeader || ''))) return clause;
+    return { ...clause, termsHeader: 'Quote No' };
+  });
+}
+
+function calcLineTotal(quantity: number, unitPrice: number) {
+  const gross = (Number(quantity) || 0) * (Number(unitPrice) || 0);
+  return Math.round(gross * 100) / 100;
+}
+
+function calcLineTax(total: number, taxPercentage: number) {
+  return Math.round(((Number(total) || 0) * (Number(taxPercentage) || 0)) / 100 * 100) / 100;
+}
+
+function roundMoney(n: number) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+function lineItemUnit(li: { unit?: unknown; uom?: unknown } | Record<string, unknown>) {
+  const unit = String(li.unit || li.uom || '').trim();
+  return unit || 'Nos';
+}
+
+function upsertSiteLookup(list: PoSiteLookupRecord[], item: PoSiteLookupRecord) {
+  const rest = list.filter(
+    (row) => row.id !== item.id && row.label.trim().toLowerCase() !== item.label.trim().toLowerCase()
+  );
+  return [item, ...rest];
+}
+
+const DEFAULT_SITE_CONTACTS: PoSiteLookupRecord[] = [
+  { id: -1, type: 'site_contact', label: 'Sathish Karunanithi', email: 'sathishbabu.k@refex.co.in', phone: '8553656560', status: 'active' },
+  { id: -2, type: 'site_contact', label: 'Nirmalantony S', email: 'nirmalantony.s@refex.co.in', phone: '7397783563', status: 'active' },
+  { id: -3, type: 'site_contact', label: 'Nambu Santhiya N', email: 'nambu.santhiya@refex.co.in', phone: '8754595292', status: 'active' },
+  { id: -4, type: 'site_contact', label: 'Naveen N', email: 'naveen.n@refexfleet.com', phone: '9771127799', status: 'active' },
+  { id: -5, type: 'site_contact', label: 'Mohd Sameeuddin', email: 'mohd.sameeuddin@refex.co.in', phone: '7993689327', status: 'active' },
+  { id: -6, type: 'site_contact', label: 'Mohd Arif Shaikh', email: 'mohd.arifshaikh@refex.co.in', phone: '9920400371', status: 'active' },
+  { id: -7, type: 'site_contact', label: 'Mokthiyar', email: 'mokthiyar.n@refex.co.in', phone: '9844444520', status: 'active' },
+  { id: -8, type: 'site_contact', label: 'Arjun Singh', email: 'emco5mw@refex.co.in', phone: '8426895998', status: 'active' },
+  { id: -9, type: 'site_contact', label: 'Pushpendra Kumar', email: 'diwana3.25mw@refex.co.in', phone: '9414943645', status: 'active' },
+  { id: -10, type: 'site_contact', label: 'Narendra Kumar', email: 'narendra.k@refex.co.in', phone: '9792435433', status: 'active' },
+  { id: -11, type: 'site_contact', label: 'Abhilash Ghatage', email: 'abhilash.ag@refex.co.in', phone: '9834684067', status: 'active' },
+  { id: -12, type: 'site_contact', label: 'Dhanunjay Patlolla', email: 'dhanunjay.p@refex.co.in', phone: '9043984072', status: 'active' },
+  { id: -13, type: 'site_contact', label: 'Suresh Kumar', email: 'sureshkumar.m@refex.co.in', phone: '9782530640', status: 'active' },
+  { id: -14, type: 'site_contact', label: 'Nikhil Kumar', email: 'jaipur.cluster.om@refex.co.in', phone: '9837570662', status: 'active' },
+  { id: -15, type: 'site_contact', label: 'Jagan Tamilarasu', email: 'jagan.tamilarasu@refex.co.in', phone: '7418635321', status: 'active' },
+  { id: -16, type: 'site_contact', label: 'Jaganraj.R', email: 'jaganraj.r@refex.co.in', phone: '8220817153', status: 'active' },
+  { id: -17, type: 'site_contact', label: 'Venkatesha', email: 'venkatesha.ncv@refex.co.in', phone: '6381881348', status: 'active' },
+  { id: -18, type: 'site_contact', label: 'Praveen', email: 'praveen@vyzagbioenergy.com', phone: '9739841093', status: 'active' },
+  { id: -19, type: 'site_contact', label: 'Rajesh Das', email: 'rajeshdas@refex.co.in', phone: '7014049317', status: 'active' },
+  { id: -20, type: 'site_contact', label: 'Nitesh Pawar', email: 'nitesh.p@refex.co.in', phone: '7489746407', status: 'active' },
+];
+
+const DEFAULT_PROJECT_MANAGERS: PoSiteLookupRecord[] = [
+  { id: -101, type: 'project_manager', label: 'Palani', email: 'palani.c@refex.co.in', phone: '9766865267', status: 'active' },
+  { id: -102, type: 'project_manager', label: 'Ramesh', email: 'ramesh.c@refex.co.in', phone: '7550048222', status: 'active' },
+  { id: -103, type: 'project_manager', label: 'Sarath Kumar', email: 'sharathkumar.b@refex.co.in', phone: '8754444250', status: 'active' },
+  { id: -104, type: 'project_manager', label: 'Babu Rathinam', email: 'babu.r@refex.co.in', phone: '9600811102', status: 'active' },
+  { id: -105, type: 'project_manager', label: 'Jones Basil T', email: 'jones.t@refex.co.in', phone: '8220920195', status: 'active' },
+  { id: -106, type: 'project_manager', label: 'Sangeetha', email: 'sangeetha.r@refex.co.in', phone: '7305394575', status: 'active' },
+  { id: -107, type: 'project_manager', label: 'Chinna Ashok Kumar', email: 'chinna.ashok@refex.co.in', phone: '8122504180', status: 'active' },
+];
+
+function mergeLookups(defaults: PoSiteLookupRecord[], apiRows: PoSiteLookupRecord[]) {
+  const byName = new Map<string, PoSiteLookupRecord>();
+  for (const row of defaults) {
+    byName.set(row.label.trim().toLowerCase(), row);
+  }
+  for (const row of apiRows) {
+    const key = row.label.trim().toLowerCase();
+    const existing = byName.get(key);
+    byName.set(key, {
+      ...row,
+      email: row.email || existing?.email || '',
+      phone: row.phone || existing?.phone || '',
+    });
+  }
+  return [...byName.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function mergeSiteContacts(apiRows: PoSiteLookupRecord[]) {
+  return mergeLookups(DEFAULT_SITE_CONTACTS, apiRows);
+}
+
+function mergeProjectManagers(apiRows: PoSiteLookupRecord[]) {
+  return mergeLookups(DEFAULT_PROJECT_MANAGERS, apiRows);
+}
+
+const EMPTY_PO_TERMS_DETAILS = {
+  paymentTermsText: '',
+  siteAddress: '',
+  siteContactPerson: '',
+  siteContactPhone: '',
+  siteContactEmail: '',
+  projectManagerHo: '',
+  projectManagerContact: '',
+  projectManagerEmail: '',
+  invoicingAddress: '',
+  mailingAddress: '',
+  reasonForCancellation: '',
+  subject: '',
+  quoteNo: '',
+  quoteDate: '',
+  locationName: '',
+  buyerGstNo: '',
+  letterheadLocationId: '',
+  modeOfShipment: '',
+};
+
+function letterheadLocKey(loc: LetterheadLocationRecord, index = 0) {
+  if (loc.id != null) return String(loc.id);
+  return `name:${loc.location || index}`;
+}
+
+function addressLinesToHtml(text: string) {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => `<p>${escapeHtmlText(line)}</p>`)
+    .join('');
+}
+
+function matchEntityLocation(
+  entity: EntityRecord | null | undefined,
+  locationName: string
+) {
+  const name = String(locationName || '').trim().toLowerCase();
+  if (!entity?.locations?.length || !name) return null;
+  return (
+    entity.locations.find((l) => String(l.location || '').trim().toLowerCase() === name) || null
+  );
+}
+
+function pickEntityLocation(
+  entity: {
+    locations?: Array<{
+      location?: string;
+      gstNo?: string;
+      siteAddress?: string;
+      billingAddress?: string;
+    }>;
+  } | null | undefined,
+  locationName: string,
+  gstNo?: string
+) {
+  const locations = entity?.locations || [];
+  if (!locations.length) return null;
+  const name = String(locationName || '').trim().toLowerCase();
+  const byName = name
+    ? locations.find((l) => String(l.location || '').trim().toLowerCase() === name) || null
+    : null;
+  if (byName && (byName.siteAddress || byName.billingAddress)) return byName;
+  const gst = String(gstNo || '').trim().toLowerCase();
+  if (gst) {
+    const byGst = locations.find((l) => String(l.gstNo || '').trim().toLowerCase() === gst);
+    if (byGst) return byGst;
+  }
+  if (byName) return byName;
+  const withAddress = locations.filter(
+    (l) => String(l.siteAddress || '').trim() || String(l.billingAddress || '').trim()
+  );
+  if (withAddress.length === 1) return withAddress[0];
+  return null;
+}
+
+function invoicingHtmlFromEntityLocation(loc: {
+  billingAddress?: string;
+  gstNo?: string;
+} | null) {
+  const billing = String(loc?.billingAddress || '').trim();
+  if (!billing) return '';
+  const html = addressLinesToHtml(billing);
+  const gst = String(loc?.gstNo || '').trim();
+  return gst ? `${html}<p>GSTIN: ${escapeHtmlText(gst)}</p>` : html;
+}
+
+function buildInvoicingAddressFromLocation(
+  loc: LetterheadLocationRecord,
+  entityLoc?: { billingAddress?: string; siteAddress?: string } | null
+) {
+  const billing = String(entityLoc?.billingAddress || '').trim();
+  if (billing) {
+    const html = addressLinesToHtml(billing);
+    if (loc.gstNo?.trim()) {
+      return `${html}<p>GSTIN: ${escapeHtmlText(loc.gstNo.trim())}</p>`;
+    }
+    return html;
+  }
+  const parts: string[] = [];
+  if (loc.location?.trim()) {
+    parts.push(`<p>${escapeHtmlText(loc.location.trim())}</p>`);
+  }
+  if (loc.gstNo?.trim()) {
+    parts.push(`<p>GSTIN: ${escapeHtmlText(loc.gstNo.trim())}</p>`);
+  }
+  return parts.join('');
+}
+
+type PoTermsDetails = typeof EMPTY_PO_TERMS_DETAILS;
+
+/** Quote No is a header field only — strip it from Terms & Conditions before save / preview. */
+function withSyncedQuoteNo(
+  clauses: PoLetterheadClause[],
+  details: PoTermsDetails
+): { terms: PoLetterheadClause[]; poTermsDetails: PoTermsDetails; quoteNo: string } {
+  const renamed = renameRfqHeadersToQuoteNo(clauses);
+  const quoteRow = renamed.find((c) => isQuoteNoHeader(String(c.termsHeader || '')));
+  const fromField = String(details.quoteNo || '').trim();
+  const fromTerms = extractQuoteNoFromDescription(String(quoteRow?.termsDescription || '')) || '';
+  const quoteNo = fromField || fromTerms;
+  return {
+    terms: stripQuoteNoFromTermsClauses(renamed),
+    poTermsDetails: { ...details, quoteNo },
+    quoteNo,
+  };
+}
+
+const INCOTERM_NOT_APPLICABLE = 'Not applicable';
+
+/** Incoterms® 2020 — all 11 ICC rules, plus Not applicable */
+const INCOTERMS_OPTIONS = [
+  { code: INCOTERM_NOT_APPLICABLE, label: 'Not applicable' },
+  { code: 'EXW', label: 'EXW — Ex Works' },
+  { code: 'FCA', label: 'FCA — Free Carrier' },
+  { code: 'CPT', label: 'CPT — Carriage Paid To' },
+  { code: 'CIP', label: 'CIP — Carriage and Insurance Paid To' },
+  { code: 'DAP', label: 'DAP — Delivered at Place' },
+  { code: 'DPU', label: 'DPU — Delivered at Place Unloaded' },
+  { code: 'DDP', label: 'DDP — Delivered Duty Paid' },
+  { code: 'FAS', label: 'FAS — Free Alongside Ship (sea)' },
+  { code: 'FOB', label: 'FOB — Free on Board (sea)' },
+  { code: 'CFR', label: 'CFR — Cost and Freight (sea)' },
+  { code: 'CIF', label: 'CIF — Cost, Insurance and Freight (sea)' },
+] as const;
+
+const MODE_OF_SHIPMENT_OPTIONS = [
+  { value: '', label: 'Select mode of shipment' },
+  { value: 'By Road', label: 'By Road' },
+  { value: 'By Air', label: 'By Air' },
+  { value: 'By Ship', label: 'By Ship' },
+] as const;
+
+function normalizeIncoterm(value?: string | null): string {
+  const raw = String(value || '').trim();
+  if (!raw) return 'DDP';
+  const upper = raw.toUpperCase().replace(/[_-]+/g, ' ');
+  if (['NA', 'N/A', 'N.A.', 'NOT APPLICABLE'].includes(upper)) {
+    return INCOTERM_NOT_APPLICABLE;
+  }
+  // Map retired DAT (2010) → DPU (2020)
+  if (upper === 'DAT' || upper.includes('DAT')) return 'DPU';
+  const match = INCOTERMS_OPTIONS.find((o) => {
+    if (o.code === INCOTERM_NOT_APPLICABLE) return false;
+    return upper === o.code || upper.startsWith(`${o.code} `) || upper.startsWith(`${o.code}-`) || upper.includes(o.code);
+  });
+  return match?.code || 'DDP';
+}
+
+function normalizeModeOfShipment(value?: string | null): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const lower = raw.toLowerCase().replace(/[_-]+/g, ' ');
+  if (lower.includes('air')) return 'By Air';
+  if (lower.includes('ship') || lower.includes('sea') || lower.includes('ocean')) return 'By Ship';
+  if (lower.includes('road') || lower.includes('truck') || lower.includes('land')) return 'By Road';
+  const match = MODE_OF_SHIPMENT_OPTIONS.find((o) => o.value && o.value.toLowerCase() === lower);
+  return match?.value || '';
+}
+
+function todayYmd() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function toInputDate(value?: unknown): string {
+  const s = String(value || '').trim();
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const dmy = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function formatPoDateLabel(ymd: string) {
+  const m = String(ymd || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return ymd || '—';
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+
+/** Gap between doc-type words (spaces, nbsp, or inline tags like </strong>) */
+const DOC_WORD_GAP = '((?:\\s|&nbsp;|&#160;|<[^>]*>)*)';
+
+/** Rewrite Purchase Order ↔ Work Order wording in clause / letterhead HTML */
+function adaptWordingForDocumentType(
+  html: string,
+  documentType: 'purchase_order' | 'work_order'
+): string {
+  if (!html) return html;
+  let out = String(html);
+  if (documentType === 'work_order') {
+    out = out
+      .replace(/purchase\s*order\s*\/\s*work\s*order(?:\s*\/\s*service\s*order)?/gi, 'Work Order')
+      .replace(/work\s*order\s*\/\s*purchase\s*order/gi, 'Work Order')
+      .replace(new RegExp(`PURCHASE${DOC_WORD_GAP}ORDER`, 'g'), 'WORK$1ORDER')
+      .replace(new RegExp(`Purchase${DOC_WORD_GAP}Order`, 'g'), 'Work$1Order')
+      .replace(new RegExp(`purchase${DOC_WORD_GAP}order`, 'gi'), 'work$1order');
+  } else {
+    out = out
+      .replace(/work\s*order\s*\/\s*purchase\s*order/gi, 'Purchase Order')
+      .replace(/purchase\s*order\s*\/\s*work\s*order(?:\s*\/\s*service\s*order)?/gi, 'Purchase Order')
+      .replace(new RegExp(`WORK${DOC_WORD_GAP}ORDER`, 'g'), 'PURCHASE$1ORDER')
+      .replace(new RegExp(`Work${DOC_WORD_GAP}Order`, 'g'), 'Purchase$1Order')
+      .replace(new RegExp(`work${DOC_WORD_GAP}order`, 'gi'), 'purchase$1order');
+  }
+  out = out.replace(/RFQ\s*No\.?/gi, 'Quote No').replace(/RFQ\s*Number/gi, 'Quote Number');
+  return out;
+}
+
+function adaptClausesForDocumentType(
+  clauses: PoLetterheadClause[],
+  documentType: 'purchase_order' | 'work_order'
+): PoLetterheadClause[] {
+  return renameRfqHeadersToQuoteNo(
+    (clauses || []).map((clause) => ({
+      ...clause,
+      termsHeader: adaptWordingForDocumentType(String(clause.termsHeader || ''), documentType),
+      termsDescription: adaptWordingForDocumentType(
+        String(clause.termsDescription || ''),
+        documentType
+      ),
+    }))
+  );
+}
+
+/** Letterhead master embeds "PURCHASE ORDER" — hide/adapt for Work Order preview */
+function adaptLetterheadPreviewHtml(html: string, isWorkOrder: boolean) {
+  if (!html) return '';
+  let out = adaptWordingForDocumentType(html, isWorkOrder ? 'work_order' : 'purchase_order');
+  out = out.replace(
+    /<p[^>]*>\s*(?:<strong>\s*)?(?:PURCHASE|WORK)\s+ORDER(?:\s*<\/strong>)?\s*<\/p>/gi,
+    ''
+  );
+  return out.trim();
+}
+
+const PO_TYPE_OPTIONS_BY_DOC: Record<
+  'purchase_order' | 'work_order',
+  { id: PoType; label: string }[]
+> = {
+  purchase_order: [
+    { id: 'short_po', label: PO_TYPE_LABELS.short_po },
+    { id: 'long_po', label: PO_TYPE_LABELS.long_po },
+    { id: 'custom_short_po', label: PO_TYPE_LABELS.custom_short_po },
+    { id: 'custom_long_po', label: PO_TYPE_LABELS.custom_long_po },
+  ],
+  work_order: [
+    { id: 'short_wo', label: PO_TYPE_LABELS.short_wo },
+    { id: 'long_wo', label: PO_TYPE_LABELS.long_wo },
+    { id: 'custom_short_wo', label: PO_TYPE_LABELS.custom_short_wo },
+    { id: 'custom_long_wo', label: PO_TYPE_LABELS.custom_long_wo },
+  ],
+};
+
+function formatEntityLabel(ent: EntityRecord | { id: number; name: string; code: string; costCenter?: string }) {
+  const base = ent.code ? `${ent.code} — ${ent.name}` : ent.name;
+  const costCenter = 'costCenter' in ent ? ent.costCenter : '';
+  return costCenter ? `${base} (${costCenter})` : base;
+}
+
+function manualEntityPayload(
+  manualEntityId: number | '',
+  selected: EntityRecord | null
+): { selectedEntityId: number | null; entityId: number | null; entity: string } {
+  const id = manualEntityId === '' ? null : Number(manualEntityId);
+  return {
+    selectedEntityId: id,
+    entityId: id,
+    entity: id && selected ? String(selected.name || selected.code || '') : '',
+  };
+}
+
+function matchLetterheadForEntity(
+  options: LetterheadMasterRecord[],
+  entityCode?: string | null,
+  entityName?: string | null
+) {
+  const code = String(entityCode || '').trim().toLowerCase();
+  const name = String(entityName || '').trim().toLowerCase();
+  if (!code && !name) return null;
+  const label = code && name ? `${code} — ${name}` : '';
+  return (
+    options.find((row) => {
+      const entity = String(row.entity || '').trim().toLowerCase();
+      const letterheadName = String(row.name || '').trim().toLowerCase();
+      if (code && (entity === code || letterheadName === code)) return true;
+      if (name && (entity === name || letterheadName === name)) return true;
+      if (label && (entity === label || letterheadName === label)) return true;
+      if (code && (entity.startsWith(`${code} `) || entity.startsWith(`${code}—`) || entity.startsWith(`${code}-`))) {
+        return true;
+      }
+      if (name.length >= 4 && (entity.includes(name) || letterheadName.includes(name))) return true;
+      return false;
+    }) || null
+  );
+}
+
+function matchEntityFromLetterhead(
+  letterhead: LetterheadMasterRecord | null,
+  options: EntityRecord[]
+) {
+  if (!letterhead || !options.length) return null;
+  const entityName = String(letterhead.entity || '').trim().toLowerCase();
+  const letterheadName = String(letterhead.name || '').trim().toLowerCase();
+  return (
+    options.find((e) => entityName && e.name.toLowerCase() === entityName) ||
+    options.find((e) => letterheadName && e.code.toLowerCase() === letterheadName) ||
+    options.find((e) => letterheadName && e.name.toLowerCase() === letterheadName) ||
+    options.find((e) => entityName && e.code.toLowerCase() === entityName) ||
+    null
+  );
+}
+
+function normalizeVendorMatchKey(value: string) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\b(private|limited|pvt|ltd|llp|inc|corp|company)\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function matchVendorFromMaster(
+  vendors: VendorRecord[],
+  opts: { name?: string; email?: string; gst?: string }
+) {
+  const name = normalizeVendorMatchKey(opts.name || '');
+  const email = String(opts.email || '').trim().toLowerCase();
+  const gst = String(opts.gst || '').replace(/\s+/g, '').toUpperCase();
+  if (name) {
+    const byName = vendors.find((v) => normalizeVendorMatchKey(v.name) === name);
+    if (byName) return byName;
+  }
+  if (gst) {
+    const byGst = vendors.find(
+      (v) => String(v.gstNumber || '').replace(/\s+/g, '').toUpperCase() === gst
+    );
+    if (byGst) return byGst;
+  }
+  if (email) {
+    const byEmail = vendors.find((v) => String(v.email || '').trim().toLowerCase() === email);
+    if (byEmail) return byEmail;
+  }
+  return null;
+}
+
+type EditableClauseRow = PoLetterheadClause & { clientKey: string };
+
+function makeClauseClientKey() {
+  return `clause-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function emptyClauseRow(): EditableClauseRow {
+  return { clientKey: makeClauseClientKey(), termsHeader: '', termsDescription: '' };
+}
+
+function toEditableClauseRows(clauses: PoLetterheadClause[]): EditableClauseRow[] {
+  if (!clauses.length) return [emptyClauseRow()];
+  return clauses.map((clause) => ({
+    ...clause,
+    clientKey: clause.id ? `db-${clause.id}` : makeClauseClientKey(),
+  }));
+}
+
+function filterNonEmptyClauses(clauses: PoLetterheadClause[]): PoLetterheadClause[] {
+  return clauses
+    .filter(
+      (clause) =>
+        plainTextFromHtml(String(clause.termsHeader || '')) ||
+        plainTextFromHtml(String(clause.termsDescription || ''))
+    )
+    .map((clause, index) => ({ ...clause, sortOrder: index }));
+}
+
+function clauseListSignature(clauses: PoLetterheadClause[]) {
+  return JSON.stringify(
+    (clauses || []).map((c) => [c.id ?? null, c.termsHeader || '', c.termsDescription || '', c.sortOrder ?? null])
+  );
+}
+
+function ClauseTableEditor({
+  title,
+  headerColumnLabel,
+  descriptionColumnLabel,
+  headerPlaceholder,
+  descriptionPlaceholder,
+  emptyHint,
+  clauses,
+  onChange,
+  onReloadFromMaster,
+  reloadDisabled,
+  loadFromPo,
+  docLabel = 'Purchase Order',
+  editorRevision = '',
+}: {
+  title: string;
+  headerColumnLabel: string;
+  descriptionColumnLabel: string;
+  headerPlaceholder: string;
+  descriptionPlaceholder: string;
+  emptyHint: string;
+  clauses: PoLetterheadClause[];
+  onChange: (next: PoLetterheadClause[]) => void;
+  onReloadFromMaster?: () => void;
+  reloadDisabled?: boolean;
+  loadFromPo?: {
+    poNumber: string;
+    onPoNumberChange: (value: string) => void;
+    onLoad: () => void;
+    loading?: boolean;
+    error?: string;
+  };
+  docLabel?: string;
+  /** Bump when document type changes so rich-text editors remount with new wording */
+  editorRevision?: string;
+}) {
+  const [rows, setRows] = useState<EditableClauseRow[]>(() => toEditableClauseRows(clauses));
+  const lastExternalSig = useRef(clauseListSignature(clauses));
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+
+  useEffect(() => {
+    const sig = clauseListSignature(clauses);
+    if (sig === lastExternalSig.current) return;
+    lastExternalSig.current = sig;
+    const next = toEditableClauseRows(clauses);
+    rowsRef.current = next;
+    setRows(next);
+  }, [clauses]);
+
+  const commit = (nextRows: EditableClauseRow[]) => {
+    rowsRef.current = nextRows;
+    setRows(nextRows);
+    const payload = nextRows.map(({ clientKey: _key, ...clause }, index) => ({
+      ...clause,
+      sortOrder: index,
+    }));
+    lastExternalSig.current = clauseListSignature(payload);
+    onChange(payload);
+  };
+
+  const updateRow = (index: number, patch: Partial<EditableClauseRow>) => {
+    commit(rowsRef.current.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  };
+
+  const addRow = () => commit([...rowsRef.current, emptyClauseRow()]);
+
+  const removeRow = (index: number) => {
+    if (rowsRef.current.length <= 1) {
+      commit([emptyClauseRow()]);
+      return;
+    }
+    commit(rowsRef.current.filter((_, i) => i !== index));
+  };
+
+  const moveRow = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= rowsRef.current.length) return;
+    const next = [...rowsRef.current];
+    [next[index], next[target]] = [next[target], next[index]];
+    commit(next);
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm w-full">
+      <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-gray-100 bg-gray-50 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
+          <h3 className="text-sm font-bold text-gray-900">{title}</h3>
+          <span className="px-2 py-0.5 text-xs font-medium bg-white border border-gray-200 rounded-full text-gray-500">
+            {rows.length} row{rows.length !== 1 ? 's' : ''}
+          </span>
+          <span className="px-2 py-0.5 bg-[#E3F2FD] text-[#1565C0] rounded text-xs font-medium">
+            Rich text · paste keeps bold · shown on {docLabel} PDF
+          </span>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {loadFromPo ? (
+            <div className="flex items-center gap-2 flex-wrap mr-1">
+              <input
+                type="text"
+                value={loadFromPo.poNumber}
+                onChange={(e) => loadFromPo.onPoNumberChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    loadFromPo.onLoad();
+                  }
+                }}
+                placeholder="PO number"
+                className="w-36 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#1E88E5]/30 focus:border-[#1E88E5]"
+              />
+              <button
+                type="button"
+                onClick={loadFromPo.onLoad}
+                disabled={loadFromPo.loading || !loadFromPo.poNumber.trim()}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-[#1565C0] bg-white border border-[#90CAF9] rounded-lg hover:bg-[#E3F2FD] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loadFromPo.loading ? (
+                  <i className="ri-loader-4-line animate-spin"></i>
+                ) : (
+                  <i className="ri-download-2-line"></i>
+                )}
+                Load Annexure
+              </button>
+            </div>
+          ) : null}
+          {onReloadFromMaster ? (
+            <button
+              type="button"
+              onClick={onReloadFromMaster}
+              disabled={reloadDisabled}
+              className="text-xs font-medium text-[#1565C0] hover:underline cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Reload from Master
+            </button>
+          ) : null}
+          {loadFromPo?.error ? (
+            <span className="text-xs text-red-600 w-full sm:w-auto">{loadFromPo.error}</span>
+          ) : null}
+          <button
+            type="button"
+            onClick={addRow}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-[#1565C0] bg-[#E3F2FD] border border-[#90CAF9] rounded-lg hover:bg-[#BBDEFB] cursor-pointer"
+          >
+            <i className="ri-add-line"></i>
+            Add Row
+          </button>
+        </div>
+      </div>
+
+      {!clauses.length ? (
+        <p className="px-5 pt-3 text-xs text-gray-400 italic">{emptyHint}</p>
+      ) : null}
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[760px]">
+          <thead>
+            <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500 bg-white border-b border-gray-100">
+              <th className="px-5 py-3 w-12">#</th>
+              <th className="px-5 py-3 w-[280px]">{headerColumnLabel}</th>
+              <th className="px-5 py-3">{descriptionColumnLabel}</th>
+              <th className="px-5 py-3 w-28 text-center">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => (
+              <tr key={row.clientKey} className="border-b border-gray-50 align-top hover:bg-gray-50/40">
+                <td className="px-5 py-4 text-sm text-gray-400">{index + 1}</td>
+                <td className="px-5 py-4">
+                  <label className="block text-xs text-gray-400 mb-1">Header</label>
+                  <RichTextEditor
+                    editorKey={`${row.clientKey}-header-${editorRevision}`}
+                    value={row.termsHeader || ''}
+                    onChange={(html) => updateRow(index, { termsHeader: html })}
+                    placeholder={headerPlaceholder}
+                    minHeight={72}
+                    advanced
+                  />
+                </td>
+                <td className="px-5 py-4">
+                  <label className="block text-xs text-gray-400 mb-1">Description</label>
+                  <RichTextEditor
+                    editorKey={`${row.clientKey}-desc-${editorRevision}`}
+                    value={row.termsDescription || ''}
+                    onChange={(html) => updateRow(index, { termsDescription: html })}
+                    placeholder={descriptionPlaceholder}
+                    minHeight={120}
+                    advanced
+                    allowTables
+                  />
+                </td>
+                <td className="px-5 py-4">
+                  <div className="flex items-center justify-center gap-1 pt-5">
+                    <button
+                      type="button"
+                      onClick={() => moveRow(index, -1)}
+                      disabled={index === 0}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
+                      title="Move up"
+                    >
+                      <i className="ri-arrow-up-line"></i>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveRow(index, 1)}
+                      disabled={index === rows.length - 1}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
+                      title="Move down"
+                    >
+                      <i className="ri-arrow-down-line"></i>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeRow(index)}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg text-red-500 hover:bg-red-50 cursor-pointer"
+                      title="Remove row"
+                    >
+                      <i className="ri-delete-bin-line"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+type EditableAnnexureIiRow = AnnexureIiRow & { clientKey: string };
+
+function toEditableAnnexureIiRows(rows: AnnexureIiRow[]): EditableAnnexureIiRow[] {
+  const list = rows?.length ? rows : [emptyAnnexureIiRow()];
+  return list.map((row) => ({
+    ...emptyAnnexureIiRow(),
+    ...row,
+    clientKey: makeClauseClientKey(),
+  }));
+}
+
+function isStandardAnnexureIiTitle(title?: string) {
+  const text = String(title || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return !text || /^ANNEXURE[\s\-–—_.]*II$/i.test(text);
+}
+
+function AnnexureIiTableEditor({
+  title,
+  rows,
+  onChange,
+  docLabel = 'Purchase Order',
+  editorRevision = '',
+  onAddDefault,
+  addingDefault = false,
+}: {
+  title: string;
+  rows: AnnexureIiRow[];
+  onChange: (next: AnnexureIiRow[]) => void;
+  docLabel?: string;
+  editorRevision?: string;
+  onAddDefault?: () => void;
+  addingDefault?: boolean;
+}) {
+  const [localRows, setLocalRows] = useState<EditableAnnexureIiRow[]>(() => toEditableAnnexureIiRows(rows));
+  const lastSig = useRef(serializeAnnexureIi(rows));
+  const localRowsRef = useRef(localRows);
+  localRowsRef.current = localRows;
+
+  useEffect(() => {
+    const sig = serializeAnnexureIi(rows);
+    if (sig === lastSig.current) return;
+    lastSig.current = sig;
+    const next = toEditableAnnexureIiRows(rows.length ? rows : [emptyAnnexureIiRow()]);
+    localRowsRef.current = next;
+    setLocalRows(next);
+  }, [rows]);
+
+  const commit = (next: EditableAnnexureIiRow[]) => {
+    localRowsRef.current = next;
+    setLocalRows(next);
+    const payload = next.map(({ clientKey: _key, ...row }) => row);
+    lastSig.current = serializeAnnexureIi(payload);
+    onChange(payload);
+  };
+
+  const updateRow = (index: number, patch: Partial<AnnexureIiRow>) => {
+    commit(localRowsRef.current.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  };
+
+  const addRow = () =>
+    commit([...localRowsRef.current, { ...emptyAnnexureIiRow(), clientKey: makeClauseClientKey() }]);
+
+  const removeRow = (index: number) => {
+    if (localRowsRef.current.length <= 1) {
+      commit([{ ...emptyAnnexureIiRow(), clientKey: makeClauseClientKey() }]);
+      return;
+    }
+    commit(localRowsRef.current.filter((_, i) => i !== index));
+  };
+
+  const moveRow = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= localRowsRef.current.length) return;
+    const next = [...localRowsRef.current];
+    [next[index], next[target]] = [next[target], next[index]];
+    commit(next);
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm w-full">
+      <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-gray-100 bg-gray-50 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
+          <h3 className="text-sm font-bold text-gray-900">{title}</h3>
+          <span className="px-2 py-0.5 text-xs font-medium bg-white border border-gray-200 rounded-full text-gray-500">
+            {localRows.length} row{localRows.length !== 1 ? 's' : ''}
+          </span>
+          <span className="px-2 py-0.5 bg-[#E3F2FD] text-[#1565C0] rounded text-xs font-medium">
+            Each row = one {docLabel} PDF page
+          </span>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {onAddDefault ? (
+            <button
+              type="button"
+              onClick={onAddDefault}
+              disabled={addingDefault}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-[#1E88E5] rounded-lg hover:bg-[#1565C0] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {addingDefault ? <i className="ri-loader-4-line animate-spin"></i> : <i className="ri-refresh-line"></i>}
+              Reload from Master
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={addRow}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-[#1565C0] bg-[#E3F2FD] border border-[#90CAF9] rounded-lg hover:bg-[#BBDEFB] cursor-pointer"
+          >
+            <i className="ri-add-line"></i>
+            Add Row
+          </button>
+        </div>
+      </div>
+      <p className="px-5 pt-3 text-xs text-gray-500">
+        {onAddDefault
+          ? 'Reload from Master puts the long work order Annexure II table back. ANNEXURE-III and any other heading you added stay as text.'
+          : 'Add technical data, scope, specifications, images, and tables. Edit the Annexure heading (ANNEXURE-II / III / IV) for the PDF top bar, and use Section header for the subtitle.'}
+      </p>
+      <div className="divide-y divide-gray-100">
+        {localRows.map((row, index) => (
+          <div key={row.clientKey} className="p-4 sm:p-5 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Row {index + 1} · PDF page
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => moveRow(index, -1)}
+                  disabled={index === 0}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
+                  title="Move up"
+                >
+                  <i className="ri-arrow-up-line"></i>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => moveRow(index, 1)}
+                  disabled={index === localRows.length - 1}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
+                  title="Move down"
+                >
+                  <i className="ri-arrow-down-line"></i>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeRow(index)}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg text-red-500 hover:bg-red-50 cursor-pointer"
+                  title="Remove row"
+                >
+                  <i className="ri-delete-bin-line"></i>
+                </button>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">
+                Annexure heading (replaces default ANNEXURE-II on PDF)
+              </label>
+              <input
+                type="text"
+                value={row.title || DEFAULT_ANNEXURE_II_TITLE}
+                onChange={(e) => {
+                  const nextTitle = e.target.value;
+                  const plainHeader = String(row.header || '')
+                    .replace(/<[^>]+>/g, ' ')
+                    .replace(/&nbsp;/gi, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                  const headerIsAnnexure = /^ANNEXURE[\s\-–—_.]*([IVXLC]+|\d+)$/i.test(plainHeader);
+                  // Keep a single heading: sync title and clear duplicate annexure label from section header
+                  updateRow(index, {
+                    title: nextTitle,
+                    ...(headerIsAnnexure ? { header: '' } : {}),
+                  });
+                }}
+                placeholder="e.g. ANNEXURE-II / ANNEXURE-III / ANNEXURE-IV"
+                className="w-full h-11 px-3.5 border border-gray-200 rounded-lg text-sm font-semibold uppercase tracking-wide focus:outline-none focus:ring-2 focus:ring-[#1E88E5] bg-gray-50/50"
+              />
+              <p className="text-[11px] text-gray-400 mt-1">
+                Only this heading appears on the gray PDF bar. Do not put ANNEXURE-III/IV in Section header below.
+              </p>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">
+                Section header (optional subtitle — not another ANNEXURE label)
+              </label>
+              <RichTextEditor
+                editorKey={`${row.clientKey}-h-${editorRevision}`}
+                value={row.header || ''}
+                onChange={(html) => {
+                  const plain = String(html || '')
+                    .replace(/<[^>]+>/g, ' ')
+                    .replace(/&nbsp;/gi, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                  // If user types ANNEXURE-IV here, treat it as the main heading (not a second bar)
+                  if (/^ANNEXURE[\s\-–—_.]*([IVXLC]+|\d+)$/i.test(plain)) {
+                    const m = plain.match(/^ANNEXURE[\s\-–—_.]*([IVXLC]+|\d+)$/i);
+                    const label = m ? `ANNEXURE-${String(m[1]).toUpperCase()}` : plain.toUpperCase();
+                    updateRow(index, { title: label, header: '' });
+                    return;
+                  }
+                  updateRow(index, { header: html });
+                }}
+                placeholder="e.g. APPROVED Drawings / Technical specification / Scope of work"
+                minHeight={56}
+                advanced
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Description, images, tables &amp; text</label>
+              <RichTextEditor
+                editorKey={`${row.clientKey}-d-${editorRevision}`}
+                value={row.description || ''}
+                onChange={(html) => updateRow(index, { description: html })}
+                placeholder="Add formatted text, tables, and images for this page..."
+                minHeight={180}
+                advanced
+                allowImages
+                allowTables
+              />
+            </div>
+        </div>
+      ))}
+      </div>
+      <div className="px-5 py-3 border-t border-gray-100 bg-gray-50">
+        <button
+          type="button"
+          onClick={addRow}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#1565C0] border border-dashed border-[#64B5F6] rounded-lg hover:bg-[#E3F2FD] cursor-pointer"
+        >
+          <i className="ri-add-line"></i>
+          Add another row
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const SCM_PO_APPROVERS = [
+  { name: 'Meet G', email: 'meet.g@refex.co.in' },
+  { name: 'Rajeev V', email: 'rajeev.v@refex.co.in' },
+] as const;
+
+function isRgmlEntityCode(code?: string | null, name?: string | null) {
+  const c = String(code || '').trim().toUpperCase();
+  const n = String(name || '').trim().toLowerCase();
+  return c === 'RGML' || n.includes('rgml') || n.includes('green mobility');
+}
+
+function defaultScmApprover(code?: string | null, name?: string | null) {
+  const email = isRgmlEntityCode(code, name) ? 'meet.g@refex.co.in' : 'rajeev.v@refex.co.in';
+  return SCM_PO_APPROVERS.find((row) => row.email === email) || SCM_PO_APPROVERS[1];
+}
+
+export default function CreatePOPage() {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const workspacePanelRef = useRef<PurchaseRequestsPanelHandle>(null);
+  const prIdParam = searchParams.get('prId');
+  const poIdParam = searchParams.get('poId');
+  const refPoParam = searchParams.get('refPo');
+  const fromCsvParam = searchParams.get('from');
+  const numericPrId = prIdParam ? Number(prIdParam) : null;
+  const editPoId = poIdParam ? Number(poIdParam) : null;
+  const isEditMode = !!editPoId && !Number.isNaN(editPoId);
+  const isManualMode =
+    !isEditMode &&
+    !numericPrId &&
+    (searchParams.get('manual') === '1' || searchParams.get('mode') === 'manual-no-pr');
+  /** Landing: only PurchaseRequestsPanel — skip create-form masters until real create/edit */
+  const needsCreateForm = Boolean(numericPrId || isEditMode || isManualMode);
+  const [manualPoNoPr, setManualPoNoPr] = useState(
+    searchParams.get('manual') === '1' || searchParams.get('mode') === 'manual-no-pr'
+  );
+  const isManualPoFlow = isManualMode || manualPoNoPr;
+  const fromParam = searchParams.get('from');
+  const editReturnPath =
+    fromParam === 'buyer-verify'
+      ? '/scm/buyer-final-verify'
+      : fromParam === 'tasks'
+        ? '/tasks'
+        : fromParam === 'track-po'
+          ? '/scm/track-po'
+          : fromParam === 'purchase-requests' || fromParam === 'create-po' || fromParam === 'csv'
+            ? '/scm/create-po'
+            : fromParam === 'po-approval'
+              ? '/scm/po-approval'
+              : '/scm/po-approval';
+  const isBuyerVerifyEdit = searchParams.get('from') === 'buyer-verify';
+  const isAdminPoEditor = Boolean(
+    user?.isSuperAdmin ||
+      user?.role === 'Super Admin' ||
+      user?.role === 'SCM Manager' ||
+      user?.role === 'SCM Buyer'
+  );
+
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [pr, setPr] = useState<{
+    id: number;
+    prNumber: string;
+    title: string;
+    department: string;
+    entityId?: number | null;
+    entityName?: string;
+    entityCode?: string;
+    requester: string;
+    recommendedVendor: string;
+    vendorEmail: string;
+    lineItems: Array<{ id: number; description: string; quantity: number; unitPrice: number; category?: string; unit?: string }>;
+    requiredDate?: string;
+    amount?: number;
+    requestType?: string;
+    purchaseType?: 'purchase_order' | 'work_order';
+    purchaseTypeLabel?: string;
+    priority?: string;
+    currency?: CurrencyCode;
+  } | null>(null);
+
+  const [poNumber, setPoNumber] = useState('');
+  const [poNumberTouched, setPoNumberTouched] = useState(false);
+  const handlePoNumberChange = (value: string) => {
+    setPoNumberTouched(true);
+    setPoNumber(value.replace(/[\r\n\t]/g, '').slice(0, 40));
+  };
+  const [referencePoNumber, setReferencePoNumber] = useState('');
+  const [referencePoLoading, setReferencePoLoading] = useState(false);
+  const [referencePoError, setReferencePoError] = useState('');
+  const [referencePoLoaded, setReferencePoLoaded] = useState<{
+    poNumber: string;
+    vendorName: string;
+    prNumber: string;
+    grandTotal: number;
+  } | null>(null);
+  const [createdPoId, setCreatedPoId] = useState<number | null>(null);
+  const [vendorMeta, setVendorMeta] = useState({
+    name: '',
+    email: '',
+    quotedPrice: 0,
+    leadTime: 30,
+    paymentTerms: 'Net 30 Days',
+    overallScore: 85,
+    technicalScore: 85,
+    commercialScore: 85,
+    compliance: 'Yes',
+  });
+
+  const [lineItems, setLineItems] = useState<LineItem[]>([]);
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [expectedDeliveryDate, setExpectedDeliveryDate] = useState('');
+  const [poDate, setPoDate] = useState(todayYmd);
+  const [paymentTerms, setPaymentTerms] = useState('Net 30 Days');
+  const [incoterms, setIncoterms] = useState('DDP');
+  const [specialInstructions, setSpecialInstructions] = useState('');
+  const [currency, setCurrency] = useState<CurrencyCode>(DEFAULT_CURRENCY);
+  const moneySymbol = currencySymbol(currency);
+  /** Effective GST % derived from line taxes (stored on PO for compatibility) */
+  const [gstPercentage, setGstPercentage] = useState(18);
+  const [poType, setPoType] = useState<PoType>('short_po');
+  /** Document type for this PO create — can differ from PR default */
+  const [documentType, setDocumentType] = useState<'purchase_order' | 'work_order'>('purchase_order');
+  const [letterheadHeader, setLetterheadHeader] = useState('');
+  const [letterheadOptions, setLetterheadOptions] = useState<LetterheadMasterRecord[]>([]);
+  const [letterheadId, setLetterheadId] = useState<number | ''>('');
+  const [letterheadLocationKey, setLetterheadLocationKey] = useState('');
+  const [locationGstNo, setLocationGstNo] = useState('');
+  const [entity, setEntity] = useState('');
+  const [headerLogo, setHeaderLogo] = useState('');
+  const [footerLogo, setFooterLogo] = useState('');
+  const [termsClauses, setTermsClauses] = useState<PoLetterheadClause[]>([]);
+  const [annexureClauses, setAnnexureClauses] = useState<PoLetterheadClause[]>([]);
+  const [annexureIiRows, setAnnexureIiRows] = useState<AnnexureIiRow[]>([emptyAnnexureIiRow()]);
+  const [poTermsDetails, setPoTermsDetails] = useState<PoTermsDetails>({ ...EMPTY_PO_TERMS_DETAILS });
+  const [siteAddressOptions, setSiteAddressOptions] = useState<PoSiteLookupRecord[]>([]);
+  const [siteContactOptions, setSiteContactOptions] = useState<PoSiteLookupRecord[]>(DEFAULT_SITE_CONTACTS);
+  const [projectManagerOptions, setProjectManagerOptions] = useState<PoSiteLookupRecord[]>(DEFAULT_PROJECT_MANAGERS);
+  const [addingSiteAddress, setAddingSiteAddress] = useState(false);
+  const [addingSiteContact, setAddingSiteContact] = useState(false);
+  const [addingProjectManager, setAddingProjectManager] = useState(false);
+  const [newSiteAddress, setNewSiteAddress] = useState('');
+  const [newSiteContact, setNewSiteContact] = useState({ label: '', email: '', phone: '' });
+  const [newProjectManager, setNewProjectManager] = useState({ label: '', email: '', phone: '' });
+  const [savingSiteLookup, setSavingSiteLookup] = useState(false);
+  const [siteLookupError, setSiteLookupError] = useState('');
+  const [letterheadLoading, setLetterheadLoading] = useState(false);
+  const [templateLoadError, setTemplateLoadError] = useState('');
+  const [loadedTemplate, setLoadedTemplate] = useState<{
+    poType: PoType;
+    title: string;
+    termsCount: number;
+    annexureCount: number;
+  } | null>(null);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [scmConfirmLoadingNumber, setScmConfirmLoadingNumber] = useState(false);
+  const scmConfirmBaselineRef = useRef('');
+  const [showScmConfirm, setShowScmConfirm] = useState(false);
+  const [managerModal, setManagerModal] = useState<'sendback' | 'reject' | null>(null);
+  const [showBuyerSendBack, setShowBuyerSendBack] = useState(false);
+  const [showCancelPoModal, setShowCancelPoModal] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelFiles, setCancelFiles] = useState<File[]>([]);
+  const [cancelSubmitting, setCancelSubmitting] = useState(false);
+  const [cancelError, setCancelError] = useState('');
+  const cancelFileRef = useRef<HTMLInputElement>(null);
+  const [scmManager, setScmManager] = useState<{ name: string; email: string } | null>(null);
+  const requesterSendsToMugesh = user?.role === 'Requester';
+  const [activeTab, setActiveTab] = useState<'details' | 'lineItems' | 'terms' | 'preview'>('details');
+  const [draftSaved, setDraftSaved] = useState(false);
+  const [autoSaving, setAutoSaving] = useState(false);
+  const [poEditStatus, setPoEditStatus] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [pageMode, setPageMode] = useState<'form' | 'pdf'>('form');
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+  const [previewHtmlUrl, setPreviewHtmlUrl] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState('');
+  const [pdfDownloading, setPdfDownloading] = useState(false);
+  const [changeSummary, setChangeSummary] = useState('');
+  const [letterheadLocked, setLetterheadLocked] = useState(false);
+  const manualEntryParam =
+    searchParams.get('manual') === '1' || searchParams.get('mode') === 'manual-no-pr';
+  const [skipApproval, setSkipApproval] = useState(
+    searchParams.get('legacy') === '1' || searchParams.get('skipApproval') === '1'
+  );
+  const [importedPoNumber, setImportedPoNumber] = useState('');
+  const [importedVendorName, setImportedVendorName] = useState('');
+  const [importedVendorEmail, setImportedVendorEmail] = useState('');
+  const [manualEntityId, setManualEntityId] = useState<number | ''>('');
+  const [manualEntitySnapshot, setManualEntitySnapshot] = useState<EntityRecord | null>(null);
+  const [entityOptions, setEntityOptions] = useState<EntityRecord[]>([]);
+  const [manualVendorName, setManualVendorName] = useState('');
+  const [manualVendorEmail, setManualVendorEmail] = useState('');
+  const [manualVendorId, setManualVendorId] = useState('');
+  const [manualPrDetails, setManualPrDetails] = useState<ManualPrDetails>({
+    prNumber: '',
+    title: '',
+    department: '',
+    requester: '',
+    justification: '',
+    scopeOfWork: '',
+    paymentTerms: '',
+    requestType: 'Opex',
+    priority: 'Medium',
+  });
+  const [manualComparisonRounds, setManualComparisonRounds] = useState<ManualComparisonRound[]>([
+    emptyComparisonRound(1),
+  ]);
+  const [prReferenceStatus, setPrReferenceStatus] = useState<{
+    state: 'idle' | 'loading' | 'found' | 'missing';
+    message: string;
+  }>({ state: 'idle', message: '' });
+  const appliedPrReferenceRef = useRef('');
+  const [masterVendors, setMasterVendors] = useState<VendorRecord[]>([]);
+  const csvAppliedRef = useRef(false);
+  const letterheadAutoKeyRef = useRef('');
+  const skipNextLetterheadLoad = useRef(Boolean(poIdParam));
+  const letterheadLockedRef = useRef(false);
+  letterheadLockedRef.current = letterheadLocked;
+  const termsDraftRef = useRef<PoLetterheadClause[]>([]);
+  const annexureDraftRef = useRef<PoLetterheadClause[]>([]);
+  const annexureIiDraftRef = useRef<AnnexureIiRow[]>([emptyAnnexureIiRow()]);
+  const lineItemsDraftRef = useRef<LineItem[]>([]);
+  const poTermsDetailsRef = useRef(poTermsDetails);
+  poTermsDetailsRef.current = poTermsDetails;
+  const createdPoIdRef = useRef<number | null>(null);
+  createdPoIdRef.current = createdPoId;
+  const userEditedDraftRef = useRef(false);
+  const prLineItemsHydratedRef = useRef(false);
+  const prScopeOfWorkRef = useRef('');
+  const keepLocalDraftAfterSaveRef = useRef(false);
+  const contextLoadSeq = useRef(0);
+  const manualContextInitializedRef = useRef(false);
+
+  const markDraftEdited = useCallback(() => {
+    userEditedDraftRef.current = true;
+    if (!letterheadLockedRef.current) {
+      letterheadLockedRef.current = true;
+      setLetterheadLocked(true);
+    }
+  }, []);
+
+  const documentTypeRef = useRef(documentType);
+  documentTypeRef.current = documentType;
+  const letterheadLoadSeq = useRef(0);
+
+  const loadLetterhead = useCallback(async (type: PoType, docType?: 'purchase_order' | 'work_order', force = false) => {
+    const targetDoc = docType || documentTypeRef.current;
+    const alignedType = alignPoTypeWithDocument(type, targetDoc);
+    const seq = ++letterheadLoadSeq.current;
+    setLetterheadLoading(true);
+    setTemplateLoadError('');
+    try {
+      const res = await poLetterheadApi.get(alignedType);
+      if (seq !== letterheadLoadSeq.current) return;
+      if ((letterheadLockedRef.current || userEditedDraftRef.current) && !force) return;
+      const terms = res.data.terms || [];
+      const annexure = res.data.annexure || [];
+      let nextTerms = stripQuoteNoFromTermsClauses(adaptClausesForDocumentType(terms, targetDoc));
+      const sow = String(prScopeOfWorkRef.current || '').trim();
+      if (sow) {
+        nextTerms = nextTerms.map((c) => {
+          const header = String(c.termsHeader || '').toLowerCase();
+          if (!header.includes('scope of work')) return c;
+          const existing = String(c.termsDescription || '')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          if (existing) return c;
+          const safe = sow
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\n/g, '<br/>');
+          return { ...c, termsDescription: `<p>${safe}</p>` };
+        });
+      }
+      const nextAnnexure = adaptClausesForDocumentType(annexure, targetDoc);
+      setLetterheadHeader(adaptWordingForDocumentType(res.data.letterheadHeader || '', targetDoc));
+      termsDraftRef.current = nextTerms;
+      annexureDraftRef.current = nextAnnexure;
+      setTermsClauses(nextTerms);
+      setAnnexureClauses(nextAnnexure);
+      const isLongWo =
+        alignedType === 'long_wo' || alignedType === 'custom_long_wo';
+      const iiDefaults = (
+        Array.isArray(res.data.annexureIiRows) && res.data.annexureIiRows.length
+          ? res.data.annexureIiRows
+          : Array.isArray(res.data.annexureIiDefaults)
+            ? res.data.annexureIiDefaults
+            : []
+      ) as AnnexureIiRow[];
+      const iiEmpty =
+        !annexureIiDraftRef.current.length ||
+        annexureIiDraftRef.current.every((row) => annexureIiRowIsEmpty(row));
+      if (isLongWo && iiDefaults.length && (force || iiEmpty)) {
+        annexureIiDraftRef.current = iiDefaults;
+        setAnnexureIiRows(iiDefaults);
+      } else if (!isLongWo && (force || iiEmpty)) {
+        const cleared = [emptyAnnexureIiRow()];
+        annexureIiDraftRef.current = cleared;
+        setAnnexureIiRows(cleared);
+      }
+      setLoadedTemplate({
+        poType: alignedType,
+        title: res.data.title || res.data.poTypeLabel || alignedType,
+        termsCount: terms.length,
+        annexureCount: annexure.length,
+      });
+    } catch (err) {
+      if (seq !== letterheadLoadSeq.current) return;
+      if ((letterheadLockedRef.current || userEditedDraftRef.current) && !force) return;
+      setLetterheadHeader('');
+      termsDraftRef.current = [];
+      annexureDraftRef.current = [];
+      setTermsClauses([]);
+      setAnnexureClauses([]);
+      setLoadedTemplate(null);
+      setTemplateLoadError(err instanceof Error ? err.message : 'Could not load PO Type Master template');
+    } finally {
+      if (seq === letterheadLoadSeq.current) setLetterheadLoading(false);
+    }
+  }, []);
+
+  const applyPoTypeTemplate = useCallback(
+    (nextType: PoType, nextDoc?: 'purchase_order' | 'work_order') => {
+      // Skip the poType-change effect so we don't race a second non-force load
+      skipNextLetterheadLoad.current = true;
+      userEditedDraftRef.current = false;
+      letterheadLockedRef.current = false;
+      setLetterheadLocked(false);
+      setPoType(nextType);
+      void loadLetterhead(nextType, nextDoc || documentTypeRef.current, true);
+    },
+    [loadLetterhead]
+  );
+
+  const selectedLetterhead = useMemo(
+    () => letterheadOptions.find((o) => o.id === letterheadId) || null,
+    [letterheadOptions, letterheadId]
+  );
+  const letterheadLocations = useMemo(() => {
+    const locs = selectedLetterhead?.locations || [];
+    if (locs.length) return locs;
+    // Fallback: single location from master columns
+    if (selectedLetterhead?.location || selectedLetterhead?.gstNo) {
+      return [
+        {
+          id: selectedLetterhead.id,
+          location: selectedLetterhead.location || '',
+          gstNo: selectedLetterhead.gstNo || '',
+          footerLogo: selectedLetterhead.footerLogo || '',
+        },
+      ];
+    }
+    return [];
+  }, [selectedLetterhead]);
+
+  const entitySiteChoices = useMemo(() => {
+    const scoped =
+      manualEntityId !== ''
+        ? entityOptions.filter((ent) => Number(ent.id) === Number(manualEntityId))
+        : pr?.entityId
+          ? entityOptions.filter((ent) => Number(ent.id) === Number(pr.entityId))
+          : entityOptions;
+    const source = scoped.length ? scoped : entityOptions;
+    const seen = new Set<string>();
+    const rows: Array<{ id: string; label: string; billing: string; gst: string }> = [];
+    for (const ent of source) {
+      for (const loc of ent.locations || []) {
+        const site = String(loc.siteAddress || '').trim();
+        const billing = String(loc.billingAddress || '').trim();
+        const label = site || billing;
+        if (!label || seen.has(label)) continue;
+        seen.add(label);
+        rows.push({
+          id: `entity-loc-${ent.id}-${loc.id || loc.location || rows.length}`,
+          label: site || billing,
+          billing,
+          gst: String(loc.gstNo || '').trim(),
+        });
+      }
+    }
+    return rows;
+  }, [entityOptions, manualEntityId, pr?.entityId]);
+
+  const applyLetterheadLocation = useCallback(
+    (
+      loc: LetterheadLocationRecord | null,
+      index = 0,
+      letterheadOverride?: LetterheadMasterRecord | null
+    ) => {
+      if (!loc) {
+        setLetterheadLocationKey('');
+        setLocationGstNo('');
+        setPoTermsDetails((prev) => ({
+          ...prev,
+          locationName: '',
+          buyerGstNo: '',
+          letterheadLocationId: '',
+        }));
+        return;
+      }
+      const key = letterheadLocKey(loc, index);
+      setLetterheadLocationKey(key);
+      setLocationGstNo(loc.gstNo || '');
+      const lh =
+        letterheadOverride !== undefined ? letterheadOverride : selectedLetterhead;
+      const matchedEntity =
+        (manualEntityId !== ''
+          ? entityOptions.find((e) => Number(e.id) === Number(manualEntityId))
+          : null) ||
+        matchEntityFromLetterhead(lh, entityOptions) ||
+        (pr?.entityId
+          ? entityOptions.find((e) => Number(e.id) === Number(pr.entityId))
+          : null) ||
+        null;
+      const entityLoc = pickEntityLocation(matchedEntity, loc.location || '', loc.gstNo || '');
+      const invoicing =
+        invoicingHtmlFromEntityLocation(entityLoc) ||
+        buildInvoicingAddressFromLocation(loc, entityLoc);
+      const siteFromEntity = String(entityLoc?.siteAddress || '').trim();
+      setPoTermsDetails((prev) => ({
+        ...prev,
+        locationName: loc.location || '',
+        buyerGstNo: loc.gstNo || '',
+        letterheadLocationId: loc.id != null ? String(loc.id) : key,
+        invoicingAddress: invoicing || prev.invoicingAddress,
+        siteAddress: siteFromEntity || prev.siteAddress,
+      }));
+      if (siteFromEntity) {
+        setDeliveryAddress(siteFromEntity);
+      }
+    },
+    [entityOptions, manualEntityId, pr?.entityId, selectedLetterhead]
+  );
+
+  const applyLetterheadBranding = useCallback(
+    (row: LetterheadMasterRecord | null, opts?: { keepLocation?: boolean }) => {
+    if (!row) {
+      setLetterheadId('');
+      setEntity('');
+      setHeaderLogo('');
+      setFooterLogo('');
+        if (!opts?.keepLocation) applyLetterheadLocation(null);
+      return;
+    }
+    setLetterheadId(row.id);
+    setEntity(row.entity || '');
+    setHeaderLogo(row.headerLogo || '');
+    setFooterLogo(row.footerLogo || '');
+      const locs = row.locations?.length
+        ? row.locations
+        : row.location || row.gstNo
+          ? [
+              {
+                id: row.id,
+                location: row.location || '',
+                gstNo: row.gstNo || '',
+                footerLogo: '',
+              },
+            ]
+          : [];
+      if (locs.length) {
+        if (opts?.keepLocation) {
+          setLetterheadLocationKey((currentKey) => {
+            if (!currentKey) return currentKey;
+            const idx = locs.findIndex(
+              (l, i) =>
+                letterheadLocKey(l, i) === currentKey ||
+                String(l.id) === currentKey ||
+                l.location === currentKey
+            );
+            if (idx >= 0) {
+              const loc = locs[idx];
+              setLocationGstNo(loc.gstNo || '');
+              return letterheadLocKey(loc, idx);
+            }
+            return currentKey;
+          });
+          return;
+        }
+        applyLetterheadLocation(locs[0], 0, row);
+      } else if (!opts?.keepLocation) {
+        applyLetterheadLocation(null);
+      }
+    },
+    [applyLetterheadLocation]
+  );
+
+  useEffect(() => {
+    if (!needsCreateForm) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [addr, contact, managers] = await Promise.all([
+          masterApi.listPoSiteLookups('site_address'),
+          masterApi.listPoSiteLookups('site_contact'),
+          masterApi.listPoSiteLookups('project_manager'),
+        ]);
+        if (cancelled) return;
+        setSiteAddressOptions(addr.data || []);
+        setSiteContactOptions(mergeSiteContacts(contact.data || []));
+        setProjectManagerOptions(mergeProjectManagers(managers.data || []));
+      } catch {
+        if (!cancelled) {
+          setSiteAddressOptions([]);
+          setSiteContactOptions(mergeSiteContacts([]));
+          setProjectManagerOptions(mergeProjectManagers([]));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [needsCreateForm]);
+
+  useEffect(() => {
+    if (!needsCreateForm) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await vendorApi.list();
+        if (!cancelled) setMasterVendors(res.data || []);
+      } catch {
+        if (!cancelled) setMasterVendors([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [needsCreateForm]);
+
+  useEffect(() => {
+    if (!masterVendors.length) return;
+    const name = (
+      manualVendorName ||
+      importedVendorName ||
+      vendorMeta.name ||
+      pr?.recommendedVendor ||
+      ''
+    ).trim();
+    const email = (manualVendorEmail || importedVendorEmail || vendorMeta.email || pr?.vendorEmail || '').trim();
+    const hit = matchVendorFromMaster(masterVendors, { name, email });
+    if (!hit) return;
+    const masterEmail = String(hit.email || '').trim();
+    if (isManualMode && !manualVendorId) {
+      setManualVendorId(String(hit.id));
+      if (hit.name) setManualVendorName(hit.name);
+    }
+    if (masterEmail) {
+      if (isManualMode && masterEmail.toLowerCase() !== manualVendorEmail.trim().toLowerCase()) {
+        setManualVendorEmail(masterEmail);
+      }
+      setVendorMeta((prev) =>
+        prev.name === (hit.name || prev.name) && prev.email === masterEmail
+          ? prev
+          : { ...prev, name: hit.name || prev.name, email: masterEmail }
+      );
+    }
+  }, [
+    isManualMode,
+    manualVendorId,
+    masterVendors,
+    manualVendorName,
+    importedVendorName,
+    manualVendorEmail,
+    importedVendorEmail,
+    vendorMeta.name,
+    vendorMeta.email,
+    pr?.recommendedVendor,
+    pr?.vendorEmail,
+  ]);
+
+  useEffect(() => {
+    if (!needsCreateForm) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await letterheadMasterApi.list({ status: 'active' });
+        if (cancelled) return;
+        const options = res.data || [];
+        setLetterheadOptions(options);
+      } catch {
+        if (!cancelled) setLetterheadOptions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [needsCreateForm, isEditMode, isManualMode]);
+
+  /** Use the requester's PR entity for the letterhead. Leave it blank when that entity has no letterhead. */
+  useEffect(() => {
+    if (!needsCreateForm) return;
+    if (isEditMode && poEditStatus !== 'draft') return;
+    if (!letterheadOptions.length || !entityOptions.length) return;
+    if (!isManualPoFlow && (numericPrId || isEditMode) && !pr) return;
+
+    const manualSelected =
+      manualEntityId === ''
+        ? null
+        : entityOptions.find((ent) => Number(ent.id) === Number(manualEntityId)) || null;
+    const requestedId = isManualPoFlow ? (manualSelected ? Number(manualSelected.id) : 0) : Number(pr?.entityId || 0);
+    const requestedCode = String(isManualPoFlow ? manualSelected?.code || '' : pr?.entityCode || '')
+      .trim()
+      .toLowerCase();
+    const requestedName = String(isManualPoFlow ? manualSelected?.name || '' : pr?.entityName || '')
+      .trim()
+      .toLowerCase();
+    const requested =
+      (requestedId > 0
+        ? entityOptions.find((ent) => Number(ent.id) === requestedId)
+        : null) ||
+      entityOptions.find((ent) => {
+        if (requestedCode && ent.code.trim().toLowerCase() === requestedCode) return true;
+        if (requestedName && ent.name.trim().toLowerCase() === requestedName) return true;
+        return false;
+      }) ||
+      null;
+    const key = requested
+      ? `${requested.id}|${letterheadOptions.map((row) => row.id).join(',')}`
+      : `none|${letterheadOptions.map((row) => row.id).join(',')}`;
+    if (letterheadAutoKeyRef.current === key) return;
+    letterheadAutoKeyRef.current = key;
+
+    if (!requested) {
+      applyLetterheadBranding(null);
+      return;
+    }
+    const match = matchLetterheadForEntity(letterheadOptions, requested.code, requested.name);
+    if (match) applyLetterheadBranding(match);
+    else applyLetterheadBranding(null);
+  }, [
+    needsCreateForm,
+    isEditMode,
+    poEditStatus,
+    isManualPoFlow,
+    numericPrId,
+    pr,
+    manualEntityId,
+    entityOptions,
+    letterheadOptions,
+    applyLetterheadBranding,
+  ]);
+
+  /** Keep logos/entity in sync with Letterhead Master when id is set (do not reset location pick). */
+  useEffect(() => {
+    if (!letterheadId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const match = letterheadOptions.find((o) => o.id === letterheadId);
+        if (match?.headerLogo || match?.footerLogo || match?.entity || match?.locations?.length) {
+          if (!cancelled) applyLetterheadBranding(match, { keepLocation: true });
+          return;
+        }
+        const res = await letterheadMasterApi.get(Number(letterheadId));
+        if (cancelled) return;
+        setLetterheadOptions((prev) =>
+          prev.some((p) => p.id === res.data.id)
+            ? prev.map((p) => (p.id === res.data.id ? res.data : p))
+            : [...prev, res.data]
+        );
+        applyLetterheadBranding(res.data, { keepLocation: true });
+      } catch {
+        /* keep existing snapshot */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Only re-run when letterheadId or options list identity changes meaningfully
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [letterheadId, letterheadOptions.length]);
+
+  useEffect(() => {
+    termsDraftRef.current = termsClauses;
+  }, [termsClauses]);
+  useEffect(() => {
+    annexureDraftRef.current = annexureClauses;
+  }, [annexureClauses]);
+  useEffect(() => {
+    annexureIiDraftRef.current = annexureIiRows;
+  }, [annexureIiRows]);
+  useEffect(() => {
+    lineItemsDraftRef.current = lineItems;
+  }, [lineItems]);
+
+  useEffect(() => {
+    if (isEditMode || letterheadLocked) return;
+    // Wait for PR context — it may redirect to an existing draft PO.
+    if (numericPrId && !pr) return;
+    if (skipNextLetterheadLoad.current) {
+      skipNextLetterheadLoad.current = false;
+      return;
+    }
+    void loadLetterhead(poType, documentType);
+  }, [poType, documentType, loadLetterhead, letterheadLocked, isEditMode, numericPrId, pr]);
+
+  useEffect(() => {
+    if (!isManualPoFlow) return;
+    const text = (value: unknown) => String(value ?? '').trim();
+    const title = text(manualPrDetails.title);
+    const justification = text(manualPrDetails.justification);
+    const paymentTermsText = text(manualPrDetails.paymentTerms);
+    const scopeOfWork = text(manualPrDetails.scopeOfWork);
+    setPr((prev) =>
+      prev
+        ? {
+            ...prev,
+            prNumber: text(manualPrDetails.prNumber) || '—',
+            title,
+            department: text(manualPrDetails.department),
+            requester: text(manualPrDetails.requester),
+            requestType: manualPrDetails.requestType,
+            priority: manualPrDetails.priority,
+          }
+        : prev
+    );
+    if (title) {
+      setPoTermsDetails((prev) =>
+        text(prev.subject) ? prev : { ...prev, subject: title }
+      );
+    }
+    if (justification) {
+      setSpecialInstructions((prev) => (text(prev) ? prev : justification));
+    }
+    if (paymentTermsText) {
+      setPaymentTerms((prev) => (text(prev) && prev !== 'Net 30 Days' ? prev : paymentTermsText));
+      setPoTermsDetails((prev) =>
+        text(prev.paymentTermsText) ? prev : { ...prev, paymentTermsText }
+      );
+    }
+    if (scopeOfWork) {
+      prScopeOfWorkRef.current = scopeOfWork;
+    }
+  }, [isManualPoFlow, manualPrDetails]);
+
+  useEffect(() => {
+    if (!isManualPoFlow) return;
+    const recommended = findRecommendedManualQuote(manualComparisonRounds);
+    if (!recommended) return;
+    const vendorName = String(recommended.vendorName ?? '').trim();
+    const vendorEmail = String(recommended.vendorEmail ?? '').trim();
+    if (vendorName) setManualVendorName(vendorName);
+    if (vendorEmail) setManualVendorEmail(vendorEmail);
+    if (recommended.vendorId) setManualVendorId(recommended.vendorId);
+    if (recommended.paymentTerms) setPaymentTerms(recommended.paymentTerms);
+    setVendorMeta((prev) => ({
+      ...prev,
+      name: vendorName || prev.name,
+      email: vendorEmail || prev.email,
+      paymentTerms: recommended.paymentTerms || prev.paymentTerms,
+      quotedPrice: Number(recommended.quotedPrice) || prev.quotedPrice,
+      leadTime: Number(recommended.leadTime) || prev.leadTime,
+    }));
+  }, [isManualPoFlow, manualComparisonRounds]);
+
+  useEffect(() => {
+    if (!isManualMode) return;
+    const number = String(manualPrDetails.prNumber || '').trim();
+    if (number.length < 4) {
+      setPrReferenceStatus({ state: 'idle', message: '' });
+      return;
+    }
+    const key = number.toLowerCase();
+    if (appliedPrReferenceRef.current === key) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setPrReferenceStatus({ state: 'loading', message: 'Looking up purchase request…' });
+      void poApi
+        .prefillByPrNumber(number)
+        .then((res) => {
+          if (cancelled) return;
+          const data = res.data;
+          const prData = (data?.pr || {}) as Record<string, unknown>;
+          const text = (value: unknown) => String(value ?? '').trim();
+          appliedPrReferenceRef.current = key;
+          const title = text(prData.title);
+          const paymentTermsText = text(prData.paymentTerms);
+          const scopeOfWork = text(prData.scopeOfWork);
+          const justification = text(prData.justification);
+          const docType = prData.purchaseType === 'work_order' ? 'work_order' : 'purchase_order';
+          setManualPrDetails({
+            prNumber: text(prData.prNumber) || number,
+            title,
+            department: text(prData.department),
+            requester: text(prData.requester),
+            justification,
+            scopeOfWork,
+            paymentTerms: paymentTermsText,
+            requestType: text(prData.requestType) || 'Opex',
+            priority: text(prData.priority) || 'Medium',
+          });
+          const rounds = hydrateComparisonRoundsFromStored(
+            (data.comparisonRounds || []) as unknown as Parameters<
+              typeof hydrateComparisonRoundsFromStored
+            >[0]
+          );
+          if (rounds.length) setManualComparisonRounds(rounds);
+          const vendor = (data.vendor || null) as Record<string, unknown> | null;
+          const vendorTerms = text(vendor?.paymentTerms) || paymentTermsText;
+          if (vendor && text(vendor.name)) {
+            setManualVendorName(text(vendor.name));
+            setManualVendorEmail(text(vendor.email));
+            if (vendorTerms) setPaymentTerms(vendorTerms);
+            if (text(vendor.deliveryTerms)) setIncoterms(normalizeIncoterm(text(vendor.deliveryTerms)));
+            setVendorMeta((prev) => ({
+              ...prev,
+              name: text(vendor.name),
+              email: text(vendor.email),
+              paymentTerms: vendorTerms || prev.paymentTerms,
+              quotedPrice: Number(vendor.quotedPrice) || prev.quotedPrice,
+              leadTime: Number(vendor.leadTime) || prev.leadTime,
+            }));
+          } else if (paymentTermsText) {
+            setPaymentTerms(paymentTermsText);
+          }
+          const rawLines = Array.isArray(prData.lineItems) ? prData.lineItems : [];
+          if (rawLines.length) {
+            const mapped = rawLines.map((li, index) => {
+              const row = li as Record<string, unknown>;
+              const quantity = Number(row.quantity) || 0;
+              const unitPrice = Number(row.unitPrice ?? row.unitCost) || 0;
+              return {
+                id: Number(row.id) || index + 1,
+                itemName: text(row.itemName || row.description),
+                description: text(row.description || row.itemName),
+                quantity,
+                unitPrice,
+                taxPercentage: Number(row.gstPercentage) || 18,
+                total: calcLineTotal(quantity, unitPrice),
+                unit: text(row.unit) || 'Nos',
+              };
+            });
+            prLineItemsHydratedRef.current = true;
+            lineItemsDraftRef.current = mapped;
+            setLineItems(mapped);
+          }
+          const entityId = Number(prData.entityId || 0);
+          const fromList =
+            entityId > 0 ? entityOptions.find((e) => Number(e.id) === entityId) || null : null;
+          if (fromList) {
+            setManualEntityId(fromList.id);
+            setManualEntitySnapshot(fromList);
+            if (fromList.name) setEntity(fromList.name);
+          } else if (entityId > 0 && entityOptions.length === 0) {
+            setManualEntityId(entityId);
+            setManualEntitySnapshot(null);
+          } else {
+            setManualEntityId('');
+            setManualEntitySnapshot(null);
+          }
+          setDocumentType(docType);
+          if (!userEditedDraftRef.current) {
+            setPoType(defaultPoTypeForDocument(docType));
+          }
+          const prCurrency = normalizeCurrency(text(prData.currency) || DEFAULT_CURRENCY);
+          setCurrency(prCurrency);
+          if (justification) setSpecialInstructions(justification);
+          if (scopeOfWork) prScopeOfWorkRef.current = scopeOfWork;
+          const place = text(prData.placeOfDelivery);
+          if (place) setDeliveryAddress(place);
+          const requiredDate = text(prData.requiredDate);
+          if (/^\d{4}-\d{2}-\d{2}$/.test(requiredDate)) setExpectedDeliveryDate(requiredDate);
+          const billing = text(prData.billingAddress);
+          setPoTermsDetails((prev) => ({
+            ...prev,
+            subject: title || prev.subject,
+            paymentTermsText: vendorTerms || prev.paymentTermsText,
+            siteAddress: place || prev.siteAddress,
+            siteContactPerson: text(prData.deliveryPoc) || prev.siteContactPerson,
+            siteContactEmail: text(prData.deliveryPocEmail) || prev.siteContactEmail,
+            siteContactPhone: text(prData.deliveryPocPhone) || prev.siteContactPhone,
+            projectManagerHo: text(prData.projectManagerHo) || prev.projectManagerHo,
+            projectManagerEmail: text(prData.projectManagerEmail) || prev.projectManagerEmail,
+            projectManagerContact: text(prData.projectManagerContact) || prev.projectManagerContact,
+            invoicingAddress: billing ? addressLinesToHtml(billing) : prev.invoicingAddress,
+            buyerGstNo: text(prData.billingGstNo) || prev.buyerGstNo,
+          }));
+          setPr((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  id: Number(prData.id) || prev.id,
+                  prNumber: text(prData.prNumber) || number,
+                  title,
+                  department: text(prData.department),
+                  entityId: entityId || null,
+                  entityName: text(prData.entityName),
+                  entityCode: text(prData.entityCode),
+                  requester: text(prData.requester),
+                  purchaseType: docType,
+                  purchaseTypeLabel:
+                    text(prData.purchaseTypeLabel) ||
+                    (docType === 'work_order' ? 'Work Order' : 'Purchase Order'),
+                  recommendedVendor: text(vendor?.name),
+                  vendorEmail: text(vendor?.email),
+                  currency: prCurrency,
+                  lineItems: rawLines.map((li) => {
+                    const row = li as Record<string, unknown>;
+                    return {
+                      id: Number(row.id) || 0,
+                      description: text(row.description || row.itemName),
+                      quantity: Number(row.quantity) || 0,
+                      unitPrice: Number(row.unitPrice ?? row.unitCost) || 0,
+                      category: text(row.category),
+                      unit: text(row.unit) || 'Nos',
+                    };
+                  }),
+                }
+              : prev
+          );
+          const quoteCount = rounds.reduce((sum, round) => sum + round.vendorQuotes.length, 0);
+          const label = text(prData.prNumber) || number;
+          setPrReferenceStatus({
+            state: 'found',
+            message: quoteCount
+              ? `Filled from ${label} — ${quoteCount} vendor quote${quoteCount === 1 ? '' : 's'}.`
+              : `Filled from ${label}. No vendor quotes on this request yet.`,
+          });
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          const status = err instanceof ApiError ? err.status : 0;
+          setPrReferenceStatus({
+            state: 'missing',
+            message:
+              status === 404
+                ? 'No purchase request with that number. You can still fill the form.'
+                : err instanceof Error
+                  ? err.message
+                  : 'Could not look up that PR.',
+          });
+        });
+    }, 450);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [isManualMode, manualPrDetails.prNumber, entityOptions]);
+
+  const selectedManualEntity = useMemo(() => {
+    if (manualEntityId === '') return null;
+    const fromOptions =
+      entityOptions.find((e) => Number(e.id) === Number(manualEntityId)) || null;
+    if (fromOptions) return fromOptions;
+    if (manualEntitySnapshot && Number(manualEntitySnapshot.id) === Number(manualEntityId)) {
+      return manualEntitySnapshot;
+    }
+    return null;
+  }, [manualEntityId, entityOptions, manualEntitySnapshot]);
+
+  /** Manual create: show draft placeholder until sent; do not pre-fill next PO number. */
+  useEffect(() => {
+    if (!isManualPoFlow || isEditMode) return;
+    if (importedPoNumber.trim()) {
+      setPoNumber(importedPoNumber.trim());
+      setPoNumberTouched(false);
+      return;
+    }
+    // Keep empty / draft label — official number assigned on send to SCM Manager
+    if (!editPoId && !createdPoId) {
+      setPoNumber('');
+      setPoNumberTouched(false);
+    }
+  }, [isManualPoFlow, isEditMode, manualEntityId, documentType, importedPoNumber, editPoId, createdPoId]);
+
+  const loadEntityOptions = useCallback(async () => {
+    try {
+      const res = await masterApi.listEntities({ status: 'active' });
+      const next = res.data || [];
+      setEntityOptions(next);
+      // Keep snapshot in sync if the selected entity reloads from master
+      setManualEntitySnapshot((prev) => {
+        if (!prev) return prev;
+        const fresh = next.find((e) => Number(e.id) === Number(prev.id));
+        return fresh || prev;
+      });
+    } catch {
+      // Keep existing options so a selected entity does not disappear on refresh failure
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!needsCreateForm) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await masterApi.listEntities({ status: 'active' });
+        if (!cancelled) setEntityOptions(res.data || []);
+      } catch {
+        // Keep prior options so a selected entity label does not vanish
+      }
+    })();
+    const onVis = () => {
+      if (document.visibilityState === 'visible') void loadEntityOptions();
+    };
+    window.addEventListener('focus', loadEntityOptions);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', loadEntityOptions);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [needsCreateForm, loadEntityOptions]);
+
+  // After entity master loads, keep a real entity selected and clear one that is not in the list
+  useEffect(() => {
+    if (manualEntityId === '' || !entityOptions.length) return;
+    const match = entityOptions.find((e) => Number(e.id) === Number(manualEntityId));
+    if (match) {
+      if (isEditMode) setManualEntitySnapshot(match);
+      else setManualEntitySnapshot((prev) => (prev && Number(prev.id) === Number(match.id) ? prev : match));
+      return;
+    }
+    if (isEditMode) return;
+    setManualEntityId('');
+    setManualEntitySnapshot(null);
+  }, [isEditMode, manualEntityId, entityOptions]);
+
+  const reloadClausesFromMaster = useCallback(async () => {
+    skipNextLetterheadLoad.current = false;
+    userEditedDraftRef.current = false;
+    letterheadLockedRef.current = false;
+    setLetterheadLocked(false);
+    await loadLetterhead(poType, documentType, true);
+  }, [loadLetterhead, poType, documentType]);
+
+  const reloadAnnexureFromMaster = useCallback(async () => {
+    setAnnexurePoLoadError('');
+    setLetterheadLoading(true);
+    setTemplateLoadError('');
+    try {
+      const alignedType = alignPoTypeWithDocument(poType, documentType);
+      const res = await poLetterheadApi.get(alignedType);
+      const nextAnnexure = adaptClausesForDocumentType(res.data.annexure || [], documentType);
+      markDraftEdited();
+      annexureDraftRef.current = nextAnnexure;
+      setAnnexureClauses(nextAnnexure);
+      const isLongWo = alignedType === 'long_wo' || alignedType === 'custom_long_wo';
+      if (isLongWo) {
+        const iiDefaults = (
+          Array.isArray(res.data.annexureIiRows) && res.data.annexureIiRows.length
+            ? res.data.annexureIiRows
+            : Array.isArray(res.data.annexureIiDefaults)
+              ? res.data.annexureIiDefaults
+              : []
+        ) as AnnexureIiRow[];
+        if (iiDefaults.length) {
+          annexureIiDraftRef.current = iiDefaults;
+          setAnnexureIiRows(iiDefaults);
+        }
+      }
+    } catch (err) {
+      setAnnexurePoLoadError(
+        err instanceof Error ? err.message : 'Could not reload annexure from PO Type Master'
+      );
+    } finally {
+      setLetterheadLoading(false);
+    }
+  }, [poType, documentType, markDraftEdited]);
+
+  const [addingDefaultAnnexureIi, setAddingDefaultAnnexureIi] = useState(false);
+  const [annexureIiReloadTick, setAnnexureIiReloadTick] = useState(0);
+
+  const addDefaultAnnexureIi = useCallback(async () => {
+    const alignedType = alignPoTypeWithDocument(poType, documentType);
+    if (alignedType !== 'long_wo' && alignedType !== 'custom_long_wo') {
+      setTemplateLoadError('Select Long Work Order, then click Reload from Master on Annexure II.');
+      return;
+    }
+    setAddingDefaultAnnexureIi(true);
+    setTemplateLoadError('');
+    try {
+      const res = await poLetterheadApi.get(alignedType);
+      const iiDefaults = parseAnnexureIi(
+        Array.isArray(res.data.annexureIiRows) && res.data.annexureIiRows.length
+          ? res.data.annexureIiRows
+          : Array.isArray(res.data.annexureIiDefaults)
+            ? res.data.annexureIiDefaults
+            : []
+      );
+      if (!iiDefaults.length) {
+        setTemplateLoadError('Long Work Order master has no default Annexure II yet. Add it in Letterhead Master first.');
+        return;
+      }
+      const current = annexureIiDraftRef.current.length ? annexureIiDraftRef.current : [];
+      const extras = current.filter(
+        (row) => !annexureIiRowIsEmpty(row) && !isStandardAnnexureIiTitle(row.title)
+      );
+      const next = [...iiDefaults, ...extras];
+      markDraftEdited();
+      annexureIiDraftRef.current = next;
+      setAnnexureIiRows(next);
+      setAnnexureIiReloadTick((tick) => tick + 1);
+    } catch (err) {
+      setTemplateLoadError(err instanceof Error ? err.message : 'Could not load default Annexure II');
+    } finally {
+      setAddingDefaultAnnexureIi(false);
+    }
+  }, [poType, documentType, markDraftEdited]);
+
+  const [annexureSourcePoNumber, setAnnexureSourcePoNumber] = useState('');
+  const [annexurePoLoadLoading, setAnnexurePoLoadLoading] = useState(false);
+  const [annexurePoLoadError, setAnnexurePoLoadError] = useState('');
+
+  const loadAnnexureFromPoNumber = useCallback(async () => {
+    const poNumber = annexureSourcePoNumber.trim();
+    if (!poNumber) {
+      setAnnexurePoLoadError('Enter a PO number');
+      return;
+    }
+    setAnnexurePoLoadLoading(true);
+    setAnnexurePoLoadError('');
+    try {
+      const res = await poApi.getByNumber(poNumber);
+      const loadedAnnexure = ((res.data?.annexureClauses as PoLetterheadClause[]) || []).filter(
+        (row) => String(row.termsHeader || '').trim() || String(row.termsDescription || '').trim()
+      );
+      if (!loadedAnnexure.length) {
+        setAnnexurePoLoadError(`PO ${poNumber} has no Annexure I data`);
+        return;
+      }
+      markDraftEdited();
+      annexureDraftRef.current = loadedAnnexure;
+      setAnnexureClauses(loadedAnnexure);
+    } catch (err) {
+      setAnnexurePoLoadError(err instanceof Error ? err.message : 'PO not found');
+    } finally {
+      setAnnexurePoLoadLoading(false);
+    }
+  }, [annexureSourcePoNumber, markDraftEdited]);
+
+  // Keep Short/Long template family aligned with Purchase Order vs Work Order
+  const prevDocumentTypeRef = useRef(documentType);
+  useEffect(() => {
+    if (prevDocumentTypeRef.current === documentType) return;
+    prevDocumentTypeRef.current = documentType;
+    const nextType = alignPoTypeWithDocument(poType, documentType);
+    if (nextType !== poType) setPoType(nextType);
+  }, [documentType, poType]);
+
+  useEffect(() => {
+    if (!needsCreateForm || user?.role === 'Requester') return;
+    const code = isManualPoFlow ? selectedManualEntity?.code : pr?.entityCode;
+    const name = isManualPoFlow ? selectedManualEntity?.name : pr?.entityName;
+    const next = defaultScmApprover(code, name);
+    setScmManager({ name: next.name, email: next.email });
+  }, [
+    needsCreateForm,
+    user?.role,
+    isManualPoFlow,
+    selectedManualEntity?.code,
+    selectedManualEntity?.name,
+    pr?.entityCode,
+    pr?.entityName,
+  ]);
+
+  const loadExistingPo = useCallback(async () => {
+    if (!isEditMode || !editPoId) return;
+    // After Save Draft → ?poId= remount, state is empty — always reload from API
+    // (skipping left Entity / details blank).
+    keepLocalDraftAfterSaveRef.current = false;
+    skipNextLetterheadLoad.current = true;
+    letterheadLoadSeq.current += 1;
+    setLetterheadLocked(true);
+    setLoading(true);
+    try {
+      const res = await poApi.get(editPoId);
+      const po = res.data as Record<string, unknown>;
+      const statusRaw = String(po.statusRaw || po.status || '').toLowerCase().replace(/\s+/g, '_');
+      const fromBuyerVerify = searchParams.get('from') === 'buyer-verify';
+      const isPendingApproval =
+        statusRaw === 'pending_approval' || statusRaw === 'pendingapproval';
+      const isDraft = statusRaw === 'draft';
+      setPoEditStatus(statusRaw);
+      const isBuyerVerifyStatus =
+        statusRaw === 'pending_buyer_verify' ||
+        statusRaw === 'pending_buyerverify' ||
+        statusRaw.includes('buyer_verify');
+      const allowBuyerVerifyEdit = fromBuyerVerify && isBuyerVerifyStatus;
+      const isCancelled = statusRaw === 'cancelled' || statusRaw === 'canceled';
+      if (isCancelled && user?.role === 'Requester') {
+        const retrieved = await poApi.retrieve(editPoId);
+        const next = (retrieved.data || {}) as Record<string, unknown>;
+        Object.assign(po, next);
+        const nextStatus = String(next.statusRaw || next.status || 'draft').toLowerCase().replace(/\s+/g, '_');
+        setPoEditStatus(nextStatus);
+      }
+      const statusAfter = String(po.statusRaw || po.status || '').toLowerCase().replace(/\s+/g, '_');
+      const cancelledAfter = statusAfter === 'cancelled' || statusAfter === 'canceled';
+      const draftAfter = statusAfter === 'draft';
+      const allowAdminAnyEdit = isAdminPoEditor && !cancelledAfter;
+      if (!isPendingApproval && !allowBuyerVerifyEdit && !isBuyerVerifyStatus && !draftAfter && !isDraft && !allowAdminAnyEdit) {
+        setLoadError(
+          cancelledAfter
+            ? 'Cancelled POs cannot be edited. Retrieve the PO as a draft first.'
+            : 'Only draft, pending, or buyer-verify POs can be edited'
+        );
+        setPr(null);
+        return;
+      }
+
+      const prDbId = Number(po.prId);
+      setCreatedPoId(editPoId);
+      setPoNumber(String(po.poNumber || ''));
+      setReferencePoNumber(String(po.referencePoNumber || ''));
+      if (po.referencePoNumber) {
+        setReferencePoLoaded({
+          poNumber: String(po.referencePoNumber),
+          vendorName: '',
+          prNumber: '',
+          grandTotal: 0,
+        });
+      }
+      setDeliveryAddress(String(po.deliveryAddress || ''));
+      setExpectedDeliveryDate(String(po.expectedDeliveryDate || ''));
+      setPoDate(toInputDate(po.poDate || po.createdAt) || todayYmd());
+      setPaymentTerms(String(po.paymentTerms || 'Net 30 Days'));
+      setIncoterms(normalizeIncoterm(po.incoterms));
+      setSpecialInstructions(String(po.specialInstructions || ''));
+      setGstPercentage(Number(po.gstPercentage) || 18);
+      const loadedDocType: 'purchase_order' | 'work_order' =
+        po.purchaseType === 'work_order' ? 'work_order' : 'purchase_order';
+      setPoType(coercePoType(po.poType, loadedDocType));
+      setLetterheadId(po.letterheadId ? Number(po.letterheadId) : '');
+      setEntity(String(po.entity || ''));
+      setHeaderLogo(String(po.headerLogo || ''));
+      setFooterLogo(String(po.footerLogo || ''));
+      setCurrency(normalizeCurrency(String(po.currency || DEFAULT_CURRENCY)));
+      setDocumentType(loadedDocType);
+      prevDocumentTypeRef.current = loadedDocType;
+      const loadedTerms = (po.termsClauses as PoLetterheadClause[]) || [];
+      const loadedAnnexure = (po.annexureClauses as PoLetterheadClause[]) || [];
+      setLetterheadHeader(
+        adaptWordingForDocumentType(String(po.letterheadHeader || ''), loadedDocType)
+      );
+      setAnnexureClauses(adaptClausesForDocumentType(loadedAnnexure, loadedDocType));
+      annexureDraftRef.current = adaptClausesForDocumentType(loadedAnnexure, loadedDocType);
+      {
+        const loadedIi = parseAnnexureIi(po.annexureIiRows || po.annexureIiHtml || po.annexure_ii_html || '');
+        const nextIi = loadedIi.length ? loadedIi : [emptyAnnexureIiRow()];
+        annexureIiDraftRef.current = nextIi;
+        setAnnexureIiRows(nextIi);
+      }
+      {
+        const loadedDetails = { ...EMPTY_PO_TERMS_DETAILS, ...((po.poTermsDetails as PoTermsDetails) || {}) };
+        const addr = loadedDetails.siteAddress || String(po.deliveryAddress || '');
+        const adaptedTerms = adaptClausesForDocumentType(loadedTerms, loadedDocType);
+        const quoteFromTerms = adaptedTerms.find((c) => isQuoteNoHeader(String(c.termsHeader || '')));
+        const extractedQuote =
+          extractQuoteNoFromDescription(String(quoteFromTerms?.termsDescription || '')) || '';
+        const quoteNo = String(loadedDetails.quoteNo || extractedQuote || '').trim();
+        setDeliveryAddress(addr);
+        setPoTermsDetails({
+          ...loadedDetails,
+          paymentTermsText: loadedDetails.paymentTermsText || String(po.paymentTerms || ''),
+          siteAddress: addr,
+          quoteNo,
+          quoteDate: toInputDate(loadedDetails.quoteDate) || '',
+          modeOfShipment: normalizeModeOfShipment(
+            loadedDetails.modeOfShipment || (po as { modeOfShipment?: string }).modeOfShipment
+          ),
+        });
+        setTermsClauses(stripQuoteNoFromTermsClauses(adaptedTerms));
+        termsDraftRef.current = stripQuoteNoFromTermsClauses(adaptedTerms);
+        setLocationGstNo(loadedDetails.buyerGstNo || '');
+        setLetterheadLocationKey(loadedDetails.letterheadLocationId || '');
+      }
+      const mappedLineItems = ((po.lineItems as Array<Record<string, unknown>>) || []).map((li) => {
+        const quantity = Number(li.quantity) || 0;
+        const unitPrice = Number(li.unitPrice) || 0;
+        const taxPercentage = Math.max(0, Number(li.taxPercentage ?? li.tax_percentage ?? po.gstPercentage) || 18);
+        const description = String(li.description || '');
+        const itemName = String(li.itemName || li.name || '').trim() || plainTextFromHtml(description);
+        return {
+          id: Number(li.id) || `li-${itemName || description}`,
+          itemName,
+          description,
+          quantity,
+          unitPrice,
+          taxPercentage,
+          total: Number(li.total) || calcLineTotal(quantity, unitPrice),
+          unit: lineItemUnit(li),
+        };
+      });
+      lineItemsDraftRef.current = mappedLineItems;
+      setLineItems(mappedLineItems);
+      prLineItemsHydratedRef.current = true;
+      setPr({
+        id: prDbId,
+        prNumber: String(po.prNumber || ''),
+        title: String(po.prTitle || ''),
+        department: String(po.department || ''),
+        entityId: Number(po.prEntityId || 0) || null,
+        entityName: String(po.prEntityName || ''),
+        entityCode: String(po.prEntityCode || ''),
+        requester: String(po.requester || ''),
+        recommendedVendor: String(po.vendorName || ''),
+        vendorEmail: String(po.vendorEmail || ''),
+        lineItems: ((po.lineItems as Array<Record<string, unknown>>) || []).map((li) => ({
+          id: Number(li.id) || 0,
+          description: String(li.description || ''),
+          quantity: Number(li.quantity) || 0,
+          unitPrice: Number(li.unitPrice) || 0,
+          category: String(li.category || ''),
+          unit: lineItemUnit(li),
+        })),
+        requiredDate: String(po.expectedDeliveryDate || ''),
+        amount: Number(po.grandTotal) || Number(po.subtotal) || 0,
+        requestType: 'Opex',
+        purchaseType: po.purchaseType === 'work_order' ? 'work_order' : 'purchase_order',
+        purchaseTypeLabel:
+          String(po.purchaseTypeLabel || '') ||
+          (po.purchaseType === 'work_order' ? 'Work Order' : 'Purchase Order'),
+        priority: String(po.priority || 'medium'),
+        currency: normalizeCurrency(String(po.currency || DEFAULT_CURRENCY)),
+      });
+      setDocumentType(po.purchaseType === 'work_order' ? 'work_order' : 'purchase_order');
+      if (!prDbId) {
+        setManualPoNoPr(true);
+        setManualVendorName(String(po.vendorName || ''));
+        setManualVendorEmail(String(po.vendorEmail || ''));
+        const manualContext = (po.manualContext || {}) as {
+          prDetails?: Partial<ManualPrDetails>;
+          comparisonRounds?: Array<Record<string, unknown>>;
+          vendorQuotes?: Array<Record<string, unknown>>;
+          selectedEntityId?: number | null;
+        };
+        // Prefer PO.entityId (column), then manual_context.selectedEntityId
+        const rawEntityId =
+          Number(po.entityId || 0) ||
+          Number(manualContext.selectedEntityId || 0) ||
+          0;
+        const parsedCtxEntityId = rawEntityId > 0 ? rawEntityId : '';
+        setManualEntityId(parsedCtxEntityId);
+        if (parsedCtxEntityId !== '') {
+          const eid = parsedCtxEntityId;
+          const fromList = entityOptions.find((e) => Number(e.id) === eid);
+          const snapshot: EntityRecord =
+            fromList ||
+            ({
+              id: eid,
+              code: String(po.entityCode || '').trim() || '',
+              name: String(po.entityName || po.entity || '').trim() || `Entity #${eid}`,
+              costCenter: '',
+              description: '',
+              status: 'active',
+            } as EntityRecord);
+          setManualEntitySnapshot(snapshot);
+          if (!String(po.entity || '').trim() && snapshot.name) {
+            setEntity(snapshot.name);
+          }
+        } else {
+          setManualEntitySnapshot(null);
+        }
+        setManualPrDetails(
+          hydrateManualPrDetailsFromStored(manualContext.prDetails, {
+            title: String(po.prTitle || ''),
+            department: String(po.department || ''),
+            requester: String(po.requester || ''),
+            prNumber: String(po.prNumber || ''),
+            paymentTerms: String(po.paymentTerms || ''),
+            scopeOfWork: String(
+              (manualContext.prDetails as { scopeOfWork?: string } | undefined)?.scopeOfWork || ''
+            ),
+          })
+        );
+        const hydratedRounds = hydrateComparisonRoundsFromStored(
+          (manualContext.comparisonRounds || []) as Parameters<typeof hydrateComparisonRoundsFromStored>[0],
+          (manualContext.vendorQuotes || []) as Parameters<typeof hydrateComparisonRoundsFromStored>[1]
+        );
+        if (hydratedRounds.length) setManualComparisonRounds(hydratedRounds);
+      }
+      setVendorMeta({
+        name: String(po.vendorName || ''),
+        email: String(po.vendorEmail || ''),
+        quotedPrice: Number(po.grandTotal) || 0,
+        leadTime: 30,
+        paymentTerms: String(po.paymentTerms || 'Net 30 Days'),
+        overallScore: 85,
+        technicalScore: 85,
+        commercialScore: 85,
+        compliance: 'Yes',
+      });
+      setLoadError('');
+      const poStatus = String(po.statusRaw || po.status || '').toLowerCase();
+      if (poStatus && poStatus !== 'draft') {
+        void (async () => {
+          try {
+            const blob = await poApi.fetchPdfBlob(editPoId);
+            setPdfPreviewUrl((prev) => {
+              if (prev) URL.revokeObjectURL(prev);
+              return URL.createObjectURL(blob);
+            });
+          } catch {
+            /* PDF loads on demand from Preview tab if generation is still running */
+          }
+        })();
+      }
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Failed to load PO');
+      setPr(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [isEditMode, editPoId, searchParams, isAdminPoEditor, user?.role]);
+
+  useEffect(() => {
+    if (isEditMode) {
+      if (!keepLocalDraftAfterSaveRef.current) {
+        setLoading(true);
+        setLoadError('');
+      }
+      void loadExistingPo();
+    }
+  }, [isEditMode, editPoId, loadExistingPo]);
+
+  useEffect(() => {
+    if (!numericPrId && !isEditMode && !isManualMode) {
+      setLoading(false);
+    }
+  }, [numericPrId, isEditMode, isManualMode]);
+
+  const loadContext = useCallback(async () => {
+    if (isEditMode) return;
+    const seq = ++contextLoadSeq.current;
+    const shouldApplyContext = () =>
+      seq === contextLoadSeq.current &&
+      !createdPoIdRef.current &&
+      !keepLocalDraftAfterSaveRef.current;
+    if (isManualMode) {
+      setLoading(true);
+      try {
+        const entRes = await masterApi.listEntities({ status: 'active' }).catch(() => ({ data: [] }));
+        const ents = (entRes.data || []) as EntityRecord[];
+        if (!shouldApplyContext()) return;
+        setEntityOptions(ents);
+        setManualPoNoPr(true);
+        // Only bootstrap blank form once — re-running must not wipe entity / line items
+        if (manualContextInitializedRef.current) {
+          setLoadError('');
+          return;
+        }
+        manualContextInitializedRef.current = true;
+        setLetterheadId('');
+        setEntity('');
+        setHeaderLogo('');
+        setFooterLogo('');
+        setLetterheadLocationKey('');
+        letterheadLockedRef.current = false;
+        setLetterheadLocked(false);
+        setPr({
+          id: 0,
+          prNumber: '—',
+          title: '',
+          department: '',
+          entityId: null,
+          entityName: '',
+          entityCode: '',
+          requester: '',
+          recommendedVendor: '',
+          vendorEmail: '',
+          purchaseType: 'purchase_order',
+          purchaseTypeLabel: 'Purchase Order',
+          currency: DEFAULT_CURRENCY,
+          lineItems: [],
+        });
+        setLineItems([
+          {
+            id: `manual-${Date.now()}`,
+            itemName: '',
+            description: '',
+            quantity: 1,
+            unitPrice: 0,
+            taxPercentage: 18,
+            total: 0,
+            unit: 'Nos',
+          },
+        ]);
+        setManualVendorName('');
+        setManualVendorEmail('');
+        setManualVendorId('');
+        const assignedId = Number(user?.entityId || 0);
+        const assigned =
+          assignedId > 0 ? ents.find((ent) => Number(ent.id) === assignedId) || null : null;
+        if (assigned) {
+          setManualEntityId(assigned.id);
+          setManualEntitySnapshot(assigned);
+          if (assigned.name) setEntity(assigned.name);
+        } else {
+          setManualEntityId('');
+          setManualEntitySnapshot(null);
+        }
+        setManualPrDetails({
+          prNumber: '',
+          title: '',
+          department: '',
+          requester: '',
+          justification: '',
+          scopeOfWork: '',
+          paymentTerms: '',
+          requestType: 'Opex',
+          priority: 'Medium',
+        });
+        setManualComparisonRounds([emptyComparisonRound(1)]);
+        setDocumentType('purchase_order');
+        setLoadError('');
+      } catch (err) {
+        setLoadError(err instanceof Error ? err.message : 'Failed to start manual PO');
+        setPr(null);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+    if (!numericPrId) {
+      setLoading(false);
+      return;
+    }
+    let redirectedToDraft = false;
+    try {
+      const res = await poApi.getCreateContext(numericPrId);
+      if (!shouldApplyContext()) return;
+      let existingDraftId = Number(
+        (res.data as { draftPoId?: number | null })?.draftPoId || 0
+      );
+      if (!existingDraftId && user?.role !== 'Requester') {
+        try {
+          const listed = await poApi.list();
+          const hit = ((listed.data || []) as Array<Record<string, unknown>>).find((row) => {
+            const prMatch = Number(row.prId || 0) === numericPrId;
+            const status = String(row.statusRaw || row.status || '').toLowerCase().replace(/\s+/g, '_');
+            return prMatch && status === 'draft';
+          });
+          existingDraftId = Number(hit?.id || 0);
+        } catch {
+          /* list is optional — context.draftPoId is enough when backend is current */
+        }
+      }
+      if (existingDraftId > 0) {
+        redirectedToDraft = true;
+        navigate(
+          `/scm/create-po?poId=${existingDraftId}&from=${encodeURIComponent(fromParam || 'create-po')}`,
+          { replace: true }
+        );
+        return;
+      }
+      const prData = res.data.pr as {
+        id: number;
+        prNumber: string;
+        title: string;
+        department: string;
+        entityId?: number;
+        entityName?: string;
+        entityCode?: string;
+        requester: string;
+        currency?: string;
+        purchaseType?: 'purchase_order' | 'work_order';
+        purchaseTypeLabel?: string;
+        placeOfDelivery?: string;
+        billingAddress?: string;
+        deliveryPoc?: string;
+        deliveryPocEmail?: string;
+        deliveryPocPhone?: string;
+        projectManagerHo?: string;
+        projectManagerContact?: string;
+        projectManagerEmail?: string;
+        paymentTerms?: string;
+        scopeOfWork?: string;
+        lineItems: Array<{ id: number; description: string; quantity: number; unitCost: number; category?: string; unit?: string; uom?: string }>;
+      };
+      const vendor = res.data.vendor as { name: string; email: string; paymentTerms: string; deliveryTerms: string };
+      if (!shouldApplyContext()) return;
+      const prCurrency = normalizeCurrency(prData.currency);
+      setCurrency(prCurrency);
+      setPr({
+        id: prData.id,
+        prNumber: prData.prNumber,
+        title: prData.title,
+        department: prData.department,
+        entityId: prData.entityId || null,
+        entityName: prData.entityName || '',
+        entityCode: prData.entityCode || '',
+        requester: prData.requester,
+        purchaseType: prData.purchaseType === 'work_order' ? 'work_order' : 'purchase_order',
+        purchaseTypeLabel: prData.purchaseTypeLabel || (prData.purchaseType === 'work_order' ? 'Work Order' : 'Purchase Order'),
+        recommendedVendor: vendor.name,
+        vendorEmail: vendor.email,
+        currency: prCurrency,
+        lineItems: prData.lineItems.map((li) => ({
+          id: li.id,
+          description: li.description,
+          quantity: li.quantity,
+          unitPrice: li.unitCost,
+          category: li.category,
+          unit: li.unit || li.uom || 'Nos',
+        })),
+      });
+      setDocumentType(prData.purchaseType === 'work_order' ? 'work_order' : 'purchase_order');
+      if (!userEditedDraftRef.current) {
+        setPoType(
+          defaultPoTypeForDocument(
+            prData.purchaseType === 'work_order' ? 'work_order' : 'purchase_order'
+          )
+        );
+      }
+      setPaymentTerms(vendor.paymentTerms || prData.paymentTerms || 'Net 30 Days');
+      prScopeOfWorkRef.current = String(prData.scopeOfWork || '').trim();
+      setIncoterms(normalizeIncoterm(vendor.deliveryTerms));
+      if (prData.placeOfDelivery) {
+        setDeliveryAddress(prData.placeOfDelivery);
+      }
+      setPoTermsDetails((prev) => ({
+        ...prev,
+        subject: prev.subject?.trim() ? prev.subject : String(prData.title || '').trim(),
+        paymentTermsText: prev.paymentTermsText || vendor.paymentTerms || prData.paymentTerms || 'Net 30 Days',
+        siteAddress: prev.siteAddress || prData.placeOfDelivery || '',
+        siteContactPerson: prev.siteContactPerson || prData.deliveryPoc || '',
+        siteContactEmail: prev.siteContactEmail || prData.deliveryPocEmail || '',
+        siteContactPhone: prev.siteContactPhone || prData.deliveryPocPhone || '',
+        projectManagerHo: prev.projectManagerHo || prData.projectManagerHo || '',
+        projectManagerEmail: prev.projectManagerEmail || prData.projectManagerEmail || '',
+        projectManagerContact: prev.projectManagerContact || prData.projectManagerContact || '',
+        invoicingAddress:
+          prev.invoicingAddress ||
+          (prData.billingAddress ? addressLinesToHtml(String(prData.billingAddress)) : ''),
+      }));
+      setVendorMeta({
+        name: vendor.name,
+        email: vendor.email,
+        quotedPrice: Number(vendor.quotedPrice) || 0,
+        leadTime: 30,
+        paymentTerms: vendor.paymentTerms || 'Net 30 Days',
+        overallScore: 85,
+        technicalScore: 85,
+        commercialScore: 85,
+        compliance: 'Yes',
+      });
+      setLoadError('');
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Failed to load PR');
+      setPr(null);
+    } finally {
+      if (!redirectedToDraft) setLoading(false);
+    }
+  }, [numericPrId, isEditMode, isManualMode, navigate, fromParam, user?.role, user?.entityId]);
+
+  useEffect(() => {
+    loadContext();
+  }, [loadContext]);
+
+  useEffect(() => {
+    if (!isManualMode) {
+      manualContextInitializedRef.current = false;
+    }
+  }, [isManualMode]);
+
+  useEffect(() => {
+    return () => {
+      if (pdfPreviewUrl) URL.revokeObjectURL(pdfPreviewUrl);
+    };
+  }, [pdfPreviewUrl]);
+
+  const updatePoTermsField = (key: keyof PoTermsDetails, value: string) => {
+    setPoTermsDetails((prev) => {
+      const next = { ...prev, [key]: value };
+      poTermsDetailsRef.current = next;
+      return next;
+    });
+    if (key === 'paymentTermsText') {
+      const firstLine = value.trim().split('\n')[0]?.trim();
+      if (firstLine) setPaymentTerms(firstLine.slice(0, 120));
+    }
+    if (key === 'siteAddress') {
+      setDeliveryAddress(value);
+    }
+    if (key === 'quoteNo') {
+      setTermsClauses((prev) => stripQuoteNoFromTermsClauses(prev));
+    }
+  };
+
+  const handleTermsClausesChange = (next: PoLetterheadClause[]) => {
+    markDraftEdited();
+    const renamed = stripQuoteNoFromTermsClauses(
+      renameRfqHeadersToQuoteNo(adaptClausesForDocumentType(next, documentType))
+    );
+    termsDraftRef.current = renamed;
+    setTermsClauses(renamed);
+    const quoteRow = renamed.find((c) => isQuoteNoHeader(String(c.termsHeader || '')));
+    if (!quoteRow) return;
+    const extracted = extractQuoteNoFromDescription(String(quoteRow.termsDescription || ''));
+    // Only update quoteNo when the terms row has real typed text.
+    // Do not clear an existing Quote No when the row still only has $placeholders.
+    if (extracted == null) return;
+    setPoTermsDetails((prev) =>
+      prev.quoteNo === extracted ? prev : { ...prev, quoteNo: extracted }
+    );
+  };
+
+  const handleAnnexureClausesChange = (next: PoLetterheadClause[]) => {
+    markDraftEdited();
+    const adapted = adaptClausesForDocumentType(next, documentType);
+    annexureDraftRef.current = adapted;
+    setAnnexureClauses(adapted);
+  };
+
+  const saveSiteAddressLookup = async () => {
+    const label = newSiteAddress.trim();
+    if (!label) {
+      setSiteLookupError('Site address is required');
+      return;
+    }
+    setSavingSiteLookup(true);
+    setSiteLookupError('');
+    try {
+      const res = await masterApi.createPoSiteLookup({ type: 'site_address', label });
+      const saved = res.data;
+      setSiteAddressOptions((prev) => upsertSiteLookup(prev, saved));
+      updatePoTermsField('siteAddress', saved.label);
+      setNewSiteAddress('');
+      setAddingSiteAddress(false);
+    } catch (err) {
+      setSiteLookupError(err instanceof Error ? err.message : 'Could not save site address');
+    } finally {
+      setSavingSiteLookup(false);
+    }
+  };
+
+  const saveSiteContactLookup = async () => {
+    const label = newSiteContact.label.trim();
+    if (!label) {
+      setSiteLookupError('Contact name is required');
+      return;
+    }
+    setSavingSiteLookup(true);
+    setSiteLookupError('');
+    try {
+      const res = await masterApi.createPoSiteLookup({
+        type: 'site_contact',
+        label,
+        email: newSiteContact.email.trim(),
+        phone: newSiteContact.phone.trim(),
+      });
+      const saved = res.data;
+      setSiteContactOptions((prev) => upsertSiteLookup(prev, saved));
+      setPoTermsDetails((prev) => ({
+        ...prev,
+        siteContactPerson: saved.label,
+        siteContactEmail: saved.email || '',
+        siteContactPhone: saved.phone || '',
+      }));
+      setNewSiteContact({ label: '', email: '', phone: '' });
+      setAddingSiteContact(false);
+    } catch (err) {
+      setSiteLookupError(err instanceof Error ? err.message : 'Could not save site contact');
+    } finally {
+      setSavingSiteLookup(false);
+    }
+  };
+
+  const saveProjectManagerLookup = async () => {
+    const label = newProjectManager.label.trim();
+    if (!label) {
+      setSiteLookupError('Project manager name is required');
+      return;
+    }
+    setSavingSiteLookup(true);
+    setSiteLookupError('');
+    try {
+      const res = await masterApi.createPoSiteLookup({
+        type: 'project_manager',
+        label,
+        email: newProjectManager.email.trim(),
+        phone: newProjectManager.phone.trim(),
+      });
+      const saved = res.data;
+      setProjectManagerOptions((prev) =>
+        upsertSiteLookup(prev, saved).sort((a, b) => a.label.localeCompare(b.label))
+      );
+      setPoTermsDetails((prev) => ({
+        ...prev,
+        projectManagerHo: saved.label,
+        projectManagerEmail: saved.email || '',
+        projectManagerContact: saved.phone || '',
+      }));
+      setNewProjectManager({ label: '', email: '', phone: '' });
+      setAddingProjectManager(false);
+    } catch (err) {
+      setSiteLookupError(err instanceof Error ? err.message : 'Could not save project manager');
+    } finally {
+      setSavingSiteLookup(false);
+    }
+  };
+
+  const subtotal = useMemo(() => roundMoney(lineItems.reduce((s, i) => s + i.total, 0)), [lineItems]);
+  const taxAmount = useMemo(
+    () => roundMoney(lineItems.reduce((s, i) => s + calcLineTax(i.total, i.taxPercentage), 0)),
+    [lineItems]
+  );
+  const grandTotal = useMemo(() => roundMoney(subtotal + taxAmount), [subtotal, taxAmount]);
+  const amountInWords = useMemo(() => numberToIndianWords(grandTotal), [grandTotal]);
+  const effectiveGstPercentage = useMemo(
+    () => (subtotal > 0 ? Math.round((taxAmount / subtotal) * 10000) / 100 : 0),
+    [subtotal, taxAmount]
+  );
+
+  useEffect(() => {
+    setGstPercentage(effectiveGstPercentage);
+  }, [effectiveGstPercentage]);
+
+  const buildPreviewPayload = useCallback(() => {
+    const liveTerms = termsDraftRef.current.length ? termsDraftRef.current : termsClauses;
+    const liveAnnexure = annexureDraftRef.current.length ? annexureDraftRef.current : annexureClauses;
+    const liveAnnexureIi = annexureIiDraftRef.current.length ? annexureIiDraftRef.current : annexureIiRows;
+    const synced = withSyncedQuoteNo(liveTerms, {
+      ...poTermsDetails,
+      siteAddress: poTermsDetails.siteAddress || deliveryAddress,
+      paymentTermsText: poTermsDetails.paymentTermsText || paymentTerms,
+    });
+
+    const recommendedManual = isManualPoFlow
+      ? findRecommendedManualQuote(manualComparisonRounds)
+      : undefined;
+    const vendorNameForPo = isManualPoFlow
+      ? recommendedManual?.vendorName.trim() ||
+        manualVendorName.trim() ||
+        importedVendorName.trim() ||
+        vendorMeta.name.trim() ||
+        undefined
+      : pr?.recommendedVendor?.trim() ||
+        importedVendorName.trim() ||
+        vendorMeta.name.trim() ||
+        undefined;
+    const vendorEmailFromForm = isManualPoFlow
+      ? recommendedManual?.vendorEmail.trim() ||
+        manualVendorEmail.trim() ||
+        importedVendorEmail.trim() ||
+        vendorMeta.email.trim() ||
+        undefined
+      : pr?.vendorEmail?.trim() ||
+        importedVendorEmail.trim() ||
+        vendorMeta.email.trim() ||
+        undefined;
+    const masterVendor = matchVendorFromMaster(masterVendors, {
+      name: vendorNameForPo,
+      email: vendorEmailFromForm,
+    });
+    const manualEntityFields = isManualPoFlow
+      ? manualEntityPayload(manualEntityId, selectedManualEntity)
+      : null;
+    return {
+    poNumber: poNumber || undefined,
+    prNumber: isManualPoFlow ? manualPrDetails.prNumber || undefined : pr?.prNumber || undefined,
+    quoteNo: synced.quoteNo || undefined,
+    quoteDate: synced.poTermsDetails.quoteDate || undefined,
+    lineItems: lineItems.map((i) => ({
+      itemName: i.itemName || '',
+      description: i.description,
+      quantity: i.quantity,
+      unit: i.unit || 'Nos',
+      unitPrice: i.unitPrice,
+      taxPercentage: i.taxPercentage || 0,
+      discount: 0,
+    })),
+    deliveryAddress: poTermsDetails.siteAddress || deliveryAddress,
+    expectedDeliveryDate,
+    poDate,
+    paymentTerms,
+    incoterms,
+    modeOfShipment: normalizeModeOfShipment(poTermsDetails.modeOfShipment),
+    specialInstructions,
+    gstPercentage: effectiveGstPercentage,
+    poType,
+    letterheadHeader,
+    letterheadId: letterheadId || undefined,
+    letterheadLocationId: poTermsDetails.letterheadLocationId || letterheadLocationKey || undefined,
+    locationName: poTermsDetails.locationName || undefined,
+    currency,
+    entity: manualEntityFields ? manualEntityFields.entity : entity,
+    entityId: manualEntityFields
+      ? manualEntityFields.entityId || undefined
+      : (() => {
+          const id = Number(pr?.entityId || 0);
+          if (!id) return undefined;
+          if (!entityOptions.length) return id;
+          return entityOptions.some((ent) => Number(ent.id) === id) ? id : undefined;
+        })(),
+    headerLogo,
+    footerLogo,
+    terms: synced.terms,
+    termsClauses: synced.terms,
+    annexure: liveAnnexure,
+    annexureClauses: liveAnnexure,
+    annexureIiRows: liveAnnexureIi.filter((row) => !annexureIiRowIsEmpty(row)),
+    annexureIiHtml: serializeAnnexureIi(liveAnnexureIi.filter((row) => !annexureIiRowIsEmpty(row))),
+    poTermsDetails: {
+      ...synced.poTermsDetails,
+      modeOfShipment: normalizeModeOfShipment(
+        poTermsDetails.modeOfShipment || synced.poTermsDetails.modeOfShipment
+      ),
+    },
+    purchaseType: documentType,
+    vendorName: masterVendor?.name || vendorNameForPo,
+    vendorEmail: masterVendor?.email || vendorEmailFromForm,
+    title: isManualPoFlow
+      ? manualPrDetails.title || poTermsDetails.subject || undefined
+      : poTermsDetails.subject || pr?.title || undefined,
+    department: isManualPoFlow ? manualPrDetails.department || undefined : pr?.department || undefined,
+    requester: isManualPoFlow ? manualPrDetails.requester || undefined : pr?.requester || undefined,
+  };
+  }, [
+    poNumber,
+    lineItems,
+    deliveryAddress,
+    expectedDeliveryDate,
+    poDate,
+    paymentTerms,
+    incoterms,
+    specialInstructions,
+    effectiveGstPercentage,
+    poType,
+    letterheadHeader,
+    letterheadId,
+    letterheadLocationKey,
+    currency,
+    entity,
+    headerLogo,
+    footerLogo,
+    termsClauses,
+    annexureClauses,
+    annexureIiRows,
+    poTermsDetails,
+    documentType,
+    isManualPoFlow,
+    manualEntityId,
+    selectedManualEntity,
+    manualVendorName,
+    manualVendorEmail,
+    manualComparisonRounds,
+    manualPrDetails,
+    importedVendorName,
+    importedVendorEmail,
+    pr,
+    vendorMeta.name,
+    vendorMeta.email,
+    masterVendors,
+  ]);
+
+  const applyMasterVendorToPayload = useCallback(
+    async (payload: Record<string, unknown>) => {
+      const vendorNameLive = String(
+        payload.vendorName || vendorMeta.name || pr?.recommendedVendor || ''
+      ).trim();
+      let masterHit = matchVendorFromMaster(masterVendors, {
+        name: vendorNameLive,
+        email: String(payload.vendorEmail || vendorMeta.email || ''),
+      });
+      if (!masterHit && vendorNameLive) {
+        try {
+          const searchTerm = vendorNameLive.split(/\s+/).slice(0, 3).join(' ');
+          const res = await vendorApi.list(searchTerm);
+          masterHit = matchVendorFromMaster(res.data || [], {
+            name: vendorNameLive,
+            email: String(payload.vendorEmail || ''),
+          });
+        } catch {
+          /* keep payload email */
+        }
+      }
+      if (masterHit?.email || masterHit?.name) {
+        payload.vendorName = masterHit.name || payload.vendorName;
+        payload.vendorEmail = masterHit.email || payload.vendorEmail;
+        if (masterHit.address) payload.vendorAddress = masterHit.address;
+        if (masterHit.gstNumber) payload.vendorGst = masterHit.gstNumber;
+        if (masterHit.panNumber) payload.vendorPan = masterHit.panNumber;
+        if (masterHit.phone) payload.vendorPhone = masterHit.phone;
+      }
+      return payload;
+    },
+    [masterVendors, vendorMeta.name, vendorMeta.email, pr?.recommendedVendor]
+  );
+
+  const handleOpenLivePdf = useCallback(async () => {
+    try {
+      setPdfDownloading(true);
+      const payload = await applyMasterVendorToPayload(buildPreviewPayload());
+      if (!payload.vendorEmail && isManualPoFlow) {
+        payload.vendorName =
+          String(payload.vendorName || '').trim() ||
+          manualVendorName.trim() ||
+          vendorMeta.name.trim() ||
+          'Vendor Name';
+        payload.vendorEmail =
+          String(payload.vendorEmail || '').trim() ||
+          manualVendorEmail.trim() ||
+          vendorMeta.email.trim() ||
+          'vendor@example.com';
+      }
+      let blob: Blob;
+      if (isEditMode && editPoId) {
+        blob = await poApi.previewPdfBlobByPoId(editPoId, payload);
+      } else if (isManualMode || isManualPoFlow) {
+        blob = await poApi.previewManualPdfBlob(payload);
+      } else if (numericPrId) {
+        blob = await poApi.previewPdfBlob(numericPrId, payload);
+      } else {
+        throw new Error('Save draft first to generate PDF');
+      }
+      const url = URL.createObjectURL(blob);
+      const win = window.open(url, '_blank');
+      if (!win) {
+        triggerBlobDownload(blob, poPdfDownloadFileName(poNumber || pr?.prNumber, 'preview'));
+      }
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not open PDF');
+    } finally {
+      setPdfDownloading(false);
+    }
+  }, [
+    applyMasterVendorToPayload,
+    buildPreviewPayload,
+    isManualPoFlow,
+    manualVendorName,
+    manualVendorEmail,
+    vendorMeta.name,
+    vendorMeta.email,
+    isEditMode,
+    editPoId,
+    isManualMode,
+    numericPrId,
+    poNumber,
+    pr?.prNumber,
+  ]);
+
+  useEffect(() => {
+    if (activeTab !== 'preview' || (!numericPrId && !editPoId && !isManualPoFlow)) return;
+
+    let objectUrl: string | null = null;
+    let cancelled = false;
+
+    const loadPreview = async () => {
+      setPreviewLoading(true);
+      setPreviewError('');
+      try {
+        const payload = await applyMasterVendorToPayload(buildPreviewPayload());
+        if (!payload.vendorEmail && isManualPoFlow) {
+          payload.vendorName =
+            String(payload.vendorName || '').trim() ||
+            manualVendorName.trim() ||
+            vendorMeta.name.trim() ||
+            'Vendor Name';
+          payload.vendorEmail =
+            String(payload.vendorEmail || '').trim() ||
+            manualVendorEmail.trim() ||
+            vendorMeta.email.trim() ||
+            'vendor@example.com';
+        }
+        const previewPrId =
+          (numericPrId && !Number.isNaN(numericPrId) ? numericPrId : 0) ||
+          (Number(pr?.id) > 0 ? Number(pr.id) : 0);
+        const html =
+          previewPrId && user?.role === 'SCM Buyer'
+            ? await poApi.previewDocumentHtml(previewPrId, payload)
+            : isEditMode && editPoId
+              ? await poApi.previewDocumentHtmlByPoId(editPoId, payload)
+              : isManualPoFlow
+                ? await poApi.previewManualDocumentHtml(payload)
+                : await poApi.previewDocumentHtml(numericPrId!, payload);
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+        setPreviewHtmlUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return objectUrl;
+        });
+      } catch (err) {
+        if (!cancelled) {
+          const raw = err instanceof Error ? err.message : 'Could not load preview';
+          let friendly = raw;
+          try {
+            const parsed = JSON.parse(raw) as { message?: string };
+            if (parsed?.message) friendly = parsed.message;
+          } catch {
+            /* keep raw */
+          }
+          setPreviewError(friendly);
+          setPreviewHtmlUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return null;
+          });
+        }
+      } finally {
+        if (!cancelled) setPreviewLoading(false);
+      }
+    };
+
+    loadPreview();
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [activeTab, numericPrId, editPoId, isEditMode, isManualPoFlow, buildPreviewPayload, applyMasterVendorToPayload, manualVendorName, manualVendorEmail, vendorMeta.name, vendorMeta.email, masterVendors, pr?.id, user?.role]);
+
+  useEffect(() => {
+    return () => {
+      if (previewHtmlUrl) URL.revokeObjectURL(previewHtmlUrl);
+    };
+  }, [previewHtmlUrl]);
+
+  const patchLineItems = (updater: (prev: LineItem[]) => LineItem[]) => {
+    markDraftEdited();
+    setLineItems((prev) => {
+      const next = updater(prev);
+      lineItemsDraftRef.current = next;
+      return next;
+    });
+  };
+
+  const handleQtyChange = (id: string | number, raw: string) => {
+    patchLineItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) return item;
+        const parsed = raw === '' || raw === '.' ? 0 : parseFloat(raw);
+        const val = Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+        return { ...item, quantity: val, total: calcLineTotal(val, item.unitPrice) };
+      })
+    );
+  };
+
+  const handlePriceChange = (id: string | number, raw: string) => {
+    patchLineItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) return item;
+        const parsed = raw === '' || raw === '.' ? 0 : parseFloat(raw);
+        const val = Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+        return { ...item, unitPrice: val, total: calcLineTotal(item.quantity, val) };
+      })
+    );
+  };
+
+  const handleTaxPercentageChange = (id: string | number, val: number) => {
+    patchLineItems((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, taxPercentage: Math.min(100, Math.max(0, val)) } : item
+      )
+    );
+  };
+
+  const handleUnitChange = (id: string | number, val: string) => {
+    patchLineItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, unit: val } : item))
+    );
+  };
+
+  const handleItemNameChange = (id: string | number, val: string) => {
+    patchLineItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, itemName: val } : item))
+    );
+  };
+
+  const handleDescriptionChange = (id: string | number, val: string) => {
+    patchLineItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, description: val } : item))
+    );
+  };
+
+  const handleAddLineItem = () => {
+    patchLineItems((prev) => [
+      ...prev,
+      {
+        id: `new-${Date.now()}`,
+        itemName: '',
+        description: '',
+        quantity: 1,
+        unitPrice: 0,
+        taxPercentage: 18,
+        total: 0,
+        unit: 'Nos',
+      },
+    ]);
+  };
+
+  const handleDeleteLineItem = (id: string | number) => {
+    patchLineItems((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const listedEntityId = (raw: number | '' | null | undefined) => {
+    const id = Number(raw || 0);
+    if (!id) return 0;
+    if (!entityOptions.length) return id;
+    return entityOptions.some((ent) => Number(ent.id) === id) ? id : 0;
+  };
+  const resolvedManualEntityId =
+    listedEntityId(isManualPoFlow ? manualEntityId : manualEntityId || pr?.entityId || 0) || '';
+
+  const flushLiveEditors = () => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    document.querySelectorAll('[contenteditable="true"]').forEach((node) => {
+      if (node instanceof HTMLElement) node.blur();
+    });
+  };
+
+  const collectLiveDraft = () => {
+    const details = poTermsDetailsRef.current;
+    return {
+      details,
+      termsToSave: termsDraftRef.current.length ? termsDraftRef.current : termsClauses,
+      annexureToSave: annexureDraftRef.current.length ? annexureDraftRef.current : annexureClauses,
+      annexureIiLive: annexureIiDraftRef.current.length ? annexureIiDraftRef.current : annexureIiRows,
+      lineItemsLive: lineItemsDraftRef.current.length ? lineItemsDraftRef.current : lineItems,
+    };
+  };
+
+  const handleSaveDraft = async (opts?: { silent?: boolean }): Promise<boolean> => {
+    const silent = Boolean(opts?.silent);
+    if ((!numericPrId && !editPoId && !isManualPoFlow) || !pr) return false;
+    if (isManualPoFlow && manualEntityId === '') {
+      if (!silent) {
+        alert('Please select an entity for PO / WO numbering');
+        setActiveTab('details');
+      }
+      return false;
+    }
+    if (silent && (submitting || autoSaving)) return false;
+    if (poEditStatus && poEditStatus !== 'draft' && silent) return false;
+    if (!silent) setSubmitting(true);
+    else setAutoSaving(true);
+    try {
+      flushLiveEditors();
+      await new Promise((r) => window.setTimeout(r, 80));
+      const { details, termsToSave, annexureToSave, annexureIiLive, lineItemsLive } = collectLiveDraft();
+      const annexureIiToSave = annexureIiLive.filter((row) => !annexureIiRowIsEmpty(row));
+      const payload: Record<string, unknown> = {
+        skipLetterheadMaster: true,
+        lineItems: lineItemsLive.map((i) => ({
+          itemName: i.itemName || '',
+          description: i.description,
+          quantity: i.quantity,
+          unit: i.unit || 'Nos',
+          unitPrice: i.unitPrice,
+          taxPercentage: i.taxPercentage || 0,
+          discount: 0,
+        })),
+        deliveryAddress: details.siteAddress || deliveryAddress,
+        expectedDeliveryDate: expectedDeliveryDate || undefined,
+        poDate,
+        paymentTerms,
+        incoterms,
+        modeOfShipment: normalizeModeOfShipment(details.modeOfShipment),
+        specialInstructions,
+        gstPercentage: effectiveGstPercentage,
+        poType,
+        letterheadHeader,
+        letterheadId: letterheadId || undefined,
+        letterheadLocationId: details.letterheadLocationId || letterheadLocationKey || undefined,
+        locationName: details.locationName || undefined,
+        currency,
+        entity,
+        headerLogo,
+        footerLogo,
+        terms: filterNonEmptyClauses(
+          withSyncedQuoteNo(termsToSave, {
+            ...details,
+            paymentTermsText: details.paymentTermsText || paymentTerms,
+            siteAddress: details.siteAddress || deliveryAddress,
+            letterheadLocationId: details.letterheadLocationId || letterheadLocationKey || '',
+            buyerGstNo: details.buyerGstNo || locationGstNo || '',
+            modeOfShipment: normalizeModeOfShipment(details.modeOfShipment),
+          }).terms
+        ),
+        annexure: filterNonEmptyClauses(annexureToSave),
+        annexureIiRows: annexureIiToSave,
+        annexureIiHtml: serializeAnnexureIi(annexureIiToSave),
+        poTermsDetails: withSyncedQuoteNo(termsToSave, {
+          ...details,
+          paymentTermsText: details.paymentTermsText || paymentTerms,
+          siteAddress: details.siteAddress || deliveryAddress,
+          letterheadLocationId: details.letterheadLocationId || letterheadLocationKey || '',
+          buyerGstNo: details.buyerGstNo || locationGstNo || '',
+          modeOfShipment: normalizeModeOfShipment(details.modeOfShipment),
+        }).poTermsDetails,
+        referencePoNumber: referencePoNumber.trim() || undefined,
+        purchaseType: documentType,
+        poNumber: poNumber.trim() || undefined,
+      };
+
+      if (isManualPoFlow) {
+        const recommended = findRecommendedManualQuote(manualComparisonRounds);
+        payload.vendorName = (recommended?.vendorName || manualVendorName).trim() || undefined;
+        payload.vendorEmail = (recommended?.vendorEmail || manualVendorEmail).trim() || undefined;
+        const entityFields = manualEntityPayload(manualEntityId, selectedManualEntity);
+        payload.selectedEntityId = entityFields.selectedEntityId;
+        payload.entityId = entityFields.entityId;
+        payload.entity = entityFields.entity;
+        payload.title = manualPrDetails.title.trim() || details.subject || '';
+        payload.department = manualPrDetails.department.trim();
+        payload.requester = manualPrDetails.requester.trim();
+        payload.manualPrDetails = manualPrDetails;
+        payload.comparisonRounds = await Promise.all(
+          manualComparisonRounds.map(async (round) => ({
+            round: round.round,
+            label: round.label.trim() || `Round ${round.round}`,
+            notes: round.notes.trim(),
+            vendorQuotes: await Promise.all(
+              round.vendorQuotes.map(async (row, idx) => ({
+                vendorId: row.vendorId,
+                vendorName: row.vendorName.trim(),
+                vendorEmail: row.vendorEmail.trim(),
+                quotedPrice: Number(row.quotedPrice) || 0,
+                leadTime: row.leadTime.trim(),
+                paymentTerms: row.paymentTerms,
+                recommended: row.recommended,
+                round: round.round,
+                sortOrder: idx,
+                files: [
+                  ...(row.storedFiles || []).map((f) => ({
+                    fileName: f.fileName,
+                    mimeType: f.mimeType || null,
+                    storedName: f.storedName,
+                  })),
+                  ...(await Promise.all(row.files.map((file) => fileToAttachmentPayload(file)))),
+                ],
+              }))
+            ),
+          }))
+        );
+      }
+
+      const existingDraftId = Number(editPoId || createdPoId || createdPoIdRef.current || 0) || null;
+      if (existingDraftId) payload.poId = existingDraftId;
+      if (numericPrId) payload.prId = numericPrId;
+      else if (Number(pr?.id) > 0) payload.prId = Number(pr.id);
+
+      await applyMasterVendorToPayload(payload);
+
+      const res = await poApi.saveDraft(payload);
+      const data = (res.data || {}) as {
+        id?: number;
+        poNumber?: string;
+        manualContext?: {
+          comparisonRounds?: Array<Record<string, unknown>>;
+          vendorQuotes?: Array<Record<string, unknown>>;
+        };
+      };
+      const savedId = Number(data.id);
+      const savedPoNumber = String(data.poNumber || '');
+      if (savedId) {
+        createdPoIdRef.current = savedId;
+        setCreatedPoId(savedId);
+      }
+      if (savedPoNumber) setPoNumber(savedPoNumber);
+      // Apply stored GCS file refs after save so Preview works without remount.
+      // Full hydrate on explicit Save; merge on silent autosave (keep open Edit + local Files).
+      if (data.manualContext) {
+        const hydratedRounds = hydrateComparisonRoundsFromStored(
+          (data.manualContext.comparisonRounds || []) as Parameters<
+            typeof hydrateComparisonRoundsFromStored
+          >[0],
+          (data.manualContext.vendorQuotes || []) as Parameters<typeof hydrateComparisonRoundsFromStored>[1]
+        );
+        if (hydratedRounds.length) {
+          if (silent) {
+            setManualComparisonRounds((prev) => mergeStoredFilesIntoRounds(prev, hydratedRounds));
+          } else {
+            setManualComparisonRounds(hydratedRounds);
+          }
+        }
+      }
+      skipNextLetterheadLoad.current = true;
+      letterheadLoadSeq.current += 1;
+      contextLoadSeq.current += 1;
+      letterheadLockedRef.current = true;
+      setLetterheadLocked(true);
+      setDraftSaved(true);
+      setTimeout(() => setDraftSaved(false), 3000);
+      if (!editPoId && savedId) {
+        keepLocalDraftAfterSaveRef.current = true;
+        const params = new URLSearchParams({ poId: String(savedId), from: 'create-po' });
+        if (isManualPoFlow) params.set('manual', '1');
+        else if (numericPrId) params.set('prId', String(numericPrId));
+        navigate(`/scm/create-po?${params.toString()}`, { replace: true });
+      }
+      setPoEditStatus('draft');
+      return true;
+    } catch (err) {
+      if (!silent) alert(err instanceof Error ? err.message : 'Could not save draft');
+      return false;
+    } finally {
+      if (!silent) setSubmitting(false);
+      else setAutoSaving(false);
+    }
+  };
+
+  const handleSaveDraftRef = useRef(handleSaveDraft);
+  handleSaveDraftRef.current = handleSaveDraft;
+  const draftHydratedRef = useRef(false);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastAutoSavedFingerprintRef = useRef('');
+  const autoSaveFingerprintRef = useRef('');
+
+  const autoSaveFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        manualEntityId,
+        manualPrDetails,
+        manualVendorName,
+        manualVendorEmail,
+        rounds: manualComparisonRounds.map((r) => ({
+          round: r.round,
+          label: r.label,
+          notes: r.notes,
+          quotes: r.vendorQuotes.map((q) => ({
+            vendorId: q.vendorId,
+            vendorName: q.vendorName,
+            vendorEmail: q.vendorEmail,
+            quotedPrice: q.quotedPrice,
+            leadTime: q.leadTime,
+            paymentTerms: q.paymentTerms,
+            recommended: q.recommended,
+            files: q.files.map((f) => f.name),
+            stored: (q.storedFiles || []).map((f) => f.fileName),
+          })),
+        })),
+        lineItems: lineItems.map((i) => ({
+          itemName: i.itemName,
+          description: i.description,
+          quantity: i.quantity,
+          unitPrice: i.unitPrice,
+          taxPercentage: i.taxPercentage,
+          unit: i.unit,
+        })),
+        deliveryAddress,
+        expectedDeliveryDate,
+        poDate,
+        paymentTerms,
+        incoterms,
+        specialInstructions,
+        currency,
+        entity,
+        documentType,
+        poType,
+        letterheadHeader,
+        letterheadId,
+        referencePoNumber,
+      }),
+    [
+      manualEntityId,
+      manualPrDetails,
+      manualVendorName,
+      manualVendorEmail,
+      manualComparisonRounds,
+      lineItems,
+      deliveryAddress,
+      expectedDeliveryDate,
+      poDate,
+      paymentTerms,
+      incoterms,
+      specialInstructions,
+      currency,
+      entity,
+      documentType,
+      poType,
+      letterheadHeader,
+      letterheadId,
+      referencePoNumber,
+    ]
+  );
+  autoSaveFingerprintRef.current = autoSaveFingerprint;
+
+  // Allow autosave only after initial load settles
+  useEffect(() => {
+    draftHydratedRef.current = false;
+    lastAutoSavedFingerprintRef.current = '';
+    const t = window.setTimeout(() => {
+      draftHydratedRef.current = true;
+      lastAutoSavedFingerprintRef.current = autoSaveFingerprintRef.current;
+    }, 1800);
+    return () => window.clearTimeout(t);
+  }, [editPoId, numericPrId, isManualPoFlow]);
+
+  // Debounced autosave for Create PO drafts (only when content fingerprint changes)
+  useEffect(() => {
+    if (!draftHydratedRef.current) return;
+    if ((!numericPrId && !editPoId && !createdPoId && !isManualPoFlow) || !pr) return;
+    if (isManualPoFlow && manualEntityId === '') return;
+    if (poEditStatus && poEditStatus !== 'draft') return;
+    if (autoSaveFingerprint === lastAutoSavedFingerprintRef.current) return;
+
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    const fp = autoSaveFingerprint;
+    autoSaveTimerRef.current = setTimeout(() => {
+      void handleSaveDraftRef.current({ silent: true }).then((ok) => {
+        if (ok) lastAutoSavedFingerprintRef.current = fp;
+      });
+    }, 2500);
+
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [
+    autoSaveFingerprint,
+    pr,
+    numericPrId,
+    editPoId,
+    createdPoId,
+    isManualPoFlow,
+    manualEntityId,
+    poEditStatus,
+  ]);
+
+  const applyReferencePoDetails = useCallback((po: Record<string, unknown>) => {
+    const refNo = String(po.poNumber || '').trim();
+    setReferencePoNumber(refNo);
+    setLetterheadLocked(true);
+    setDeliveryAddress(String(po.deliveryAddress || ''));
+    if (po.expectedDeliveryDate) {
+      setExpectedDeliveryDate(String(po.expectedDeliveryDate));
+    }
+    setPaymentTerms(String(po.paymentTerms || 'Net 30 Days'));
+    setIncoterms(normalizeIncoterm(po.incoterms));
+    setSpecialInstructions(String(po.specialInstructions || ''));
+    setGstPercentage(Number(po.gstPercentage) || 18);
+    const nextDocType: 'purchase_order' | 'work_order' =
+      po.purchaseType === 'work_order'
+        ? 'work_order'
+        : po.purchaseType === 'purchase_order'
+          ? 'purchase_order'
+          : documentType;
+    setPoType(coercePoType(po.poType, nextDocType));
+    if (po.purchaseType === 'work_order' || po.purchaseType === 'purchase_order') {
+      setDocumentType(po.purchaseType);
+      prevDocumentTypeRef.current = po.purchaseType;
+    }
+    setLetterheadHeader(
+      adaptWordingForDocumentType(String(po.letterheadHeader || ''), nextDocType)
+    );
+    setLetterheadId(po.letterheadId ? Number(po.letterheadId) : '');
+    setEntity(String(po.entity || ''));
+    setHeaderLogo(String(po.headerLogo || ''));
+    setFooterLogo(String(po.footerLogo || ''));
+    setAnnexureClauses(
+      adaptClausesForDocumentType((po.annexureClauses as PoLetterheadClause[]) || [], nextDocType)
+    );
+    {
+      const loadedIi = parseAnnexureIi(po.annexureIiRows || po.annexureIiHtml || po.annexure_ii_html || '');
+      if (loadedIi.length) setAnnexureIiRows(loadedIi);
+    }
+    {
+      const loadedDetails = { ...EMPTY_PO_TERMS_DETAILS, ...((po.poTermsDetails as PoTermsDetails) || {}) };
+      const addr = loadedDetails.siteAddress || String(po.deliveryAddress || '');
+      const adaptedTerms = adaptClausesForDocumentType(
+        (po.termsClauses as PoLetterheadClause[]) || [],
+        nextDocType
+      );
+      const quoteFromTerms = adaptedTerms.find((c) => isQuoteNoHeader(String(c.termsHeader || '')));
+      const extractedQuote =
+        extractQuoteNoFromDescription(String(quoteFromTerms?.termsDescription || '')) || '';
+      const quoteNo = String(loadedDetails.quoteNo || extractedQuote || '').trim();
+      setDeliveryAddress(addr);
+      setPoTermsDetails({
+        ...loadedDetails,
+        paymentTermsText: loadedDetails.paymentTermsText || String(po.paymentTerms || ''),
+        siteAddress: addr,
+        quoteNo,
+        quoteDate: toInputDate(loadedDetails.quoteDate) || '',
+        modeOfShipment: normalizeModeOfShipment(
+          loadedDetails.modeOfShipment || (po as { modeOfShipment?: string }).modeOfShipment
+        ),
+      });
+      setTermsClauses(stripQuoteNoFromTermsClauses(adaptedTerms));
+    }
+
+    const refLineItems = ((po.lineItems as Array<Record<string, unknown>>) || []).map((li, index) => {
+      const qty = Number(li.quantity) || 0;
+      const unitPrice = Number(li.unitPrice) || 0;
+      const taxPercentage = Math.max(0, Number(li.taxPercentage ?? li.tax_percentage ?? po.gstPercentage) || 18);
+      const description = String(li.description || '');
+      const itemName = String(li.itemName || li.name || '').trim() || plainTextFromHtml(description);
+      return {
+        id: `ref-${index}-${Date.now()}`,
+        itemName,
+        description,
+        quantity: qty,
+        unitPrice,
+        taxPercentage,
+        total: Number(li.total) || calcLineTotal(qty, unitPrice),
+        unit: lineItemUnit(li),
+      };
+    });
+    if (refLineItems.length) {
+      setLineItems(refLineItems);
+    }
+
+    setReferencePoLoaded({
+      poNumber: refNo,
+      vendorName: String(po.vendorName || ''),
+      prNumber: String(po.prNumber || ''),
+      grandTotal: Number(po.grandTotal) || 0,
+    });
+  }, [documentType]);
+
+  /** Enter existing PO number → auto-fill PO Details / Terms / line items */
+  const loadPoDetailsByNumber = useCallback(
+    async (rawNumber?: string) => {
+      const num = String(rawNumber ?? referencePoNumber).trim();
+      if (!num) {
+        setReferencePoError('Enter a PO number to auto-fill details');
+        return false;
+      }
+      setReferencePoNumber(num);
+      setReferencePoLoading(true);
+      setReferencePoError('');
+      try {
+        const res = await poApi.getByNumber(num);
+        const po = res.data as Record<string, unknown>;
+        if (!po?.poNumber) throw new Error('PO not found');
+        applyReferencePoDetails(po);
+        return true;
+      } catch (err) {
+        setReferencePoLoaded(null);
+        setReferencePoError(err instanceof Error ? err.message : 'PO not found');
+        return false;
+      } finally {
+        setReferencePoLoading(false);
+      }
+    },
+    [referencePoNumber, applyReferencePoDetails]
+  );
+
+  const applyCsvImportPayload = useCallback((payload: PoCsvImportPayload) => {
+    if (payload.lineItems?.length) {
+      setLineItems(
+        payload.lineItems.map((item) => ({
+          id: item.id,
+          itemName: item.itemName || '',
+          description: item.description || '',
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          taxPercentage: item.taxPercentage ?? payload.gstPercentage ?? 18,
+          total: item.total ?? calcLineTotal(item.quantity, item.unitPrice),
+          unit: item.unit || 'Nos',
+        }))
+      );
+    }
+    if (payload.deliveryAddress) {
+      setDeliveryAddress(payload.deliveryAddress);
+      setPoTermsDetails((prev) => ({ ...prev, siteAddress: payload.deliveryAddress || prev.siteAddress }));
+    }
+    if (payload.expectedDeliveryDate) setExpectedDeliveryDate(payload.expectedDeliveryDate);
+    if (payload.paymentTerms) setPaymentTerms(payload.paymentTerms);
+    if (payload.incoterms) setIncoterms(normalizeIncoterm(String(payload.incoterms)));
+    if (payload.gstPercentage != null) setGstPercentage(payload.gstPercentage);
+    if (payload.specialInstructions) setSpecialInstructions(payload.specialInstructions);
+    if (payload.poType) setPoType(coercePoType(payload.poType, documentType));
+    if (payload.entity) setEntity(payload.entity);
+    if (payload.letterheadHeader) setLetterheadHeader(payload.letterheadHeader);
+    if (payload.referencePoNumber) setReferencePoNumber(payload.referencePoNumber);
+    if (payload.termsClauses?.length) {
+      setTermsClauses(stripQuoteNoFromTermsClauses(payload.termsClauses as PoLetterheadClause[]));
+    }
+    if (payload.annexureClauses?.length) setAnnexureClauses(payload.annexureClauses);
+    if (payload.poNumber) setImportedPoNumber(payload.poNumber);
+    if (payload.vendorName) setImportedVendorName(payload.vendorName);
+    if (payload.vendorEmail) setImportedVendorEmail(payload.vendorEmail);
+    if (payload.skipApproval) setSkipApproval(true);
+  }, []);
+
+  useEffect(() => {
+    if (isEditMode || !pr) return;
+
+    // CSV import from Purchase Requests takes priority over PR line items
+    if (fromCsvParam === 'csv' && !csvAppliedRef.current) {
+      const payload = consumePoCsvImport();
+      if (payload) {
+        csvAppliedRef.current = true;
+        applyCsvImportPayload(payload);
+        return;
+      }
+    }
+
+    // Reference PO path will load its own line items
+    if (refPoParam?.trim()) return;
+
+    if (!pr.lineItems?.length) return;
+    if (prLineItemsHydratedRef.current || userEditedDraftRef.current) return;
+    prLineItemsHydratedRef.current = true;
+    const mapped = pr.lineItems.map((item) => ({
+      id: item.id,
+      itemName: plainTextFromHtml(item.description || ''),
+      description: item.description || '',
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      taxPercentage: 18,
+      total: calcLineTotal(item.quantity, item.unitPrice),
+      unit: item.unit || 'Nos',
+    }));
+    lineItemsDraftRef.current = mapped;
+    setLineItems(mapped);
+  }, [pr, isEditMode, fromCsvParam, refPoParam, applyCsvImportPayload]);
+
+  // Auto-import reference PO when opened from Purchase Requests with ?refPo=
+  useEffect(() => {
+    if (isEditMode || !pr || !refPoParam?.trim() || referencePoLoaded) return;
+    void loadPoDetailsByNumber(refPoParam.trim());
+  }, [isEditMode, pr, refPoParam, referencePoLoaded, loadPoDetailsByNumber]);
+
+  const validateBeforeSend = (): boolean => {
+    if ((!numericPrId && !editPoId && !isManualPoFlow) || !pr) return false;
+    if (!String(poTermsDetails.subject || '').trim()) {
+      alert(`Please enter ${documentType === 'work_order' ? 'Work Order' : 'Purchase Order'} Subject`);
+      setActiveTab('details');
+      return false;
+    }
+    if (isManualPoFlow) {
+      const recommended = findRecommendedManualQuote(manualComparisonRounds);
+      const vendorName = (recommended?.vendorName || manualVendorName).trim();
+      const vendorEmail = (recommended?.vendorEmail || manualVendorEmail).trim();
+      if (!vendorName) {
+        alert('Please select or enter a vendor (mark recommended in vendor comparison)');
+        setActiveTab('details');
+        return false;
+      }
+      if (!vendorEmail) {
+        alert('Please enter vendor email');
+        setActiveTab('details');
+        return false;
+      }
+      if (!resolvedManualEntityId) {
+        alert('Please select an entity for PO / WO numbering');
+        setActiveTab('details');
+        return false;
+      }
+    }
+    if (!skipApproval && !letterheadId) {
+      alert('Please select a letterhead entity');
+      setActiveTab('terms');
+      return false;
+    }
+    if (!skipApproval && letterheadLocations.length > 0 && !letterheadLocationKey) {
+      alert('Please select a location for the letterhead entity');
+      setActiveTab('terms');
+      return false;
+    }
+    if (!poDate) {
+      alert(`Please select ${documentType === 'work_order' ? 'WO' : 'PO'} date`);
+      setActiveTab('details');
+      return false;
+    }
+    if (!(poTermsDetails.siteAddress || deliveryAddress).trim()) {
+      alert('Please select site / delivery address');
+      setActiveTab('details');
+      return false;
+    }
+    if (!expectedDeliveryDate) {
+      alert('Please select expected delivery date');
+      setActiveTab('details');
+      return false;
+    }
+    return true;
+  };
+
+  /** Create / draft Save that goes to SCM Manager for approval */
+  const needsScmManagerConfirm =
+    !skipApproval &&
+    !isBuyerVerifyEdit &&
+    (!isEditMode || poEditStatus === 'draft');
+
+  const confirmVendorName = (
+    isManualPoFlow
+      ? findRecommendedManualQuote(manualComparisonRounds)?.vendorName ||
+        manualVendorName ||
+        importedVendorName ||
+        vendorMeta.name
+      : pr?.recommendedVendor || vendorMeta.name || ''
+  ).trim() || '—';
+
+  const confirmPrNumber = (
+    isManualPoFlow ? manualPrDetails.prNumber || '' : pr?.prNumber || ''
+  ).trim() || '—';
+
+  const isDraftLikePoNumber = (value: string) => {
+    const n = String(value || '').trim().toUpperCase();
+    return !n || n.startsWith('DRAFT-');
+  };
+
+  const handleSendForApproval = async () => {
+    if (isBuyerAwaitingManager) {
+      alert(
+        `This ${docLabel} is already with SCM Manager for sign / approval. Open PO Approval as SCM Manager to act on it.`
+      );
+      return;
+    }
+    if (!validateBeforeSend()) return;
+    if (needsScmManagerConfirm) {
+      const entityIdForNum = Number(
+        (isManualPoFlow ? manualEntityId : pr?.entityId || manualEntityId || resolvedManualEntityId) || 0
+      );
+      // Default official PO/WO number in the popup — change only if you want a different one.
+      if (isDraftLikePoNumber(poNumber) && entityIdForNum > 0) {
+        setScmConfirmLoadingNumber(true);
+        try {
+          const res = await poApi.nextNumber({
+            entityId: entityIdForNum,
+            purchaseType: documentType === 'work_order' ? 'work_order' : 'purchase_order',
+          });
+          const next = String(res.data?.poNumber || '').trim();
+          if (next) {
+            setPoNumber(next);
+            setPoNumberTouched(false);
+            scmConfirmBaselineRef.current = next;
+          } else {
+            scmConfirmBaselineRef.current = poNumber.trim();
+          }
+        } catch {
+          scmConfirmBaselineRef.current = poNumber.trim();
+        } finally {
+          setScmConfirmLoadingNumber(false);
+        }
+      } else {
+        scmConfirmBaselineRef.current = poNumber.trim();
+        setPoNumberTouched(false);
+      }
+      setShowScmConfirm(true);
+      return;
+    }
+    void executeSendForApproval();
+  };
+
+  const executeSendForApproval = async () => {
+    if ((!numericPrId && !editPoId && !isManualPoFlow) || !pr) return;
+    setShowScmConfirm(false);
+    setSubmitting(true);
+    try {
+      flushLiveEditors();
+      await new Promise((r) => window.setTimeout(r, 80));
+      const { details, termsToSave, annexureToSave, annexureIiLive, lineItemsLive } = collectLiveDraft();
+      const annexureIiToSave = annexureIiLive.filter((row) => !annexureIiRowIsEmpty(row));
+      const payload: Record<string, unknown> = {
+        skipLetterheadMaster: true,
+        lineItems: lineItemsLive.map((i) => ({
+          itemName: i.itemName || '',
+          description: i.description,
+          quantity: i.quantity,
+          unit: i.unit || 'Nos',
+          unitPrice: i.unitPrice,
+          taxPercentage: i.taxPercentage || 0,
+          discount: 0,
+        })),
+        deliveryAddress: details.siteAddress || deliveryAddress,
+        expectedDeliveryDate,
+        poDate,
+        paymentTerms,
+        incoterms,
+        modeOfShipment: normalizeModeOfShipment(details.modeOfShipment),
+        specialInstructions,
+        gstPercentage: effectiveGstPercentage,
+        poType,
+        letterheadHeader,
+        letterheadId: letterheadId || undefined,
+        letterheadLocationId: details.letterheadLocationId || letterheadLocationKey || undefined,
+        locationName: details.locationName || undefined,
+        currency,
+        entity,
+        headerLogo,
+        footerLogo,
+        terms: filterNonEmptyClauses(
+          withSyncedQuoteNo(termsToSave, {
+            ...details,
+            paymentTermsText: details.paymentTermsText || paymentTerms,
+            siteAddress: details.siteAddress || deliveryAddress,
+            letterheadLocationId: details.letterheadLocationId || letterheadLocationKey || '',
+            buyerGstNo: details.buyerGstNo || locationGstNo || '',
+            modeOfShipment: normalizeModeOfShipment(details.modeOfShipment),
+          }).terms
+        ),
+        annexure: filterNonEmptyClauses(annexureToSave),
+        annexureIiRows: annexureIiToSave,
+        annexureIiHtml: serializeAnnexureIi(annexureIiToSave),
+        poTermsDetails: withSyncedQuoteNo(termsToSave, {
+          ...details,
+          paymentTermsText: details.paymentTermsText || paymentTerms,
+          siteAddress: details.siteAddress || deliveryAddress,
+          letterheadLocationId: details.letterheadLocationId || letterheadLocationKey || '',
+          buyerGstNo: details.buyerGstNo || locationGstNo || '',
+          modeOfShipment: normalizeModeOfShipment(details.modeOfShipment),
+        }).poTermsDetails,
+        referencePoNumber: referencePoNumber.trim() || undefined,
+        changeSummary: changeSummary.trim() || undefined,
+        purchaseType: documentType,
+        // Official number from confirm popup (default or user-edited) → PDF for SCM Manager.
+        // Omit DRAFT-* so the server assigns if somehow still a draft.
+        poNumber: isDraftLikePoNumber(poNumber) ? undefined : poNumber.trim() || undefined,
+        scmManagerEmail: user?.role === 'Requester' ? undefined : scmManager?.email || undefined,
+      };
+
+      if (isManualPoFlow) {
+        const recommended = findRecommendedManualQuote(manualComparisonRounds);
+        payload.vendorName = (recommended?.vendorName || manualVendorName).trim();
+        payload.vendorEmail = (recommended?.vendorEmail || manualVendorEmail).trim();
+        const entityFields = manualEntityPayload(manualEntityId, selectedManualEntity);
+        payload.selectedEntityId = entityFields.selectedEntityId;
+        payload.entityId = entityFields.entityId;
+        payload.entity = entityFields.entity;
+        payload.title = manualPrDetails.title.trim() || details.subject || '';
+        payload.department = manualPrDetails.department.trim();
+        payload.requester = manualPrDetails.requester.trim();
+        payload.manualPrDetails = manualPrDetails;
+        payload.comparisonRounds = await Promise.all(
+          manualComparisonRounds.map(async (round) => ({
+            round: round.round,
+            label: round.label.trim() || `Round ${round.round}`,
+            notes: round.notes.trim(),
+            vendorQuotes: await Promise.all(
+              round.vendorQuotes.map(async (row, idx) => ({
+                vendorId: row.vendorId,
+                vendorName: row.vendorName.trim(),
+                vendorEmail: row.vendorEmail.trim(),
+                quotedPrice: Number(row.quotedPrice) || 0,
+                leadTime: row.leadTime.trim(),
+                paymentTerms: row.paymentTerms,
+                recommended: row.recommended,
+                round: round.round,
+                sortOrder: idx,
+                files: [
+                  ...(row.storedFiles || []).map((f) => ({
+                    fileName: f.fileName,
+                    mimeType: f.mimeType || null,
+                    storedName: f.storedName,
+                  })),
+                  ...(await Promise.all(row.files.map((file) => fileToAttachmentPayload(file)))),
+                ],
+              }))
+            ),
+          }))
+        );
+      }
+
+      if (skipApproval && !isManualMode) {
+        payload.skipApproval = true;
+        payload.legacyImport = true;
+        if (importedPoNumber.trim()) payload.poNumber = importedPoNumber.trim();
+        if (importedVendorName.trim()) payload.vendorName = importedVendorName.trim();
+        if (importedVendorEmail.trim()) payload.vendorEmail = importedVendorEmail.trim();
+      }
+
+      // Same Vendor Master details as Create PO preview / live PDF (address, GST, PAN, phone, contact email)
+      await applyMasterVendorToPayload(payload);
+
+      if (isEditMode && editPoId) {
+        const isSuperAdminUser = Boolean(user?.isSuperAdmin || user?.role === 'Super Admin');
+        const allowAdminDocEdit =
+          poEditStatus &&
+          poEditStatus !== 'draft' &&
+          (fromParam === 'track-po' ||
+            fromParam === 'create-po' ||
+            fromParam === 'purchase-requests' ||
+            isSuperAdminUser ||
+            user?.role === 'SCM Manager');
+        if (allowAdminDocEdit) {
+          payload.adminEdit = true;
+          payload.changeSummary =
+            payload.changeSummary ||
+            `PO updated by ${user?.role || 'admin'} from ${fromParam || 'create-po'}`;
+        }
+        // Send Back → Edit Draft → Send for Approval → SCM Manager (Rajeev)
+        if (poEditStatus === 'draft' || !poEditStatus) {
+          payload.resubmitForApproval = true;
+          payload.saveAsDraft = false;
+          delete payload.adminEdit;
+        }
+        const updateRes = await poApi.update(editPoId, payload);
+        if (poEditStatus === 'draft' || !poEditStatus) {
+          const saved = updateRes.data as { poNumber?: string } | undefined;
+          if (saved?.poNumber) setPoNumber(String(saved.poNumber));
+          const mgr = scmManager?.name || 'Rajeev V';
+          alert(
+            updateRes.message ||
+              (user?.role === 'Requester'
+                ? `${saved?.poNumber || poNumber || docLabel} sent to Mugesh for sign and upload`
+                : `${saved?.poNumber || poNumber || docLabel} sent to SCM Manager (${mgr}) for sign / approval`)
+          );
+          navigate('/scm/create-po');
+          return;
+        }
+        alert(updateRes.message || `${poNumber || docLabel} saved successfully`);
+        navigate(editReturnPath);
+        return;
+      }
+
+      // After Save Draft, send must promote that draft and only then assign official PO number
+      if (createdPoId) payload.poId = createdPoId;
+      // Always ask server to route Send for Approval to SCM Manager (Rajeev)
+      payload.resubmitForApproval = true;
+      payload.saveAsDraft = false;
+
+      const res = isManualPoFlow && !isEditMode
+        ? await poApi.createManual(payload)
+        : await poApi.create(numericPrId!, payload);
+      const data = res.data as { poNumber: string; id: number; statusRaw?: string; status?: string };
+      setPoNumber(data.poNumber);
+      setCreatedPoId(data.id);
+      const statusAfter = String(data.statusRaw || data.status || '').toLowerCase();
+      if (statusAfter === 'pending_approval' || statusAfter === 'pendingapproval') {
+        const mgr = scmManager?.name || 'Rajeev V';
+        alert(
+          res.message ||
+            (user?.role === 'Requester'
+              ? `${data.poNumber || docLabel} sent to Mugesh for sign and upload`
+              : `${data.poNumber || docLabel} sent to SCM Manager (${mgr}) for sign / approval`)
+        );
+      }
+      try {
+      const blob = await poApi.fetchPdfBlob(data.id);
+      if (pdfPreviewUrl) URL.revokeObjectURL(pdfPreviewUrl);
+      setPdfPreviewUrl(URL.createObjectURL(blob));
+      setPageMode('pdf');
+      } catch (pdfErr) {
+        // PO created successfully; PDF may still be regenerating
+        setShowSuccessModal(true);
+        alert(
+          pdfErr instanceof Error
+            ? `PO created, but PDF could not be opened: ${pdfErr.message}`
+            : 'PO created, but PDF could not be opened'
+        );
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to create PO');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const fmt = (n: number) =>
+    formatMoney(n, currency, { maximumFractionDigits: 0 });
+
+  const isWorkOrder = documentType === 'work_order';
+  const docLabel = isWorkOrder ? 'Work Order' : 'Purchase Order';
+  const docNoLabel = isWorkOrder ? 'WO No' : 'PO No';
+
+  if (!numericPrId && !isEditMode && !isManualMode) {
+    return (
+      <DashboardLayout>
+        <div className="tasks-fx po-fx min-h-full font-sans text-[#0F172A]">
+          <section
+            className="po-hero po-hero-v2"
+            onMouseMove={(e) => {
+              // subtle parallax: art/halo drift a few px toward the cursor
+              const r = e.currentTarget.getBoundingClientRect();
+              e.currentTarget.style.setProperty('--px', String((e.clientX - r.left) / r.width - 0.5));
+              e.currentTarget.style.setProperty('--py', String((e.clientY - r.top) / r.height - 0.5));
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.setProperty('--px', '0');
+              e.currentTarget.style.setProperty('--py', '0');
+            }}
+          >
+            <div className="po-stage" aria-hidden="true">
+              <span className="po-halo" />
+              <span className="po-orbit">
+                <i /><i /><i />
+              </span>
+              <span className="po-art" />
+              <span className="po-spark s1">✦</span>
+              <span className="po-spark s2">✦</span>
+              <span className="po-spark s3">✦</span>
+            </div>
+            <span className="po-sweep" aria-hidden="true" />
+            <div className="tfx-bubbles" aria-hidden="true">
+              <i /><i /><i /><i /><i /><i /><i />
+            </div>
+            <div className="po-hero-inner">
+              <div className="po-hero-text">
+                <nav className="po-crumbs" aria-label="Breadcrumb">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      navigate(
+                        user ? getRoleHomePath(user.role, user.navigation, user.email) : '/'
+                      )
+                    }
+                  >
+                    Dashboard
+                  </button>
+                  <i className="ri-arrow-right-s-line" aria-hidden />
+                  <span>PO/WO Workspace</span>
+                </nav>
+                <h1>
+                  PO/WO <span className="po-grad">Workspace</span>
+                </h1>
+                <p>
+                  {user?.role === 'Requester'
+                    ? 'Create the purchase order when your PR is ready for you'
+                    : 'Create a purchase order or work order from a ready PR, or start a manual PO'}
+                </p>
+              </div>
+              {user?.role !== 'Requester' && (
+                <div className="po-hero-actions">
+                  <button
+                    type="button"
+                    onClick={() => navigate('/scm/create-po?manual=1')}
+                    className="tfx-btn secondary"
+                  >
+                    <i className="ri-file-add-line"></i>
+                    Manual PO (No PR)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => workspacePanelRef.current?.openImport()}
+                    className="tfx-btn secondary"
+                  >
+                    <i className="ri-upload-2-line"></i>
+                    Import
+                  </button>
+                  <button type="button" onClick={downloadPoImportSampleCsv} className="tfx-btn primary">
+                    <i className="ri-download-2-line"></i>
+                    Sample CSV
+                  </button>
+                </div>
+              )}
+            </div>
+          </section>
+          <div className="po-body">
+            <PurchaseRequestsPanel ref={workspacePanelRef} />
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (loading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-96 text-gray-500">Loading PR details...</div>
+      </DashboardLayout>
+    );
+  }
+
+  if (pageMode === 'pdf' && pdfPreviewUrl && createdPoId) {
+    return (
+      <DashboardLayout>
+        <div className="min-h-screen bg-gray-100 flex flex-col">
+          <div className="bg-white border-b px-6 py-4 flex items-center justify-between">
+            <div>
+              <h1 className="text-lg font-bold text-gray-900">{poNumber}</h1>
+              <p className="text-sm text-gray-500">
+                {user?.role === 'Requester'
+                  ? 'Refex PO document — sent to Mugesh for sign and upload'
+                  : 'Refex PO document — sent for SCM Manager approval'}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => navigate('/scm/create-po')} className="px-4 py-2 border border-gray-300 rounded-lg text-sm">
+                Back to Create PO
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    setPdfDownloading(true);
+                    const blob = await poApi.fetchPdfBlob(createdPoId);
+                    triggerBlobDownload(blob, poPdfDownloadFileName(poNumber, 'final'));
+                  } catch (err) {
+                    alert(err instanceof Error ? err.message : 'Could not download PDF');
+                  } finally {
+                    setPdfDownloading(false);
+                  }
+                }}
+                disabled={pdfDownloading}
+                className="px-4 py-2 bg-[#1E88E5] text-white rounded-lg text-sm font-medium cursor-pointer disabled:opacity-50"
+              >
+                {pdfDownloading ? 'Preparing…' : 'Download PDF'}
+              </button>
+            </div>
+          </div>
+          <iframe title="PO PDF Preview" src={pdfPreviewUrl} className="flex-1 w-full min-h-[calc(100vh-120px)] border-0" />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (!pr || loadError) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-96">
+          <div className="text-center">
+            <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <i className="ri-error-warning-line text-3xl text-amber-500"></i>
+            </div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">
+              {isEditMode ? 'Purchase Order Not Found' : 'Purchase Request Not Found'}
+            </h2>
+            <p className="text-gray-500 text-sm mb-6">{loadError || "The PR you're trying to create a PO for doesn't exist."}</p>
+            <button
+              onClick={() => navigate(isEditMode ? editReturnPath : '/scm/create-po')}
+              className="px-5 py-2.5 bg-[#1E88E5] text-white rounded-lg hover:bg-[#1565C0] transition-colors cursor-pointer whitespace-nowrap text-sm font-medium"
+            >
+              {isBuyerVerifyEdit ? 'Back to Approved PO verification' : isEditMode ? 'Back' : 'Back to Create PO'}
+            </button>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  const canSaveDraft =
+    !isEditMode ||
+    poEditStatus === 'draft' ||
+    (isEditMode && !poEditStatus && (fromParam === 'create-po' || fromParam === 'track-po'));
+  const isPendingManagerApproval =
+    poEditStatus === 'pending_approval' || poEditStatus === 'pendingapproval';
+  const isManagerPoReview =
+    user?.role === 'SCM Manager' && isEditMode && isPendingManagerApproval;
+  /** Buyer already sent — locked until manager acts. Super Admin can still save via admin edit. */
+  const isBuyerAwaitingManager =
+    isEditMode &&
+    isPendingManagerApproval &&
+    !isManagerPoReview &&
+    user?.role === 'SCM Buyer' &&
+    !user?.isSuperAdmin;
+  const activePrId = pr?.id || numericPrId || null;
+  const isBuyerCreatePoSendBack =
+    (user?.role === 'SCM Buyer' || user?.role === 'Super Admin') &&
+    Boolean(activePrId) &&
+    !isManualMode &&
+    !isBuyerVerifyEdit &&
+    !isManagerPoReview &&
+    poEditStatus !== 'pending_approval' &&
+    poEditStatus !== 'pendingapproval' &&
+    poEditStatus !== 'pending_buyer_verify' &&
+    poEditStatus !== 'pending_buyerverify';
+
+  const handleManagerPoAction = async (remarks: string) => {
+    if (!editPoId || !managerModal) return;
+    try {
+      if (managerModal === 'sendback') {
+        const res = await poApi.sendBack(editPoId, remarks);
+        alert(res.message || `${poNumber || 'PO'} sent back to SCM Buyer for revision`);
+      } else {
+        await poApi.reject(editPoId, remarks);
+        alert(`${poNumber || 'PO'} has been rejected`);
+      }
+      setManagerModal(null);
+      navigate(editReturnPath);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Action failed');
+      throw err;
+    }
+  };
+
+  const handleBuyerSendBack = async (remarks: string, options?: { returnTo?: string }) => {
+    if (!activePrId || !options?.returnTo) {
+      throw new Error('Select a previous stage to send back to');
+    }
+    const res = await prApi.adminSendBack(activePrId, {
+      returnTo: options.returnTo,
+      remarks: remarks.trim(),
+    });
+    setShowBuyerSendBack(false);
+    alert(res.message || 'PR sent back successfully');
+    navigate('/scm/create-po');
+  };
+
+  const activeCancelPoId = Number(editPoId || createdPoId || 0) || null;
+  const canCancelPo =
+    Boolean(activeCancelPoId) && String(poEditStatus || '').toLowerCase() !== 'cancelled';
+
+  const openCancelPoModal = () => {
+    setCancelReason('');
+    setCancelFiles([]);
+    setCancelError('');
+    setShowCancelPoModal(true);
+  };
+
+  const closeCancelPoModal = () => {
+    if (cancelSubmitting) return;
+    setShowCancelPoModal(false);
+    setCancelReason('');
+    setCancelFiles([]);
+    setCancelError('');
+  };
+
+  const submitCancelPo = async () => {
+    if (!activeCancelPoId) return;
+    const reason = cancelReason.trim();
+    if (reason.length < 5) {
+      setCancelError('Please enter cancellation reason (minimum 5 characters)');
+      return;
+    }
+    setCancelSubmitting(true);
+    setCancelError('');
+    try {
+      const attachments = await Promise.all(
+        cancelFiles.map(async (file) => {
+          const payload = await fileToAttachmentPayload(file);
+          return { fileName: payload.fileName, fileData: payload.data };
+        })
+      );
+      await poApi.cancel(activeCancelPoId, { reason, attachments });
+      closeCancelPoModal();
+      navigate(editReturnPath || '/scm/create-po');
+    } catch (err) {
+      setCancelError(err instanceof Error ? err.message : 'Failed to cancel PO');
+    } finally {
+      setCancelSubmitting(false);
+    }
+  };
+
+  const nextApproverName = requesterSendsToMugesh ? 'Mugesh' : scmManager?.name || 'Rajeev V';
+  const nextApproverEmail = requesterSendsToMugesh
+    ? 'mugesh.m@refex.co.in'
+    : scmManager?.email || '';
+  const nextApproverRole = requesterSendsToMugesh ? 'Mugesh' : 'SCM Manager';
+
+  return (
+    <DashboardLayout>
+      <div className="min-h-full">
+        {/* ── Top Header Bar ── */}
+        <div className="sticky top-0 z-20 bg-white border-b border-gray-200">
+          <div className="px-3 sm:px-6 lg:px-8 py-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => navigate(isEditMode ? editReturnPath : '/scm/create-po')}
+                className="w-8 h-8 flex items-center justify-center rounded-md border border-gray-200 bg-white hover:bg-gray-50 transition-colors cursor-pointer text-gray-500 shrink-0"
+                aria-label="Back"
+              >
+                <i className="ri-arrow-left-line"></i>
+              </button>
+              <h1 className="text-lg font-bold text-slate-900 whitespace-nowrap">
+                {isEditMode ? `Edit ${docLabel}` : `Create ${docLabel}`}
+              </h1>
+              <span
+                className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold shrink-0 ${
+                  isBuyerVerifyEdit
+                    ? 'bg-blue-100 text-blue-800'
+                    : isEditMode && poEditStatus && poEditStatus !== 'draft'
+                      ? 'bg-amber-100 text-amber-800'
+                      : 'bg-orange-100 text-orange-700'
+                }`}
+              >
+                {isBuyerVerifyEdit
+                  ? 'Approved PO verification'
+                  : isEditMode && poEditStatus && poEditStatus !== 'draft'
+                    ? 'Pending Review'
+                    : 'Draft'}
+              </span>
+              {draftSaved && (
+                <span className="flex items-center gap-1 text-xs text-emerald-600 font-medium">
+                  <i className="ri-checkbox-circle-fill"></i> Saved
+                </span>
+              )}
+              {autoSaving && !draftSaved && (
+                <span className="flex items-center gap-1 text-xs text-gray-500 font-medium">
+                  <i className="ri-loader-4-line animate-spin"></i> Saving…
+                </span>
+              )}
+
+              <div className="flex items-center gap-2 ml-auto flex-wrap justify-end">
+                {isEditMode && (
+                  <input
+                    type="text"
+                    value={changeSummary}
+                    onChange={(e) => setChangeSummary(e.target.value)}
+                    placeholder="Change summary"
+                    className="px-3 py-1.5 border border-gray-300 rounded-md text-sm w-36 bg-white"
+                  />
+                )}
+                {isManagerPoReview && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setManagerModal('reject')}
+                      disabled={submitting}
+                      className="px-3.5 py-1.5 border border-red-200 bg-white text-red-700 rounded-md hover:bg-red-50 transition-colors cursor-pointer whitespace-nowrap text-sm font-medium disabled:opacity-50"
+                    >
+                      <i className="ri-close-circle-line mr-1"></i>
+                      Reject
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setManagerModal('sendback')}
+                      disabled={submitting}
+                      className="px-3.5 py-1.5 border border-orange-200 bg-white text-orange-700 rounded-md hover:bg-orange-50 transition-colors cursor-pointer whitespace-nowrap text-sm font-medium disabled:opacity-50"
+                    >
+                      <i className="ri-arrow-go-back-line mr-1"></i>
+                      Send Back
+                    </button>
+                  </>
+                )}
+                {isBuyerCreatePoSendBack && (
+                  <button
+                    type="button"
+                    onClick={() => setShowBuyerSendBack(true)}
+                    disabled={submitting}
+                    className="px-3.5 py-1.5 border border-orange-200 bg-white text-orange-700 rounded-md hover:bg-orange-50 transition-colors cursor-pointer whitespace-nowrap text-sm font-medium disabled:opacity-50"
+                  >
+                    <i className="ri-arrow-go-back-line mr-1"></i>
+                    Send Back
+                  </button>
+                )}
+                {canSaveDraft && (
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveDraft()}
+                    disabled={submitting}
+                    className="px-3.5 py-1.5 border border-gray-300 bg-white text-slate-800 rounded-md hover:bg-gray-50 transition-colors cursor-pointer whitespace-nowrap text-sm font-medium disabled:opacity-50"
+                  >
+                    {submitting ? 'Saving...' : 'Save as Draft'}
+                  </button>
+                )}
+                {canCancelPo && (
+                  <button
+                    type="button"
+                    onClick={openCancelPoModal}
+                    disabled={submitting || cancelSubmitting}
+                    className="px-3.5 py-1.5 border border-rose-300 bg-white text-rose-700 rounded-md hover:bg-rose-50 transition-colors cursor-pointer whitespace-nowrap text-sm font-medium disabled:opacity-50"
+                    title={`Cancel this ${docLabel}`}
+                  >
+                    <i className="ri-close-circle-line mr-1"></i>
+                    Cancel {docLabel === 'Work Order' ? 'WO' : 'PO'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('preview')}
+                  className="px-3.5 py-1.5 border border-gray-300 bg-white text-slate-800 rounded-md hover:bg-gray-50 transition-colors cursor-pointer whitespace-nowrap text-sm font-medium"
+                >
+                  Preview {docLabel === 'Work Order' ? 'WO' : 'PO'}
+                </button>
+                {(editPoId || numericPrId || isManualPoFlow) && (
+                  <button
+                    type="button"
+                    onClick={() => void handleOpenLivePdf()}
+                    disabled={pdfDownloading || submitting}
+                    className="px-3.5 py-1.5 border border-gray-300 bg-white text-slate-800 rounded-md hover:bg-gray-50 transition-colors text-sm font-medium inline-flex items-center gap-1.5 whitespace-nowrap disabled:opacity-50"
+                  >
+                    <i className="ri-file-pdf-line"></i>
+                    {pdfDownloading ? 'PDF…' : 'PDF'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleSendForApproval}
+                  disabled={submitting || isBuyerAwaitingManager}
+                  className="px-3.5 py-1.5 bg-[#1E88E5] text-white rounded-md hover:bg-[#1565C0] transition-colors cursor-pointer whitespace-nowrap text-sm font-semibold flex items-center gap-1.5 disabled:opacity-60"
+                >
+                  <i className={isEditMode ? 'ri-save-3-line' : 'ri-send-plane-fill'}></i>
+                  {submitting
+                    ? 'Saving...'
+                    : isBuyerAwaitingManager
+                      ? 'With SCM Manager'
+                      : isEditMode && poEditStatus === 'draft'
+                        ? 'Send for Approval'
+                      : isEditMode
+                      ? 'Save'
+                      : skipApproval
+                        ? `Create ${docLabel === 'Work Order' ? 'WO' : 'PO'}`
+                        : 'Send for Approval'}
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
+              <label className="inline-flex items-center gap-1.5 min-w-0">
+                <span className="shrink-0 font-medium">{docNoLabel}</span>
+                <input
+                  type="text"
+                  value={poNumber}
+                  onChange={(e) => handlePoNumberChange(e.target.value)}
+                  onBlur={() => setPoNumber((v) => v.trim().slice(0, 40))}
+                        placeholder="Select entity to auto-fill"
+                        maxLength={40}
+                        className="font-semibold text-[#1565C0] bg-white border border-gray-200 rounded-md px-2 py-1 w-[13rem] text-xs focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+                />
+              </label>
+              <span>
+                Date: <span className="font-semibold text-slate-700">{formatPoDateLabel(poDate)}</span>
+              </span>
+              <span className="truncate max-w-[220px]" title={isManualPoFlow ? manualVendorName : pr.recommendedVendor}>
+                Vendor:{' '}
+                <span className="font-semibold text-slate-700">
+                  {isManualPoFlow ? manualVendorName || '—' : pr.recommendedVendor}
+                </span>
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-0 px-3 sm:px-6 lg:px-8">
+            {(
+              [
+                { key: 'details' as const, n: 1, title: 'Basic Details', sub: 'PO number, site & vendor' },
+                { key: 'lineItems' as const, n: 2, title: 'Line Items', sub: 'Qty, price & GST' },
+                { key: 'terms' as const, n: 3, title: 'Terms & Conditions', sub: 'Letterhead, clauses & annexure' },
+                { key: 'preview' as const, n: 4, title: 'Preview', sub: 'Review before send' },
+              ]
+            ).map((step) => {
+              const active = activeTab === step.key;
+              return (
+                <button
+                  key={step.key}
+                  type="button"
+                  onClick={() => setActiveTab(step.key)}
+                  className={`flex items-center gap-2.5 px-2 sm:px-3 pb-2.5 pt-1 cursor-pointer border-b-[3px] transition-colors text-left ${
+                    active ? 'border-[#1E88E5] bg-[#E3F2FD]/40' : 'border-transparent hover:bg-gray-50'
+                  }`}
+                >
+                  <span
+                    className={`w-7 h-7 flex items-center justify-center rounded-full text-xs font-bold shrink-0 ${
+                      active ? 'bg-[#1E88E5] text-white' : 'bg-gray-200 text-slate-500'
+                    }`}
+                  >
+                    {step.n}
+                  </span>
+                  <span className="min-w-0">
+                    <span className={`block text-sm font-semibold leading-tight ${active ? 'text-[#1565C0]' : 'text-slate-600'}`}>
+                      {step.title}
+                    </span>
+                    <span className={`hidden sm:block text-[11px] mt-0.5 leading-tight ${active ? 'text-[#1E88E5]' : 'text-gray-400'}`}>
+                      {step.sub}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="px-3 sm:px-6 lg:px-8 py-4 sm:py-6">
+          {/* ══════════════════════════════════════════
+              TAB 1 — BASIC DETAILS
+          ══════════════════════════════════════════ */}
+          {activeTab === 'details' && (
+            <div className="space-y-5">
+
+                {/* Basic Details — PR, PO number, site & delivery */}
+                <div className="bg-white rounded-xl border border-gray-200 p-5 sm:p-6 shadow-sm space-y-6">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 flex items-center justify-center bg-[#E3F2FD] rounded-lg">
+                      <i className="ri-file-text-line text-[#1E88E5]"></i>
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-gray-900">Basic Details</h3>
+                      <p className="text-xs text-gray-500">
+                        {docLabel} number, PR reference, site and delivery details
+                      </p>
+                    </div>
+                  </div>
+
+                  {isManualPoFlow && (
+                    <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-4">
+                      <div>
+                        <h3 className="text-sm font-bold text-gray-900">Entity for document number</h3>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          Select entity first for PO / WO numbering — then send to SCM Manager for sign / approval
+                        </p>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                          Entity <span className="text-red-500">*</span>
+                        </label>
+                        <SearchCreateField
+                          options={entityOptions.map((ent) => ({
+                            id: ent.id,
+                            label: formatEntityLabel(ent),
+                            subLabel: ent.costCenter || undefined,
+                          }))}
+                          displayValue={
+                            selectedManualEntity ? formatEntityLabel(selectedManualEntity) : ''
+                          }
+                          selectedId={manualEntityId || null}
+                          placeholder="Search entity by code, name, cost center…"
+                          addNoun="entity"
+                          emptyHint="No entities found. Add them in Entity Master, then click here again."
+                          onOpen={() => {
+                            void loadEntityOptions();
+                          }}
+                          onSelect={(opt) => {
+                            const id = Number(opt.id);
+                            setManualEntityId(id);
+                            const selected =
+                              entityOptions.find((x) => Number(x.id) === id) ||
+                              ({
+                                id,
+                                code: '',
+                                name: String(opt.label || '').split(' — ')[0] || String(opt.label || ''),
+                                costCenter: opt.subLabel || null,
+                                status: 'active',
+                              } as EntityRecord);
+                            setManualEntitySnapshot(selected);
+                            if (
+                              String(selected.code || '').trim().toUpperCase() === 'RGML' ||
+                              String(selected.name || '').toLowerCase().includes('green mobility')
+                            ) {
+                              setManualPrDetails((prev) => {
+                                const current = prev.department.trim();
+                                if (current && current.toUpperCase() !== 'CBG') return prev;
+                                return { ...prev, department: 'IT & Technology' };
+                              });
+                            }
+                            setPr((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    entityId: selected.id,
+                                    entityName: selected.name,
+                                    entityCode: selected.code,
+                                  }
+                                : prev
+                            );
+                            if (!entity) setEntity(selected.name);
+                            const locName = poTermsDetails.locationName || '';
+                            const entityLoc =
+                              pickEntityLocation(
+                                selected,
+                                locName,
+                                selected.locations?.find((l) => l.gstNo)?.gstNo
+                              ) ||
+                              (selected.locations || []).find(
+                                (l) =>
+                                  String(l.siteAddress || '').trim() ||
+                                  String(l.billingAddress || '').trim()
+                              ) ||
+                              null;
+                            if (entityLoc) {
+                              const billingHtml = invoicingHtmlFromEntityLocation(entityLoc);
+                              const site = String(entityLoc.siteAddress || '').trim();
+                              setPoTermsDetails((prev) => ({
+                                ...prev,
+                                invoicingAddress: billingHtml || prev.invoicingAddress,
+                                siteAddress: site || prev.siteAddress,
+                                buyerGstNo: String(entityLoc.gstNo || prev.buyerGstNo || '').trim(),
+                              }));
+                              if (site) setDeliveryAddress(site);
+                            }
+                          }}
+                          onClear={() => {
+                            setManualEntityId('');
+                            setManualEntitySnapshot(null);
+                            setPr((prev) =>
+                              prev
+                                ? { ...prev, entityId: null, entityName: '', entityCode: '' }
+                                : prev
+                            );
+                          }}
+                          onCreate={async (name) => {
+                            const created = await masterApi.chatCreateEntity({ name });
+                            const ent = created.data;
+                            setEntityOptions((prev) => {
+                              if (prev.some((e) => Number(e.id) === Number(ent.id))) return prev;
+                              return [...prev, ent].sort((a, b) => a.name.localeCompare(b.name));
+                            });
+                            setManualEntityId(ent.id);
+                            setManualEntitySnapshot(ent);
+                            setPr((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    entityId: ent.id,
+                                    entityName: ent.name,
+                                    entityCode: ent.code,
+                                  }
+                                : prev
+                            );
+                            if (!entity) setEntity(ent.name);
+                          }}
+                        />
+                        {entityOptions.length === 0 ? (
+                          <p className="text-xs text-amber-600 mt-1.5">
+                            No entities loaded. Add in Entity Master (status Active), then reopen this field.
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  )}
+
+                  {isManualPoFlow && (
+                    <ManualPoContextSection
+                      prDetails={manualPrDetails}
+                      onPrDetailsChange={setManualPrDetails}
+                      comparisonRounds={manualComparisonRounds}
+                      onComparisonRoundsChange={setManualComparisonRounds}
+                      vendors={masterVendors}
+                      onVendorsChange={setMasterVendors}
+                      poId={editPoId || createdPoId}
+                      currencySymbol={moneySymbol}
+                      currency={currency}
+                      prReferenceStatus={prReferenceStatus}
+                    />
+                  )}
+
+                  {!isManualPoFlow && (
+                    <div className="rounded-xl bg-gradient-to-r from-[#1E88E5] to-[#1565C0] p-4 sm:p-5 text-white">
+                      <div className="flex items-start justify-between gap-4 flex-wrap">
+                        <div>
+                          <p className="text-sky-100 text-xs font-medium uppercase tracking-wider mb-1">Purchase Request</p>
+                          <h2 className="text-lg font-bold">{pr.title}</h2>
+                          <div className="flex items-center gap-4 mt-2 text-sm text-sky-100 flex-wrap">
+                            <span className="flex items-center gap-1.5"><i className="ri-hashtag"></i>{pr.prNumber}</span>
+                            {(pr.entityCode || pr.entityName) && (
+                              <span className="flex items-center gap-1.5">
+                                <i className="ri-building-2-line"></i>
+                                {pr.entityCode ? `${pr.entityCode}${pr.entityName ? ` — ${pr.entityName}` : ''}` : pr.entityName}
+                              </span>
+                            )}
+                            <span className="flex items-center gap-1.5"><i className="ri-building-line"></i>{pr.department}</span>
+                            <span className="flex items-center gap-1.5"><i className="ri-user-line"></i>{pr.requester}</span>
+                            <span className="flex items-center gap-1.5"><i className="ri-calendar-line"></i>Required: {pr.requiredDate}</span>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sky-100 text-xs mb-1">Estimated Value</p>
+                          <p className="text-2xl font-bold">{fmt(pr.amount ?? grandTotal)}</p>
+                          <span className="inline-block mt-1 px-2 py-0.5 bg-white/20 rounded-full text-xs font-medium">
+                            {pr.requestType}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="rounded-lg border border-[#BBDEFB] bg-[#E3F2FD]/40 p-4">
+                    <div className="flex items-start gap-3 mb-3">
+                      <div className="w-9 h-9 flex items-center justify-center bg-[#E3F2FD] rounded-lg shrink-0">
+                        <i className="ri-search-eye-line text-[#1E88E5] text-lg"></i>
+                      </div>
+                      <div className="min-w-0">
+                        <h4 className="text-sm font-bold text-gray-900">
+                          Load {docLabel} Details by Number
+                        </h4>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          Enter an existing {docNoLabel} to auto-fill delivery, terms, letterhead, line items and POD fields
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        value={referencePoNumber}
+                        onChange={(e) => {
+                          setReferencePoNumber(e.target.value);
+                          setReferencePoError('');
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            void loadPoDetailsByNumber();
+                          }
+                        }}
+                        placeholder="e.g. PO-RIL-2026-27-0001"
+                        className="flex-1 px-3.5 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5] bg-white"
+                        disabled={referencePoLoading}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void loadPoDetailsByNumber()}
+                        disabled={referencePoLoading || !referencePoNumber.trim()}
+                        className="px-4 py-2.5 bg-[#1E88E5] text-white rounded-lg hover:bg-[#1565C0] transition-colors cursor-pointer text-sm font-semibold whitespace-nowrap disabled:opacity-60 flex items-center justify-center gap-2"
+                      >
+                        {referencePoLoading ? (
+                          <>
+                            <i className="ri-loader-4-line animate-spin"></i> Loading...
+                          </>
+                        ) : (
+                          <>
+                            <i className="ri-download-cloud-2-line"></i> Auto Fill
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    {referencePoError && (
+                      <p className="mt-2 text-xs text-red-600 flex items-center gap-1.5">
+                        <i className="ri-error-warning-line"></i>
+                        {referencePoError}
+                      </p>
+                    )}
+                    {referencePoLoaded && !referencePoError && (
+                      <p className="mt-2 text-xs text-emerald-700 flex items-center gap-1.5 flex-wrap">
+                        <i className="ri-checkbox-circle-fill"></i>
+                        Loaded <span className="font-semibold">{referencePoLoaded.poNumber}</span>
+                        {referencePoLoaded.vendorName ? (
+                          <span className="text-gray-500">· {referencePoLoaded.vendorName}</span>
+                        ) : null}
+                        {referencePoLoaded.prNumber ? (
+                          <span className="text-gray-500">· PR {referencePoLoaded.prNumber}</span>
+                        ) : null}
+                        {referencePoLoaded.grandTotal ? (
+                          <span className="text-gray-500">· {fmt(referencePoLoaded.grandTotal)}</span>
+                        ) : null}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-2 border-t border-gray-100">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                        {docNoLabel}
+                      </label>
+                      <input
+                        type="text"
+                        value={poNumber}
+                        onChange={(e) => handlePoNumberChange(e.target.value)}
+                        onBlur={() => setPoNumber((v) => v.trim().slice(0, 40))}
+                        placeholder={
+                          importedPoNumber.trim()
+                            ? 'Imported number'
+                            : poNumber.toUpperCase().startsWith('DRAFT-')
+                              ? requesterSendsToMugesh
+                                ? 'Draft — edit or auto-assign on send to Mugesh'
+                                : 'Draft — edit or auto-assign on send to SCM Manager'
+                              : 'PO / WO number'
+                        }
+                        maxLength={40}
+                        className="w-full px-3.5 py-2.5 border border-[#90CAF9] rounded-lg text-sm font-semibold text-[#1565C0] focus:outline-none focus:ring-2 focus:ring-[#1E88E5] bg-[#E3F2FD]/40"
+                      />
+                      <p className="text-[11px] text-gray-500 mt-1">
+                        {poNumber.toUpperCase().startsWith('DRAFT-')
+                          ? requesterSendsToMugesh
+                            ? 'Draft number — you can edit the official PO/WO number before sending to Mugesh'
+                            : 'Draft number — you can edit the official PO/WO number before / when sending to SCM Manager'
+                          : importedPoNumber.trim()
+                            ? 'Imported / historical number'
+                            : 'This number prints on the PDF. Edit anytime before send for approval.'}
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                        {docNoLabel === 'WO No' ? 'WO Date' : 'PO Date'} <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="date"
+                        value={poDate}
+                        onChange={(e) => setPoDate(e.target.value)}
+                        className="w-full px-3.5 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5] bg-gray-50/50"
+                      />
+                    </div>
+                    <div className="sm:col-span-2 lg:col-span-3">
+                      <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                        {docLabel} Subject <span className="text-red-500">*</span>
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={poTermsDetails.subject || ''}
+                        onChange={(e) => updatePoTermsField('subject', e.target.value)}
+                        placeholder={`e.g. Supply of equipment for site / ${docLabel} description`}
+                        className="w-full px-3.5 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5] bg-gray-50/50 resize-y min-h-[72px]"
+                      />
+                      <p className="text-[11px] text-gray-500 mt-1">
+                        Subject prints on the {docLabel === 'Work Order' ? 'WO' : 'PO'} PDF.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="pt-4 border-t border-gray-100 space-y-5">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                      Site, project manager, invoicing and mailing details
+                    </p>
+                    <AddableSelect
+                        label="Site / Delivery Address"
+                        icon="ri-map-pin-2-line"
+                        multiline
+                        value={poTermsDetails.siteAddress || deliveryAddress}
+                        placeholder="Select site / delivery address"
+                        options={[
+                          ...entitySiteChoices.map((opt) => ({
+                            id: opt.id,
+                            label: opt.label,
+                          })),
+                          ...siteAddressOptions
+                            .filter(
+                              (opt) =>
+                                !entitySiteChoices.some(
+                                  (row) => row.label.trim() === String(opt.label || '').trim()
+                                )
+                            )
+                            .map((opt) => ({
+                              id: opt.id,
+                              label: opt.label,
+                            })),
+                        ]}
+                        adding={addingSiteAddress}
+                        onOpenAdd={() => {
+                          setSiteLookupError('');
+                          setAddingSiteContact(false);
+                          setAddingProjectManager(false);
+                          setAddingSiteAddress(true);
+                          setNewSiteAddress(poTermsDetails.siteAddress || deliveryAddress || '');
+                        }}
+                        onCloseAdd={() => {
+                          setAddingSiteAddress(false);
+                          setSiteLookupError('');
+                        }}
+                        onSelect={(opt) => {
+                          const saved = entitySiteChoices.find(
+                            (row) => row.id === opt.id || row.label === opt.label
+                          );
+                          const site = String(saved?.label || opt.label || '').trim();
+                          if (site) {
+                            updatePoTermsField('siteAddress', site);
+                            setDeliveryAddress(site);
+                          }
+                          if (saved?.billing) {
+                            const billingHtml = invoicingHtmlFromEntityLocation({
+                              billingAddress: saved.billing,
+                              gstNo: saved.gst,
+                            });
+                            if (billingHtml) updatePoTermsField('invoicingAddress', billingHtml);
+                          }
+                        }}
+                        addForm={
+                          <>
+                            <textarea
+                              value={newSiteAddress}
+                              onChange={(e) => setNewSiteAddress(e.target.value)}
+                              rows={4}
+                              placeholder="Enter site address"
+                              className="w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5] resize-y"
+                            />
+                            {siteLookupError && addingSiteAddress ? (
+                              <p className="text-xs text-red-600">{siteLookupError}</p>
+                            ) : null}
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAddingSiteAddress(false);
+                                  setSiteLookupError('');
+                                }}
+                                className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-md cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void saveSiteAddressLookup()}
+                                disabled={savingSiteLookup}
+                                className="px-3 py-1.5 text-xs font-semibold text-white bg-[#1E88E5] hover:bg-[#1565C0] rounded-md disabled:opacity-60 cursor-pointer"
+                              >
+                                {savingSiteLookup ? 'Saving...' : 'Add'}
+                              </button>
+                            </div>
+                          </>
+                        }
+                      />
+                        <AddableSelect
+                          label="Site Contact Person"
+                          icon="ri-user-3-line"
+                          value={poTermsDetails.siteContactPerson}
+                          placeholder="Select site contact person"
+                          options={siteContactOptions.map((opt) => ({
+                            id: opt.id,
+                            label: opt.label,
+                            subLabel: [opt.email, opt.phone].filter(Boolean).join(' · '),
+                            email: opt.email,
+                            phone: opt.phone,
+                          }))}
+                          adding={addingSiteContact}
+                          onOpenAdd={() => {
+                            setSiteLookupError('');
+                            setAddingSiteAddress(false);
+                            setAddingProjectManager(false);
+                            setAddingSiteContact(true);
+                            setNewSiteContact({
+                              label: poTermsDetails.siteContactPerson || '',
+                              email: poTermsDetails.siteContactEmail || '',
+                              phone: poTermsDetails.siteContactPhone || '',
+                            });
+                          }}
+                          onCloseAdd={() => {
+                            setAddingSiteContact(false);
+                            setSiteLookupError('');
+                          }}
+                          onSelect={(opt) => {
+                            setPoTermsDetails((prev) => ({
+                              ...prev,
+                              siteContactPerson: opt.label,
+                              siteContactEmail: opt.email || '',
+                              siteContactPhone: opt.phone || '',
+                            }));
+                          }}
+                          addForm={
+                            <>
+                              <input
+                                type="text"
+                                value={newSiteContact.label}
+                                onChange={(e) => setNewSiteContact((prev) => ({ ...prev, label: e.target.value }))}
+                                placeholder="Contact name"
+                                className="w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+                              />
+                              <input
+                                type="email"
+                                value={newSiteContact.email}
+                                onChange={(e) => setNewSiteContact((prev) => ({ ...prev, email: e.target.value }))}
+                                placeholder="Email"
+                                className="w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+                              />
+                                <input
+                                type="text"
+                                value={newSiteContact.phone}
+                                onChange={(e) => setNewSiteContact((prev) => ({ ...prev, phone: e.target.value }))}
+                                placeholder="Phone"
+                                className="w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+                              />
+                              {siteLookupError && addingSiteContact ? (
+                                <p className="text-xs text-red-600">{siteLookupError}</p>
+                              ) : null}
+                              <div className="flex items-center justify-end gap-2">
+                              <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAddingSiteContact(false);
+                                    setSiteLookupError('');
+                                  }}
+                                  className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-md cursor-pointer"
+                                >
+                                  Cancel
+                              </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void saveSiteContactLookup()}
+                                  disabled={savingSiteLookup}
+                                  className="px-3 py-1.5 text-xs font-semibold text-white bg-[#1E88E5] hover:bg-[#1565C0] rounded-md disabled:opacity-60 cursor-pointer"
+                                >
+                                  {savingSiteLookup ? 'Saving...' : 'Add'}
+                                </button>
+                              </div>
+                            </>
+                          }
+                        />
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+                        <div className="space-y-1.5">
+                          <label className="block text-xs font-semibold text-gray-700">Site Contact Person&apos;s Mail</label>
+                          <input
+                            type="email"
+                            value={poTermsDetails.siteContactEmail}
+                            onChange={(e) => updatePoTermsField('siteContactEmail', e.target.value)}
+                            className="w-full px-3.5 py-2.5 border border-gray-200 rounded-lg text-sm bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="block text-xs font-semibold text-gray-700">Site Contact Person Phone No</label>
+                          <input
+                            type="text"
+                            value={poTermsDetails.siteContactPhone}
+                            onChange={(e) => updatePoTermsField('siteContactPhone', e.target.value)}
+                            className="w-full px-3.5 py-2.5 border border-gray-200 rounded-lg text-sm bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+                          />
+                        </div>
+                  </div>
+
+                    <AddableSelect
+                      label="Project Manager at HO"
+                      icon="ri-user-star-line"
+                      value={poTermsDetails.projectManagerHo}
+                      placeholder="Select project manager"
+                      options={projectManagerOptions.map((opt) => ({
+                        id: opt.id,
+                        label: opt.label,
+                        subLabel: [opt.email, opt.phone].filter(Boolean).join(' · '),
+                        email: opt.email,
+                        phone: opt.phone,
+                      }))}
+                      adding={addingProjectManager}
+                      onOpenAdd={() => {
+                        setSiteLookupError('');
+                        setAddingSiteAddress(false);
+                        setAddingSiteContact(false);
+                        setAddingProjectManager(true);
+                        setNewProjectManager({
+                          label: poTermsDetails.projectManagerHo || '',
+                          email: poTermsDetails.projectManagerEmail || '',
+                          phone: poTermsDetails.projectManagerContact || '',
+                        });
+                      }}
+                      onCloseAdd={() => {
+                        setAddingProjectManager(false);
+                        setSiteLookupError('');
+                      }}
+                      onSelect={(opt) => {
+                        setPoTermsDetails((prev) => ({
+                          ...prev,
+                          projectManagerHo: opt.label,
+                          projectManagerEmail: opt.email || '',
+                          projectManagerContact: opt.phone || '',
+                        }));
+                      }}
+                      addForm={
+                        <>
+                          <input
+                            type="text"
+                            value={newProjectManager.label}
+                            onChange={(e) => setNewProjectManager((prev) => ({ ...prev, label: e.target.value }))}
+                            placeholder="Project manager name"
+                            className="w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+                          />
+                          <input
+                            type="email"
+                            value={newProjectManager.email}
+                            onChange={(e) => setNewProjectManager((prev) => ({ ...prev, email: e.target.value }))}
+                            placeholder="Email"
+                            className="w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+                          />
+                          <input
+                            type="text"
+                            value={newProjectManager.phone}
+                            onChange={(e) => setNewProjectManager((prev) => ({ ...prev, phone: e.target.value }))}
+                            placeholder="Phone"
+                            className="w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+                          />
+                          {siteLookupError && addingProjectManager ? (
+                            <p className="text-xs text-red-600">{siteLookupError}</p>
+                          ) : null}
+                          <div className="flex items-center justify-end gap-2">
+                      <button
+                              type="button"
+                              onClick={() => {
+                                setAddingProjectManager(false);
+                                setSiteLookupError('');
+                              }}
+                              className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-md cursor-pointer"
+                            >
+                              Cancel
+                      </button>
+                            <button
+                              type="button"
+                              onClick={() => void saveProjectManagerLookup()}
+                              disabled={savingSiteLookup}
+                              className="px-3 py-1.5 text-xs font-semibold text-white bg-[#1E88E5] hover:bg-[#1565C0] rounded-md disabled:opacity-60 cursor-pointer"
+                            >
+                              {savingSiteLookup ? 'Saving...' : 'Add'}
+                            </button>
+                        </div>
+                        </>
+                      }
+                    />
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-semibold text-gray-700">Project Manager&apos;s Contact</label>
+                              <input
+                          type="text"
+                          value={poTermsDetails.projectManagerContact}
+                          onChange={(e) => updatePoTermsField('projectManagerContact', e.target.value)}
+                          className="w-full px-3.5 py-2.5 border border-gray-200 rounded-lg text-sm bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+                        />
+                            </div>
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-semibold text-gray-700">Project Manager&apos;s Email</label>
+                        <input
+                          type="email"
+                          value={poTermsDetails.projectManagerEmail}
+                          onChange={(e) => updatePoTermsField('projectManagerEmail', e.target.value)}
+                          className="w-full px-3.5 py-2.5 border border-gray-200 rounded-lg text-sm bg-gray-50/50 focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+                        />
+                          </div>
+                        </div>
+
+                    {/* Addresses */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+                      <div className="space-y-1.5 md:col-span-2">
+                        <label className="block text-xs font-semibold text-gray-700">Invoicing Address</label>
+                        {(poTermsDetails.locationName || poTermsDetails.buyerGstNo || locationGstNo) && (
+                          <div className="rounded-lg border border-[#BBDEFB] bg-[#E3F2FD]/50 px-3 py-2 text-xs text-[#0D47A1] space-y-1 mb-1.5">
+                            {poTermsDetails.locationName && (
+                              <p>
+                                <span className="font-semibold">Location:</span> {poTermsDetails.locationName}
+                              </p>
+                            )}
+                            <p>
+                              <span className="font-semibold">GSTIN:</span>{' '}
+                              <span className="font-mono">
+                                {poTermsDetails.buyerGstNo || locationGstNo || '—'}
+                              </span>
+                            </p>
+                            {footerLogo &&
+                              (footerLogo.startsWith('data:image/') ||
+                                /^https?:\/\//i.test(footerLogo)) && (
+                                <div className="pt-1">
+                                  <p className="font-semibold mb-1">Footer</p>
+                                  <img
+                                    src={footerLogo}
+                                    alt="Location footer"
+                                    className="max-h-10 max-w-[180px] object-contain"
+                                  />
+                        </div>
+                              )}
+                      </div>
+                        )}
+                        <RichTextEditor
+                          editorKey={`inv-addr-${letterheadId || 'none'}-${letterheadLocationKey || 'none'}`}
+                          value={poTermsDetails.invoicingAddress}
+                          onChange={(html) => updatePoTermsField('invoicingAddress', html)}
+                          placeholder="Enter invoicing address. Pasted text is always normal (no bold or other fonts)."
+                          minHeight={120}
+                          plainTextOnly
+                        />
+                    </div>
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-semibold text-gray-700">Mailing Address</label>
+                        <textarea
+                          value={poTermsDetails.mailingAddress}
+                          onChange={(e) => updatePoTermsField('mailingAddress', e.target.value)}
+                          rows={3}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm bg-emerald-50/40 focus:outline-none focus:ring-2 focus:ring-[#1E88E5] resize-y"
+                        />
+                  </div>
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-semibold text-gray-700">Reason For Cancellation</label>
+                      <textarea
+                          value={poTermsDetails.reasonForCancellation}
+                          onChange={(e) => updatePoTermsField('reasonForCancellation', e.target.value)}
+                          rows={3}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm bg-emerald-50/40 focus:outline-none focus:ring-2 focus:ring-[#1E88E5] resize-y"
+                      />
+                    </div>
+                      <div className="space-y-1.5 md:col-span-2">
+                        <label className="block text-xs font-semibold text-gray-700">
+                          Quote No
+                        </label>
+                        <input
+                          type="text"
+                          value={poTermsDetails.quoteNo || ''}
+                          onChange={(e) => updatePoTermsField('quoteNo', e.target.value)}
+                          placeholder="Vendor quotation number"
+                          className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm bg-emerald-50/40 focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+                        />
+                        <p className="text-[11px] text-gray-500">
+                          Prints on the PDF header as Quote No. It is not listed in Terms &amp; Conditions.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-4 border-t border-gray-100 space-y-5">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                      Payment &amp; commercial terms
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                          Inco Terms
+                        </label>
+                        <select
+                          value={normalizeIncoterm(incoterms)}
+                          onChange={(e) => setIncoterms(e.target.value)}
+                          className="w-full px-3.5 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5] bg-gray-50/50 cursor-pointer"
+                        >
+                          {INCOTERMS_OPTIONS.map((o) => (
+                            <option key={o.code} value={o.code}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                          Mode of Shipment
+                        </label>
+                        <select
+                          value={normalizeModeOfShipment(poTermsDetails.modeOfShipment)}
+                          onChange={(e) => updatePoTermsField('modeOfShipment', e.target.value)}
+                          className="w-full px-3.5 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5] bg-gray-50/50 cursor-pointer"
+                        >
+                          {MODE_OF_SHIPMENT_OPTIONS.map((o) => (
+                            <option key={o.value || 'empty'} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                          Expected Delivery Date <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="date"
+                          value={expectedDeliveryDate}
+                          onChange={(e) => setExpectedDeliveryDate(e.target.value)}
+                          className="w-full px-3.5 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5] bg-gray-50/50"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-4 border-t border-gray-100 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 flex items-center justify-center bg-amber-50 rounded-lg">
+                        <i className="ri-sticky-note-line text-amber-600"></i>
+                      </div>
+                      <h4 className="text-sm font-bold text-gray-900">Special Instructions &amp; Notes</h4>
+                    </div>
+                    <textarea
+                      value={specialInstructions}
+                      onChange={(e) => setSpecialInstructions(e.target.value)}
+                      rows={5}
+                      placeholder="Add any special instructions, quality requirements, packaging notes, or conditions for the vendor..."
+                      className="w-full px-3.5 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5] resize-none bg-gray-50/50"
+                    />
+                    <p className="text-xs text-gray-400">{specialInstructions.length}/500 characters</p>
+                  </div>
+                </div>
+
+            </div>
+                  )}
+
+          {/* ══════════════════════════════════════════
+              TAB 2 — LINE ITEMS
+          ══════════════════════════════════════════ */}
+          {activeTab === 'lineItems' && (
+            <div className="space-y-5">
+              {/* Line Items — full width */}
+              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                <div className="px-6 py-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900">Line Items</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">{lineItems.length} item{lineItems.length !== 1 ? 's' : ''} — edit qty &amp; unit price as needed</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Currency</span>
+                      <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5 shadow-sm">
+                        {CURRENCY_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.code}
+                            type="button"
+                            onClick={() => setCurrency(opt.code)}
+                            title={opt.label}
+                            className={`px-2.5 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${
+                              currency === opt.code
+                                ? 'bg-[#1E88E5] text-white shadow-sm'
+                                : 'text-gray-600 hover:bg-gray-50'
+                            }`}
+                          >
+                            {opt.symbol} {opt.code}
+                          </button>
+                        ))}
+                        </div>
+                    </div>
+                    <span className="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-xs font-medium">
+                      {lineItems.length} Items
+                    </span>
+                    <button
+                      onClick={handleAddLineItem}
+                      className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#1E88E5] text-white rounded-lg hover:bg-[#1565C0] transition-colors cursor-pointer text-xs font-semibold whitespace-nowrap"
+                    >
+                      <i className="ri-add-line text-sm"></i> Add Item
+                    </button>
+                  </div>
+                </div>
+
+                <div className="w-full overflow-x-auto">
+                  <table className="w-full min-w-[940px]">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-100">
+                        <th className="px-2 py-2.5 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide w-9">#</th>
+                        <th className="px-2 py-2.5 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide min-w-[140px]">Item Name</th>
+                        <th className="px-2 py-2.5 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide min-w-[200px]">Item Description</th>
+                        <th className="px-2 py-2.5 text-center text-[11px] font-semibold text-gray-500 uppercase tracking-wide w-20">Qty</th>
+                        <th className="px-2 py-2.5 text-center text-[11px] font-semibold text-gray-500 uppercase tracking-wide w-24">Unit</th>
+                        <th className="px-2 py-2.5 text-right text-[11px] font-semibold text-gray-500 uppercase tracking-wide w-36">Unit Price</th>
+                        <th className="px-2 py-2.5 text-center text-[11px] font-semibold text-gray-500 uppercase tracking-wide w-24">GST</th>
+                        <th className="px-2 py-2.5 text-right text-[11px] font-semibold text-gray-500 uppercase tracking-wide w-32">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {lineItems.map((item, idx) => (
+                        <tr key={item.id} className="hover:bg-gray-50/60 transition-colors group align-top">
+                          <td className="px-2 py-2.5 align-top">
+                            <span className="mt-1 w-6 h-6 flex items-center justify-center bg-[#E3F2FD] text-[#1565C0] rounded-full text-xs font-bold">
+                              {idx + 1}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2.5 align-top">
+                            <input
+                              type="text"
+                              value={item.itemName || ''}
+                              onChange={(e) => handleItemNameChange(item.id, e.target.value)}
+                              placeholder="Item name"
+                              className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#1E88E5] focus:border-transparent bg-gray-50"
+                            />
+                          </td>
+                          <td className="px-2 py-2.5 align-top">
+                            <RichTextEditor
+                              editorKey={`li-desc-${item.id}`}
+                              value={item.description || ''}
+                              onChange={(html) => handleDescriptionChange(item.id, html)}
+                              placeholder="Item description..."
+                              minHeight={56}
+                            />
+                          </td>
+                          <td className="px-2 py-2.5 align-top">
+                          <input
+                            type="number"
+                              min="0.01"
+                              step="0.01"
+                              inputMode="decimal"
+                              value={item.quantity}
+                              onChange={(e) => handleQtyChange(item.id, e.target.value)}
+                              className="w-full px-1.5 py-1.5 border border-gray-200 rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-[#1E88E5] focus:border-transparent bg-gray-50"
+                            />
+                          </td>
+                          <td className="px-2 py-2.5 align-top">
+                          <input
+                            type="text"
+                              value={item.unit || ''}
+                              onChange={(e) => handleUnitChange(item.id, e.target.value)}
+                              placeholder="Nos"
+                              className="w-full px-1.5 py-1.5 border border-gray-200 rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-[#1E88E5] focus:border-transparent bg-gray-50"
+                              title="Unit"
+                              aria-label="Unit"
+                            />
+                          </td>
+                          <td className="px-2 py-2.5 align-top">
+                            <div className="relative min-w-[120px]">
+                              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs font-semibold pointer-events-none">
+                                {moneySymbol}
+                              </span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                inputMode="decimal"
+                                value={item.unitPrice === 0 ? '' : item.unitPrice}
+                                placeholder="0.00"
+                                onChange={(e) => handlePriceChange(item.id, e.target.value)}
+                                className="w-full pl-7 pr-2 py-1.5 border border-gray-200 rounded-lg text-sm text-right focus:outline-none focus:ring-2 focus:ring-[#1E88E5] focus:border-transparent bg-white"
+                                title="Unit Price"
+                                aria-label="Unit Price"
+                          />
+                        </div>
+                          </td>
+                          <td className="px-2 py-2.5 align-top">
+                            <div className="relative">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="0.01"
+                                value={item.taxPercentage}
+                                onChange={(e) =>
+                                  handleTaxPercentageChange(item.id, parseFloat(e.target.value) || 0)
+                                }
+                                className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-[#1E88E5] focus:border-transparent bg-gray-50"
+                              />
+                              <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-[10px]">%</span>
+                      </div>
+                          </td>
+                          <td className="px-2 py-2.5 align-top">
+                            <div className="flex items-start justify-end gap-1.5 pt-1">
+                              <div className="text-right">
+                                <p className="text-sm font-bold text-gray-900 tabular-nums leading-6">{fmt(item.total)}</p>
+                                <p className="text-[10px] text-gray-400 tabular-nums">
+                                  Tax {fmt(calcLineTax(item.total, item.taxPercentage))}
+                                </p>
+                              </div>
+                        <button
+                          type="button"
+                                onClick={() => handleDeleteLineItem(item.id)}
+                                className="w-6 h-6 flex items-center justify-center rounded-md text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors cursor-pointer opacity-0 group-hover:opacity-100 shrink-0"
+                                title="Remove item"
+                        >
+                                <i className="ri-delete-bin-line text-sm"></i>
+                        </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {lineItems.length === 0 && (
+                        <tr>
+                          <td colSpan={8} className="px-6 py-10 text-center">
+                            <div className="flex flex-col items-center gap-2">
+                              <div className="w-10 h-10 flex items-center justify-center bg-gray-100 rounded-full">
+                                <i className="ri-file-list-3-line text-gray-400 text-lg"></i>
+                              </div>
+                              <p className="text-sm text-gray-400">No line items yet</p>
+                        <button
+                                onClick={handleAddLineItem}
+                                className="mt-1 flex items-center gap-1.5 px-4 py-2 bg-[#1E88E5] text-white rounded-lg hover:bg-[#1565C0] transition-colors cursor-pointer text-xs font-semibold whitespace-nowrap"
+                        >
+                                <i className="ri-add-line"></i> Add First Item
+                        </button>
+                      </div>
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="border-t border-gray-100 bg-gray-50/80 px-6 py-4">
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <button
+                      onClick={handleAddLineItem}
+                      className="flex items-center gap-1.5 px-3.5 py-1.5 border border-dashed border-[#42A5F5] text-[#1E88E5] rounded-lg hover:bg-[#E3F2FD] transition-colors cursor-pointer text-xs font-medium whitespace-nowrap"
+                    >
+                      <i className="ri-add-line text-sm"></i> Add Another Item
+                    </button>
+                    <div className="w-full sm:w-72 space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Subtotal</span>
+                        <span className="font-semibold text-gray-900">{fmt(subtotal)}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Tax (per line)</span>
+                        <span className="font-semibold text-gray-900">{fmt(taxAmount)}</span>
+                      </div>
+                      <div className="flex justify-between items-center pt-2 border-t border-gray-200">
+                        <span className="text-sm font-bold text-gray-900">Grand Total</span>
+                        <span className="text-lg font-bold text-[#1E88E5]">{fmt(grandTotal)}</span>
+                      </div>
+                      <div className="pt-2 border-t border-gray-100">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Amount In Words</p>
+                        <p className="text-xs text-gray-700 leading-relaxed">{amountInWords}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('terms')}
+                  className="px-5 py-2.5 bg-[#1E88E5] text-white rounded-lg hover:bg-[#1565C0] text-sm font-semibold flex items-center gap-2"
+                >
+                  Continue to Terms &amp; Conditions
+                  <i className="ri-arrow-right-line"></i>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════
+              TAB 3 — TERMS & CONDITIONS
+          ══════════════════════════════════════════ */}
+          {activeTab === 'terms' && (
+            <div className="space-y-5">
+            {/* Document Type — Purchase Order / Work Order (drives all headings below) */}
+            <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+              <label className="block text-xs font-semibold text-gray-600 mb-2">
+                Document Type <span className="text-red-500">*</span>
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    {
+                      id: 'purchase_order' as const,
+                      label: 'Purchase Order',
+                      hint: 'Number: PO-Entity-FY-####',
+                      icon: 'ri-shopping-bag-3-line',
+                    },
+                    {
+                      id: 'work_order' as const,
+                      label: 'Work Order',
+                      hint: 'Number: WO-Entity-FY-####',
+                      icon: 'ri-tools-line',
+                    },
+                  ]
+                ).map((opt) => (
+                      <button
+                    key={opt.id}
+                        type="button"
+                    onClick={() => {
+                      const nextDoc = opt.id;
+                      const nextType = alignPoTypeWithDocument(poType, nextDoc);
+                      setDocumentType(nextDoc);
+                      prevDocumentTypeRef.current = nextDoc;
+                      applyPoTypeTemplate(nextType, nextDoc);
+                    }}
+                    className={`flex-1 min-w-[160px] px-4 py-3 rounded-xl text-left border transition-colors cursor-pointer ${
+                      documentType === opt.id
+                        ? 'bg-[#1E88E5] text-white border-[#1E88E5] shadow-sm'
+                        : 'bg-white text-gray-700 border-gray-200 hover:border-[#90CAF9]'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2 text-sm font-semibold">
+                      <i className={opt.icon}></i>
+                      {opt.label}
+                    </span>
+                    <span
+                      className={`block text-[10px] font-normal mt-1 ${
+                        documentType === opt.id ? 'text-sky-100' : 'text-gray-400'
+                      }`}
+                    >
+                      {opt.hint}
+                    </span>
+                      </button>
+                ))}
+                    </div>
+              {pr.purchaseType && pr.purchaseType !== documentType && (
+                <p className="text-xs text-amber-700 mt-2 flex items-center gap-1.5">
+                  <i className="ri-information-line"></i>
+                  PR default is {pr.purchaseType === 'work_order' ? 'Work Order' : 'Purchase Order'} — document type
+                  changed for this create.
+                </p>
+                  )}
+                </div>
+
+            {/* Format type + Letterhead */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+                <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                  <div className="flex items-center justify-between gap-4 flex-wrap">
+                    <div>
+                    <h3 className="text-sm font-bold text-gray-900">{docLabel} Type</h3>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                      Terms and annexure load from {docLabel} Type Master
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 p-1 bg-gray-100 rounded-xl">
+                    {PO_TYPE_OPTIONS_BY_DOC[documentType].map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                        onClick={() => applyPoTypeTemplate(option.id, documentType)}
+                          className={`px-4 py-2 text-sm font-medium rounded-lg cursor-pointer transition-colors ${
+                            poType === option.id
+                              ? 'bg-white text-[#1565C0] shadow-sm'
+                              : 'text-gray-600 hover:text-gray-900'
+                          }`}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {letterheadLoading ? (
+                    <p className="text-xs text-gray-400 mt-3 flex items-center gap-1.5">
+                      <i className="ri-loader-4-line animate-spin"></i>
+                    Loading {PO_TYPE_OPTIONS_BY_DOC[documentType].find((o) => o.id === poType)?.label || 'template'} from PO Type Master...
+                  </p>
+                ) : templateLoadError ? (
+                  <p className="text-xs text-red-600 mt-3">{templateLoadError}</p>
+                ) : (
+                  <div className="mt-4 p-4 bg-[#E3F2FD]/50 border border-[#BBDEFB] rounded-lg text-sm text-gray-700">
+                    <p className="text-xs font-semibold text-[#1565C0] mb-1">
+                      Loaded from PO Type Master: {loadedTemplate?.title || PO_TYPE_OPTIONS_BY_DOC[documentType].find((o) => o.id === poType)?.label}
+                    </p>
+                    <p className="text-xs text-[#1565C0] mb-3">
+                      {loadedTemplate
+                        ? `${loadedTemplate.termsCount} terms · ${loadedTemplate.annexureCount} annexure`
+                        : 'Switch Short / Long to load terms and annexure'}
+                    </p>
+                    {letterheadHeader ? (
+                      <div
+                        className="prose prose-sm max-w-none text-gray-700"
+                      dangerouslySetInnerHTML={{ __html: letterheadHeader }}
+                    />
+                    ) : (
+                      <p className="text-xs text-gray-400 italic">No header text in this template</p>
+                    )}
+                  </div>
+                )}
+                </div>
+
+                <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900">Letterhead / Entity</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                    Select entity from Letterhead Master — header/footer logos and PO/WO numbering use this entity
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                      Entity <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={letterheadId === '' ? '' : String(letterheadId)}
+                      onChange={(e) => {
+                        const id = e.target.value ? Number(e.target.value) : '';
+                        if (!id) {
+                          applyLetterheadBranding(null);
+                          return;
+                        }
+                        const selected = letterheadOptions.find((o) => o.id === id) || null;
+                        applyLetterheadBranding(selected);
+                      }}
+                      className="w-full px-3.5 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5] bg-gray-50/50 cursor-pointer"
+                    >
+                      <option value="">Select letterhead entity...</option>
+                      {letterheadOptions.map((opt) => (
+                        <option key={opt.id} value={opt.id}>
+                          {opt.entity ? `${opt.name} — ${opt.entity}` : opt.name}
+                        </option>
+                      ))}
+                    </select>
+                    {!letterheadOptions.length && (
+                      <p className="text-xs text-amber-600 mt-2">
+                        No active letterheads. Add one in Masters → Letterhead Master.
+                      </p>
+                    )}
+                  </div>
+
+                {letterheadLocations.length > 0 && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                      Location <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={letterheadLocationKey}
+                      onChange={(e) => {
+                        const key = e.target.value;
+                        const idx = letterheadLocations.findIndex(
+                          (l, i) => letterheadLocKey(l, i) === key
+                        );
+                        if (idx < 0) {
+                          applyLetterheadLocation(null);
+                          return;
+                        }
+                        applyLetterheadLocation(letterheadLocations[idx], idx);
+                      }}
+                      className="w-full px-3.5 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5] bg-gray-50/50 cursor-pointer"
+                    >
+                      <option value="">Select location...</option>
+                      {letterheadLocations.map((loc, idx) => (
+                        <option key={letterheadLocKey(loc, idx)} value={letterheadLocKey(loc, idx)}>
+                          {loc.location}
+                          {loc.gstNo ? ` — ${loc.gstNo}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1.5">
+                      Selecting a location fills GSTIN, billing (invoicing) address and site address from Entity Master when matched.
+                    </p>
+                  </div>
+                )}
+
+                {(entity || headerLogo || footerLogo || locationGstNo) && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                      <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Entity</p>
+                        <p className="text-sm text-gray-800">{entity || '—'}</p>
+                      </div>
+                    <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">GSTIN</p>
+                      <p className="text-sm font-mono text-gray-800">{locationGstNo || '—'}</p>
+                    </div>
+                      <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-2">Header Logo</p>
+                        {headerLogo && (headerLogo.startsWith('data:image/') || /^https?:\/\//i.test(headerLogo)) ? (
+                          <img src={headerLogo} alt="Header logo" className="max-h-12 max-w-full object-contain" />
+                        ) : headerLogo && /<[a-z]/i.test(headerLogo) ? (
+                          <div className="text-xs" dangerouslySetInnerHTML={{ __html: headerLogo }} />
+                        ) : (
+                          <p className="text-sm text-gray-400">—</p>
+                        )}
+                      </div>
+                      <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-2">Footer Logo</p>
+                        {footerLogo && (footerLogo.startsWith('data:image/') || /^https?:\/\//i.test(footerLogo)) ? (
+                          <img src={footerLogo} alt="Footer logo" className="max-h-12 max-w-full object-contain" />
+                        ) : footerLogo && /<[a-z]/i.test(footerLogo) ? (
+                          <div className="text-xs" dangerouslySetInnerHTML={{ __html: footerLogo }} />
+                        ) : (
+                          <p className="text-sm text-gray-400">—</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+              </div>
+                </div>
+
+            {/* Terms & Annexure — headings follow Purchase Order / Work Order */}
+            <div className="w-full space-y-5">
+              {letterheadLoading && (
+                <p className="text-xs text-[#1565C0] flex items-center gap-1.5">
+                  <i className="ri-loader-4-line animate-spin"></i>
+                  Loading terms &amp; annexure from PO Type Master...
+                </p>
+              )}
+              {templateLoadError && (
+                <p className="text-xs text-red-600">{templateLoadError}</p>
+              )}
+              <ClauseTableEditor
+                title={`${docLabel} — Terms & Conditions`}
+                headerColumnLabel="Terms Header"
+                descriptionColumnLabel="Terms Description"
+                headerPlaceholder="e.g. Payment Terms"
+                descriptionPlaceholder={`Clause details (shown on ${docLabel} PDF)`}
+                emptyHint={`No terms yet — reload from master or add rows. Edits appear on the ${docLabel} PDF.`}
+                clauses={termsClauses}
+                onChange={handleTermsClausesChange}
+                onReloadFromMaster={reloadClausesFromMaster}
+                reloadDisabled={letterheadLoading}
+                docLabel={docLabel}
+                editorRevision={`${documentType}-${poType}-terms`}
+              />
+
+              <ClauseTableEditor
+                title={`${docLabel} — Annexure I (Commercial terms & conditions)`}
+                headerColumnLabel="Annexure Header"
+                descriptionColumnLabel="Annexure Description"
+                headerPlaceholder="e.g. Parties, Delivery, Payment"
+                descriptionPlaceholder={`Annexure I clause details (shown on ${docLabel} PDF)`}
+                emptyHint={`No annexure rows yet — reload from master, load from an existing PO number, or add rows.`}
+                clauses={annexureClauses}
+                onChange={handleAnnexureClausesChange}
+                onReloadFromMaster={reloadAnnexureFromMaster}
+                reloadDisabled={letterheadLoading || annexurePoLoadLoading}
+                loadFromPo={{
+                  poNumber: annexureSourcePoNumber,
+                  onPoNumberChange: (value) => {
+                    setAnnexureSourcePoNumber(value);
+                    if (annexurePoLoadError) setAnnexurePoLoadError('');
+                  },
+                  onLoad: () => void loadAnnexureFromPoNumber(),
+                  loading: annexurePoLoadLoading,
+                  error: annexurePoLoadError,
+                }}
+                docLabel={docLabel}
+                editorRevision={`${documentType}-${poType}-annexure-i`}
+              />
+
+              <AnnexureIiTableEditor
+                title={`${docLabel} — Annexure II`}
+                rows={annexureIiRows}
+                onChange={(next) => {
+                  markDraftEdited();
+                  annexureIiDraftRef.current = next;
+                  setAnnexureIiRows(next);
+                }}
+                docLabel={docLabel}
+                editorRevision={`${documentType}-${poType}-${annexureIiReloadTick}`}
+                onAddDefault={() => void addDefaultAnnexureIi()}
+                addingDefault={addingDefaultAnnexureIi}
+              />
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                onClick={() => setActiveTab('preview')}
+                className="px-6 py-3 bg-[#1E88E5] text-white rounded-xl hover:bg-[#1565C0] transition-colors cursor-pointer text-sm font-semibold flex items-center justify-center gap-2 shadow-sm"
+              >
+                <i className="ri-eye-line"></i> Preview {docLabel} Document
+              </button>
+            </div>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════
+              TAB 3 — PREVIEW
+          ══════════════════════════════════════════ */}
+          {activeTab === 'preview' && (
+            <div className="space-y-5">
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="px-5 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900">PO Document Preview</h3>
+                    <p className="text-xs text-gray-500">Refex letterhead format with line items, terms, and annexure</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={pdfDownloading || previewLoading || (!numericPrId && !editPoId && !isManualPoFlow)}
+                      onClick={async () => {
+                        try {
+                          setPdfDownloading(true);
+                          const payload = await applyMasterVendorToPayload(buildPreviewPayload());
+                          const blob =
+                            isEditMode && editPoId
+                              ? await poApi.previewPdfBlobByPoId(editPoId, payload)
+                              : isManualMode
+                                ? await poApi.previewManualPdfBlob(payload)
+                                : await poApi.previewPdfBlob(numericPrId!, payload);
+                          triggerBlobDownload(
+                            blob,
+                            poPdfDownloadFileName(poNumber || pr?.prNumber, 'preview')
+                          );
+                        } catch (err) {
+                          alert(err instanceof Error ? err.message : 'Could not download PDF');
+                        } finally {
+                          setPdfDownloading(false);
+                        }
+                      }}
+                      className="px-3 py-1.5 text-xs font-medium text-white bg-[#1E88E5] rounded-lg hover:bg-[#1565C0] cursor-pointer disabled:opacity-50"
+                    >
+                      <i className="ri-download-2-line mr-1"></i>
+                      {pdfDownloading ? 'Generating PDF…' : 'Download PDF'}
+                    </button>
+                    {isEditMode && editPoId && (
+                      <button
+                        type="button"
+                        disabled={pdfDownloading}
+                        onClick={async () => {
+                          try {
+                            setPdfDownloading(true);
+                            const blob = await poApi.fetchPdfBlob(editPoId);
+                            triggerBlobDownload(blob, poPdfDownloadFileName(poNumber, 'final'));
+                          } catch (err) {
+                            alert(err instanceof Error ? err.message : 'Could not download saved PDF');
+                          } finally {
+                            setPdfDownloading(false);
+                          }
+                        }}
+                        className="px-3 py-1.5 text-xs font-medium text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-100 cursor-pointer disabled:opacity-50"
+                      >
+                        Download saved PDF
+                      </button>
+                    )}
+                    {previewHtmlUrl && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const win = window.open(previewHtmlUrl, '_blank');
+                          win?.focus();
+                        }}
+                        className="px-3 py-1.5 text-xs font-medium text-[#1565C0] border border-[#90CAF9] rounded-lg hover:bg-[#E3F2FD] cursor-pointer"
+                      >
+                        Open in new tab
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {previewLoading ? (
+                  <div className="py-24 text-center text-gray-400">
+                    <i className="ri-loader-4-line animate-spin text-2xl"></i>
+                    <p className="mt-2 text-sm">Loading PO document preview...</p>
+                  </div>
+                ) : previewHtmlUrl ? (
+                  <iframe
+                    title="PO Document Preview"
+                    src={previewHtmlUrl}
+                    className="w-full h-[820px] border-0 bg-white"
+                  />
+                ) : pdfPreviewUrl ? (
+                  <iframe
+                    title="PO PDF Preview"
+                    src={pdfPreviewUrl}
+                    className="w-full h-[820px] border-0 bg-white"
+                  />
+                ) : (
+                  <div className="py-24 text-center text-gray-500 text-sm">
+                    <p>Could not load document preview. Check line items and try again.</p>
+                    {previewError && <p className="text-xs text-red-500 mt-2">{previewError}</p>}
+                    {isManualMode && (
+                      <p className="text-xs text-gray-400 mt-3 max-w-sm mx-auto">
+                        Enter entity, vendor comparison, and line items on PO Details. PR reference fields are optional — expand <strong>PR details</strong> if needed.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Submit Actions */}
+              <div className="flex items-center justify-between bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 flex items-center justify-center bg-[#E3F2FD] rounded-lg">
+                    <i className="ri-checkbox-circle-line text-[#1E88E5] text-xl"></i>
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-gray-900">
+                      {isEditMode ? 'Save your changes?' : 'Ready to Submit?'}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {isEditMode
+                        ? isBuyerVerifyEdit
+                          ? 'Changes update the signed PO before you verify and send to vendor'
+                          : (fromParam === 'track-po' ||
+                                fromParam === 'create-po' ||
+                                user?.role === 'Super Admin' ||
+                                user?.isSuperAdmin) &&
+                              poEditStatus &&
+                              poEditStatus !== 'draft'
+                            ? 'Admin edit — saves document changes without changing approval status'
+                          : poEditStatus === 'draft'
+                            ? requesterSendsToMugesh
+                              ? 'Saving will send this draft to Mugesh for sign and upload'
+                              : `Saving will send this draft to SCM Manager${scmManager?.name ? ` (${scmManager.name})` : ''} for approval`
+                            : 'Updated PO stays pending until you sign from PO Approval'
+                        : isManualMode
+                          ? `Manual entry — PR details and vendor quotations are stored; ${docLabel} is sent to SCM Manager for sign / approval`
+                          : skipApproval
+                            ? 'Create PO without manager approval (legacy import)'
+                            : requesterSendsToMugesh
+                              ? 'PO will be sent to Mugesh for sign and upload'
+                              : `PO will be sent to SCM Manager${scmManager?.name ? ` — ${scmManager.name}` : ''} for approval`}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  {canSaveDraft && (
+                    <button
+                      onClick={() => void handleSaveDraft()}
+                      disabled={submitting}
+                      className="px-5 py-2.5 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer text-sm font-medium whitespace-nowrap disabled:opacity-50"
+                    >
+                      <i className="ri-save-line mr-1.5"></i> {submitting ? 'Saving...' : 'Save Draft'}
+                    </button>
+                  )}
+                  <button
+                    onClick={handleSendForApproval}
+                    disabled={submitting || isBuyerAwaitingManager}
+                    className="px-6 py-2.5 bg-[#1E88E5] text-white rounded-lg hover:bg-[#1565C0] transition-colors cursor-pointer text-sm font-bold whitespace-nowrap shadow-sm flex items-center gap-2 disabled:opacity-50"
+                  >
+                    <i className={isEditMode ? 'ri-save-3-line' : 'ri-send-plane-fill'}></i>
+                    {submitting
+                      ? isEditMode ? 'Saving...' : 'Creating PO...'
+                      : isBuyerAwaitingManager
+                        ? 'With SCM Manager'
+                      : isEditMode && poEditStatus === 'draft'
+                        ? 'Send for Approval'
+                      : isEditMode
+                        ? 'Save Changes'
+                        : skipApproval
+                          ? 'Create PO Only'
+                          : 'Send for Approval'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {managerModal && editPoId && (
+        <POApprovalModal
+          isOpen
+          type={managerModal}
+          poNumber={poNumber || `PO #${editPoId}`}
+          prTitle={pr?.title || ''}
+          grandTotal={grandTotal}
+          onConfirm={handleManagerPoAction}
+          onClose={() => setManagerModal(null)}
+        />
+      )}
+
+      {showBuyerSendBack && activePrId && pr && (
+        <PostRfqApprovalModal
+          isOpen
+          action="rework"
+          prNumber={pr.prNumber}
+          title={pr.title}
+          stageLabel="Create PO — Send Back"
+          prId={activePrId}
+          useAdminTargets
+          onClose={() => setShowBuyerSendBack(false)}
+          onConfirm={handleBuyerSendBack}
+        />
+      )}
+
+      {showCancelPoModal && activeCancelPoId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white rounded-xl w-full max-w-xl p-6 shadow-xl">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">
+                  Cancel {docLabel === 'Work Order' ? 'Work Order' : 'Purchase Order'}
+                </h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  {poNumber || `${docLabel} #${activeCancelPoId}`} will be moved to Cancelled status.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeCancelPoModal}
+                className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100"
+              >
+                <i className="ri-close-line text-lg"></i>
+              </button>
+            </div>
+
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">Cancellation Reason *</label>
+            <textarea
+              rows={4}
+              value={cancelReason}
+              onChange={(e) => {
+                setCancelReason(e.target.value);
+                setCancelError('');
+              }}
+              placeholder="Enter reason for cancellation..."
+              className="w-full px-3.5 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rose-500"
+            />
+
+            <div className="mt-4">
+              <label className="block text-xs font-semibold text-gray-600 mb-1.5">Additional Attachments</label>
+              <button
+                type="button"
+                onClick={() => cancelFileRef.current?.click()}
+                className="px-3 py-2 text-xs font-semibold border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                <i className="ri-upload-2-line mr-1"></i>
+                Add files
+              </button>
+              <input
+                ref={cancelFileRef}
+                type="file"
+                className="hidden"
+                multiple
+                onChange={(e) => {
+                  const files = e.target.files;
+                  if (!files?.length) return;
+                  setCancelFiles((prev) => [...prev, ...Array.from(files)].slice(0, 5));
+                }}
+              />
+              {cancelFiles.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  {cancelFiles.map((file, idx) => (
+                    <div
+                      key={`${file.name}-${idx}`}
+                      className="flex items-center justify-between text-xs bg-gray-50 px-3 py-2 rounded-lg"
+                    >
+                      <span className="truncate pr-2">{file.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => setCancelFiles((prev) => prev.filter((_, i) => i !== idx))}
+                        className="text-rose-600 hover:text-rose-700"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {cancelError && (
+              <p className="mt-3 text-xs text-red-600 flex items-center gap-1">
+                <i className="ri-error-warning-line"></i>
+                {cancelError}
+              </p>
+            )}
+
+            <div className="mt-5 flex justify-end gap-2 border-t border-gray-100 pt-4">
+              <button
+                type="button"
+                onClick={closeCancelPoModal}
+                className="px-4 py-2 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50"
+                disabled={cancelSubmitting}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitCancelPo()}
+                disabled={cancelSubmitting}
+                className="px-4 py-2 text-sm font-semibold text-white bg-rose-600 rounded-lg hover:bg-rose-700 disabled:opacity-50"
+              >
+                {cancelSubmitting ? 'Cancelling...' : 'Confirm Cancel'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Confirm: send to SCM Manager ── */}
+      {showScmConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden">
+            <div className="bg-gradient-to-br from-[#1E88E5] to-[#1565C0] px-6 py-5">
+              <h3 className="text-lg font-bold text-white">
+                {requesterSendsToMugesh || (isEditMode && poEditStatus === 'draft')
+                  ? `Send for sign and upload to ${nextApproverName}?`
+                  : 'Send for SCM Manager approval?'}
+              </h3>
+              <p className="text-sky-100 text-sm mt-1">
+                Confirm before moving this {docLabel.toLowerCase()} to the next level
+              </p>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-700 leading-relaxed">
+                Is it okay to send this {docLabel.toLowerCase()} to the{' '}
+                <strong>next level — {nextApproverRole}</strong>
+                {requesterSendsToMugesh ? ' for sign and upload?' : ' for sign & approval?'}
+              </p>
+
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-1.5">
+                    {docNoLabel}{' '}
+                    <span className="text-[#1E88E5] normal-case font-medium">
+                      (default shown — edit only if you need a different number)
+                    </span>
+                  </label>
+                  <input
+                    type="text"
+                    value={poNumber}
+                    onChange={(e) => handlePoNumberChange(e.target.value)}
+                    onBlur={() => setPoNumber((v) => v.trim().slice(0, 40))}
+                    disabled={scmConfirmLoadingNumber || submitting}
+                    placeholder={
+                      scmConfirmLoadingNumber
+                        ? 'Loading default number…'
+                        : `Default ${docNoLabel}`
+                    }
+                    maxLength={40}
+                    className="w-full px-3.5 py-2.5 border border-[#64B5F6] rounded-lg text-sm font-bold text-[#1565C0] focus:outline-none focus:ring-2 focus:ring-[#1E88E5] bg-white disabled:bg-gray-100"
+                  />
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    {scmConfirmLoadingNumber
+                      ? 'Fetching default number…'
+                      : poNumberTouched &&
+                          poNumber.trim() &&
+                          poNumber.trim() !== scmConfirmBaselineRef.current
+                        ? `You changed the ${docNoLabel}. This exact number will print on the PDF sent to ${nextApproverRole}.`
+                        : `Default ${docNoLabel} will print on the PDF sent to ${nextApproverRole}. Change it above only if needed.`}
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-gray-200">
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Vendor</p>
+                    <p className="text-sm font-semibold text-gray-900 mt-0.5 break-words">{confirmVendorName}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">PR Number</p>
+                    <p className="text-sm font-semibold text-gray-900 mt-0.5">{confirmPrNumber}</p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Total Amount</p>
+                    <p className="text-base font-bold text-[#1565C0] mt-0.5">{fmt(grandTotal)}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-[#90CAF9] bg-[#E3F2FD]/80 p-4">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-[#1565C0] mb-2">
+                  {nextApproverRole}
+                </p>
+                {requesterSendsToMugesh ? (
+                  <>
+                    <p className="text-base font-bold text-gray-900">{nextApproverName}</p>
+                    {nextApproverEmail ? (
+                      <p className="text-sm text-[#1565C0] mt-0.5 break-all">{nextApproverEmail}</p>
+                    ) : null}
+                  </>
+                ) : (
+                  <label className="block">
+                    <span className="sr-only">SCM Manager approver</span>
+                    <select
+                      value={scmManager?.email || 'rajeev.v@refex.co.in'}
+                      onChange={(e) => {
+                        const picked = SCM_PO_APPROVERS.find((row) => row.email === e.target.value);
+                        if (picked) setScmManager({ name: picked.name, email: picked.email });
+                      }}
+                      disabled={submitting}
+                      className="w-full px-3.5 py-2.5 border border-[#64B5F6] rounded-lg text-sm font-bold text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#1E88E5]"
+                    >
+                      {SCM_PO_APPROVERS.map((row) => (
+                        <option key={row.email} value={row.email}>
+                          {row.name} — {row.email}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <p className="text-xs text-gray-500 mt-2">
+                  They will receive the approval task and email for{' '}
+                  <span className="font-semibold text-gray-700">
+                    {poNumber.trim() && !poNumber.toUpperCase().startsWith('DRAFT-')
+                      ? poNumber.trim()
+                      : `this ${docNoLabel}`}
+                  </span>
+                  .
+                </p>
+              </div>
+              <div className="flex gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowScmConfirm(false)}
+                  disabled={submitting}
+                  className="flex-1 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void executeSendForApproval()}
+                  disabled={submitting}
+                  className="flex-1 py-2.5 bg-[#1E88E5] text-white rounded-lg hover:bg-[#1565C0] text-sm font-bold disabled:opacity-50"
+                >
+                  {submitting ? 'Sending…' : `Yes, send to ${nextApproverRole}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Success Modal ── */}
+      {showSuccessModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="bg-gradient-to-br from-emerald-500 to-[#1E88E5] px-8 py-8 text-center">
+              <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                <i className="ri-checkbox-circle-fill text-4xl text-white"></i>
+              </div>
+              <h3 className="text-xl font-bold text-white">{docLabel} Created!</h3>
+              <p className="text-emerald-100 text-sm mt-1">
+                {requesterSendsToMugesh
+                  ? 'Sent to Mugesh for sign and upload'
+                  : 'Sent for SCM Manager approval'}
+              </p>
+            </div>
+            <div className="p-6">
+              <div className="bg-gray-50 rounded-xl p-4 mb-5 space-y-2.5">
+                {[
+                  { label: isWorkOrder ? 'WO Number' : 'PO Number', value: poNumber, highlight: true },
+                  { label: isWorkOrder ? 'WO Date' : 'PO Date', value: formatPoDateLabel(poDate) },
+                  { label: 'Vendor', value: isManualPoFlow ? manualVendorName : pr.recommendedVendor },
+                  { label: 'Grand Total', value: fmt(grandTotal) },
+                  { label: 'Payment Terms', value: paymentTerms },
+                ].map((row) => (
+                  <div key={row.label} className="flex justify-between text-sm">
+                    <span className="text-gray-500">{row.label}</span>
+                    <span className={`font-semibold ${row.highlight ? 'text-[#1E88E5]' : 'text-gray-900'}`}>
+                      {row.value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setShowSuccessModal(false);
+                    setPageMode('pdf');
+                  }}
+                  className="flex-1 py-2.5 bg-[#1E88E5] text-white rounded-lg hover:bg-[#1565C0] transition-colors cursor-pointer text-sm font-semibold whitespace-nowrap"
+                >
+                  View {docLabel} PDF
+                </button>
+                <button
+                  onClick={() => { setShowSuccessModal(false); navigate('/scm/create-po'); }}
+                  className="flex-1 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer text-sm font-medium whitespace-nowrap"
+                >
+                  Back to PRs
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </DashboardLayout>
+  );
+}

@@ -1,0 +1,4774 @@
+import { useState, useRef, useEffect, useMemo } from 'react';
+import { Link, useParams, useSearchParams, useNavigate } from 'react-router-dom';
+import DashboardLayout from '../../../components/feature/DashboardLayout';
+import '../../../styles/create-pr-fx.css';
+import ApprovalHistoryPanel from '../../../components/feature/ApprovalHistoryPanel';
+import { prApi, masterApi, vendorApi, fileToAttachmentPayload, ItemRecord, CategoryRecord, EntityRecord, DepartmentRecord, PrAttachmentRecord, VendorRecord, rfqApi } from '../../../services/api';
+import { useAuth } from '../../../contexts/AuthContext';
+import {
+  PM_CARD,
+  PM_ICON_CHIP_SOLID,
+  PM_PAGE_BG,
+  PM_BTN_PRIMARY,
+  PM_BTN_SECONDARY,
+} from '../../../constants/pmTheme';
+import DepartmentCombobox from './DepartmentCombobox';
+import SearchCreateField from './SearchCreateField';
+import LineItemEditorForm, {
+  LineItem,
+  createEmptyLineItem,
+  lineInclusiveAmount,
+} from './LineItemEditorForm';
+import FunctionalOwnRfqSection, {
+  FunctionalRfqVendorRow,
+  quoteHasQuotationFile,
+  localQuoteFiles,
+  savedQuoteFiles,
+  filesFromSubmission,
+} from './FunctionalOwnRfqSection';
+import UserSearchSelect from './UserSearchSelect';
+import PrBillingDeliverySection from './PrBillingDeliverySection';
+import {
+  clearCreatePrDraft,
+  CreatePrDraftSnapshot,
+  consumeCreatePrSoftResume,
+  draftContentScore,
+  hasMeaningfulCreatePrDraft,
+  markCreatePrSoftResume,
+  peekCreatePrSoftResume,
+  readCreatePrDraft,
+  startFreshCreatePr,
+  writeCreatePrDraft,
+} from './createPrDraftStorage';
+import {
+  CURRENCY_OPTIONS,
+  DEFAULT_CURRENCY,
+  CurrencyCode,
+  currencySymbol,
+  formatMoney,
+  normalizeCurrency,
+} from '../../../constants/currency';
+import {
+  PR_REQUEST_CATEGORY_OPTIONS,
+  PR_PAYMENT_TERM_OPTIONS,
+  normalizeRequestCategory,
+} from '../../../constants/prRequisition';
+import { formatPrNumberDisplay } from '../../../utils/prNumberDisplay';
+
+const ADMIN_EDIT_ROLES = [
+  'Super Admin',
+  'SCM Manager',
+  'SCM Buyer',
+  'HOD Approver',
+  'PR Manager',
+  'CFO',
+];
+
+interface AttachedFile {
+  id: string;
+  name: string;
+  size: number;
+  file?: File;
+  existingId?: number;
+}
+
+function mapServerAttachments(atts: PrAttachmentRecord[] | undefined | null): AttachedFile[] {
+  return (atts || [])
+    .filter((att) => Number(att?.id) > 0)
+    .map((att) => ({
+      id: `existing-${att.id}`,
+      name: att.fileName,
+      size: Number(att.size) || 0,
+      existingId: Number(att.id),
+    }));
+}
+
+function attachmentIdentity(file: AttachedFile) {
+  return `${String(file.name || '').trim().toLowerCase()}|${Number(file.size) || 0}`;
+}
+
+function mergeAttachedFiles(prev: AttachedFile[], incoming: AttachedFile[]): AttachedFile[] {
+  const byExisting = new Map<number, AttachedFile>();
+  const pending: AttachedFile[] = [];
+  for (const file of [...prev, ...incoming]) {
+    if (file.existingId) {
+      byExisting.set(file.existingId, { id: file.id, name: file.name, size: file.size, existingId: file.existingId });
+    } else if (file.file) {
+      pending.push(file);
+    }
+  }
+  const seen = new Set<string>();
+  const unique: AttachedFile[] = [];
+  for (const file of [...byExisting.values(), ...pending]) {
+    const key = attachmentIdentity(file);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(file);
+  }
+  return unique;
+}
+
+interface ReturnFeedback {
+  stage: string;
+  user: string;
+  role: string;
+  date: string;
+  remarks: string;
+}
+
+const FIELD_SCROLL_ORDER = [
+  'prTitle',
+  'entityId',
+  'department',
+  'requestCategory',
+  'scopeOfWork',
+  'paymentTerms',
+  'businessJustification',
+  'requiredDate',
+  'billingLocationId',
+  'billingAddress',
+  'deliveryPoc',
+  'placeOfDelivery',
+  'expectedDeliveryTimeline',
+  'approvalUserId',
+  'rfqVendors',
+  'lineItems',
+];
+
+type CreatePrTab = 'basic' | 'items' | 'vendors' | 'scm';
+
+const BILLING_ERROR_KEYS = new Set([
+  'billingLocationId',
+  'billingAddress',
+  'deliveryPoc',
+  'placeOfDelivery',
+  'expectedDeliveryTimeline',
+]);
+
+function firstErrorField(errs: Record<string, string>) {
+  return (
+    FIELD_SCROLL_ORDER.find((key) => errs[key]) ||
+    Object.keys(errs).find((key) => key.startsWith('item_')) ||
+    Object.keys(errs)[0] ||
+    null
+  );
+}
+
+function tabForErrorField(field: string | null): CreatePrTab {
+  if (!field) return 'basic';
+  if (field === 'lineItems' || field.startsWith('item_')) return 'items';
+  if (field === 'rfqVendors') return 'vendors';
+  if (
+    BILLING_ERROR_KEYS.has(field) ||
+    field === 'scopeOfWork' ||
+    field === 'paymentTerms'
+  ) {
+    return 'scm';
+  }
+  return 'basic';
+}
+
+function scrollToFirstError(errs: Record<string, string>, setTab?: (tab: CreatePrTab) => void) {
+  const first = firstErrorField(errs);
+  if (!first) return;
+  const field = first.startsWith('item_') ? 'lineItems' : first;
+  if (setTab) setTab(tabForErrorField(first));
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      document.querySelector(`[data-field="${field}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  });
+}
+
+function isReusableDraftStatus(status?: string) {
+  const st = String(status || '').toUpperCase();
+  return st === 'DRAFT' || st === 'RETURNED';
+}
+
+function isUnusablePersistError(err: unknown) {
+  const msg = err instanceof Error ? err.message : String(err || '');
+  return /no longer be edited|Only returned or draft|PR not found/i.test(msg);
+}
+
+export default function CreatePRPage() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { prId: prIdParam } = useParams<{ prId?: string }>();
+  const editPrId = prIdParam ? Number(prIdParam) : null;
+  const isEditMode = !!editPrId;
+  const wantFreshStart = !editPrId && searchParams.get('new') === '1';
+  const freshHandledRef = useRef(false);
+  const isAdminEditor = Boolean(user?.role && ADMIN_EDIT_ROLES.includes(user.role));
+  /** Admin editing any PR (including in-flight) — save via admin API, all fields unlocked */
+  const isAdminEditFlow = isEditMode && isAdminEditor;
+  const [activeTab, setActiveTab] = useState<CreatePrTab>('basic');
+
+  const [prNumber, setPrNumber] = useState(isEditMode ? '' : 'Auto on save');
+  const [prTitle, setPrTitle] = useState('');
+  const [department, setDepartment] = useState('');
+  const [entityId, setEntityId] = useState<number | ''>('');
+  const [entities, setEntities] = useState<EntityRecord[]>([]);
+  const [departments, setDepartments] = useState<DepartmentRecord[]>([]);
+  const [requestType, setRequestType] = useState<'Capex' | 'Opex' | 'Service'>('Opex');
+  const [requestCategory, setRequestCategory] = useState<'Product' | 'Service'>('Product');
+  const [projectDetail, setProjectDetail] = useState('');
+  const [specialNotes, setSpecialNotes] = useState('');
+  const [purchaseType, setPurchaseType] = useState<
+    'purchase_order' | 'work_order' | 'sass' | 'online_purchase'
+  >('purchase_order');
+  const [sassSubscriptionMode, setSassSubscriptionMode] = useState<'one_time' | 'recurring' | null>(
+    null
+  );
+  const [sassBillingFrequency, setSassBillingFrequency] = useState<
+    'monthly' | 'quarterly' | 'yearly' | null
+  >(null);
+  const [sassSubscriptionStartDate, setSassSubscriptionStartDate] = useState('');
+  const [sassSubscriptionModalOpen, setSassSubscriptionModalOpen] = useState(false);
+  const [sassSubscriptionModalStep, setSassSubscriptionModalStep] = useState<'mode' | 'frequency'>(
+    'mode'
+  );
+  const [previousPurchaseType, setPreviousPurchaseType] = useState<
+    'purchase_order' | 'work_order' | 'sass' | 'online_purchase'
+  >('purchase_order');
+  const [vendorSelection, setVendorSelection] = useState<'own' | 'scm'>('scm');
+  const [prFlow, setPrFlow] = useState<'standard' | 'functional'>('standard');
+  const [poCreationBy, setPoCreationBy] = useState<'scm' | 'requester'>('scm');
+  const [approvalUserIds, setApprovalUserIds] = useState<number[]>([]);
+  const [vendorMaster, setVendorMaster] = useState<VendorRecord[]>([]);
+  const [rfqMaxRounds, setRfqMaxRounds] = useState(1);
+  const [rfqVendors, setRfqVendors] = useState<FunctionalRfqVendorRow[]>([]);
+  const [rfqRecommendedKey, setRfqRecommendedKey] = useState<string | null>(null);
+  const [rfqRecommendedMeta, setRfqRecommendedMeta] = useState<{
+    vendorId?: string;
+    vendorName?: string;
+    vendorEmail?: string;
+  }>({});
+  const [rfqRecommendationJustification, setRfqRecommendationJustification] = useState('');
+  const [existingRfqHasQuotes, setExistingRfqHasQuotes] = useState(false);
+  const [approvalUsers, setApprovalUsers] = useState<
+    Array<{ id: number; name: string; email: string; role: string; department: string }>
+  >([]);
+  const [priority, setPriority] = useState('Medium');
+  const [currency, setCurrency] = useState<CurrencyCode>(DEFAULT_CURRENCY);
+  const [businessJustification, setBusinessJustification] = useState('');
+  const [scopeOfWork, setScopeOfWork] = useState('');
+  const [requiredDate, setRequiredDate] = useState('');
+  const [workStartDate, setWorkStartDate] = useState('');
+  const [workEndDate, setWorkEndDate] = useState('');
+  const [billingLocationId, setBillingLocationId] = useState<number | ''>('');
+  const [billingLocation, setBillingLocation] = useState('');
+  const [billingGstNo, setBillingGstNo] = useState('');
+  const [billingAddress, setBillingAddress] = useState('');
+  const [deliveryPoc, setDeliveryPoc] = useState('');
+  const [deliveryPocEmail, setDeliveryPocEmail] = useState('');
+  const [deliveryPocPhone, setDeliveryPocPhone] = useState('');
+  const [projectManagerHo, setProjectManagerHo] = useState('');
+  const [projectManagerContact, setProjectManagerContact] = useState('');
+  const [projectManagerEmail, setProjectManagerEmail] = useState('');
+  const [placeOfDelivery, setPlaceOfDelivery] = useState('');
+  const [expectedDeliveryTimeline, setExpectedDeliveryTimeline] = useState('');
+  const [paymentTerms, setPaymentTerms] = useState('');
+  const moneySymbol = currencySymbol(currency);
+  const [lineItems, setLineItems] = useState<LineItem[]>([]);
+  const [lineEditor, setLineEditor] = useState<{ mode: 'add' | 'edit'; item: LineItem } | null>(null);
+  const [deleteLineItemId, setDeleteLineItemId] = useState<string | null>(null);
+  const [masterItems, setMasterItems] = useState<ItemRecord[]>([]);
+  const [masterCategories, setMasterCategories] = useState<CategoryRecord[]>([]);
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  const attachedFilesRef = useRef<AttachedFile[]>([]);
+  attachedFilesRef.current = attachedFiles;
+  /** Stops autosave from uploading the same FSD file again while the first upload is still running. */
+  const uploadedAttachmentKeysRef = useRef<Set<string>>(new Set());
+  const [isDragging, setIsDragging] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [submitAction, setSubmitAction] = useState<'draft' | 'submit'>('draft');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
+  const [toast, setToast] = useState<{ text: string; type: 'error' | 'success' } | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+  const [createdPrNumber, setCreatedPrNumber] = useState('');
+  const [nextStepLabel, setNextStepLabel] = useState('L1 Manager Approval');
+  const [l1Manager, setL1Manager] = useState<{ name: string | null; email: string | null } | null>(null);
+  const [isLoadingL1, setIsLoadingL1] = useState(false);
+  const [isLoadingPr, setIsLoadingPr] = useState(isEditMode);
+  const [loadError, setLoadError] = useState('');
+  const [prStatus, setPrStatus] = useState('');
+  const displayPrNumber = useMemo(
+    () => formatPrNumberDisplay(prNumber, prStatus),
+    [prNumber, prStatus]
+  );
+  const [returnFeedback, setReturnFeedback] = useState<ReturnFeedback | null>(null);
+  const [approvalHistory, setApprovalHistory] = useState<
+    { stage: string; user: string; role: string; date: string; status: string; remarks: string }[]
+  >([]);
+  const [resubmitRemarks, setResubmitRemarks] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [savedDraftId, setSavedDraftId] = useState<number | null>(null);
+  const [softSaveHint, setSoftSaveHint] = useState('');
+  const [hydrateVersion, setHydrateVersion] = useState(0);
+  const skipSoftSaveRef = useRef(false);
+  const persistReadyRef = useRef(false);
+  const savingInFlightRef = useRef(false);
+  const hydrateDoneRef = useRef(false);
+  const snapshotRef = useRef<CreatePrDraftSnapshot | null>(null);
+  const pendingLineDraftRef = useRef<LineItem | null>(null);
+  const lineEditorModeRef = useRef<'add' | 'edit' | null>(null);
+  /** Synchronous draft id — avoids duplicate prApi.create while setState is pending. */
+  const savedDraftIdRef = useRef<number | null>(null);
+  const createDraftLockRef = useRef<Promise<number | null> | null>(null);
+  /** Serializes all savePR calls so one click cannot create multiple PRs. */
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  /** Blocks double-click on Yes, Submit until finished / modal closed. */
+  const submitClickLockRef = useRef(false);
+  const suppressSoftResumeRef = useRef(false);
+  const bootRedirectDoneRef = useRef(false);
+  const loadedEditPrIdRef = useRef<number | null>(null);
+  const userIdRef = useRef(user?.id);
+  userIdRef.current = user?.id;
+  const editPrIdRef = useRef(editPrId);
+  editPrIdRef.current = editPrId;
+  const savePRRef = useRef<
+    (
+      submit: boolean,
+      options?: { silent?: boolean; forceUploadFiles?: boolean; allowCreate?: boolean }
+    ) => Promise<void>
+  >(async () => undefined);
+
+  const showToast = (text: string, type: 'error' | 'success' = 'error') => {
+    const msg = String(text || '').trim();
+    if (!msg) return;
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    setToast({ text: msg, type });
+    toastTimerRef.current = window.setTimeout(() => setToast(null), type === 'error' ? 6000 : 3500);
+  };
+
+  const showSubmitError = (text: string) => {
+    const msg = String(text || '').trim() || 'Failed to save PR';
+    setSubmitError(msg);
+    showToast(msg, 'error');
+  };
+
+  const bindSavedDraftId = (id: number | null) => {
+    savedDraftIdRef.current = id && id > 0 ? id : null;
+    setSavedDraftId(savedDraftIdRef.current);
+  };
+
+  const resolvePersistPrId = (): number | null => {
+    if (editPrId && editPrId > 0) return editPrId;
+    if (savedDraftIdRef.current && savedDraftIdRef.current > 0) return savedDraftIdRef.current;
+    if (savedDraftId && savedDraftId > 0) return savedDraftId;
+    const fromSnap = Number(snapshotRef.current?.backendPrId || 0);
+    if (fromSnap > 0) {
+      savedDraftIdRef.current = fromSnap;
+      return fromSnap;
+    }
+    const stored =
+      readCreatePrDraft(user?.id, editPrId) ||
+      readCreatePrDraft(user?.id, null) ||
+      readCreatePrDraft(undefined, null) ||
+      readCreatePrDraft('anon', null);
+    const fromStore = Number(stored?.backendPrId || 0);
+    if (fromStore > 0) {
+      savedDraftIdRef.current = fromStore;
+      return fromStore;
+    }
+    return null;
+  };
+
+  const isReturned = prStatus === 'RETURNED';
+  const isPendingEditFlow =
+    isEditMode &&
+    !isAdminEditFlow &&
+    !isReturned &&
+    ['PENDING_HOD_APPROVAL', 'PENDING_PR_MANAGER_APPROVAL', 'PENDING_CFO_APPROVAL'].includes(prStatus);
+  const isResubmitFlow = isEditMode && isReturned && !isAdminEditFlow;
+  const backTo = isAdminEditFlow || isEditMode ? '/requester/track-pr' : '/requester/dashboard';
+  const persistPrId = editPrId || savedDraftId;
+  const askBillingOnCreatePr =
+    purchaseType === 'sass' ||
+    purchaseType === 'online_purchase' ||
+    !(prFlow === 'standard' && vendorSelection === 'own');
+  /** Standard Own Vendor (non-SASS / non-Online): no unit price on PR lines. */
+  const hideLinePricing =
+    purchaseType !== 'sass' &&
+    purchaseType !== 'online_purchase' &&
+    prFlow === 'standard' &&
+    vendorSelection === 'own';
+  const showInlineVendorQuotes =
+    purchaseType === 'sass' || (prFlow === 'functional' && vendorSelection === 'own');
+  /** Functional + Own Vendor: Scope of Work & Payment Terms (mandatory for SCM PO create). Hidden on Standard. */
+  const showScopeAndPaymentTerms =
+    prFlow === 'functional' &&
+    vendorSelection === 'own' &&
+    purchaseType !== 'sass' &&
+    purchaseType !== 'online_purchase';
+
+  const createPrTabs = useMemo(() => {
+    const tabs: { id: CreatePrTab; label: string; icon: string }[] = [
+      { id: 'basic', label: 'Basic Details', icon: 'ri-information-line' },
+      { id: 'items', label: 'Line Items', icon: 'ri-shopping-cart-line' },
+    ];
+    if (showInlineVendorQuotes) {
+      tabs.push({ id: 'vendors', label: 'Vendor Rounds', icon: 'ri-store-2-line' });
+    }
+    tabs.push({
+      id: 'scm',
+      label: 'SCM Team',
+      icon: 'ri-team-line',
+    });
+    return tabs;
+  }, [showInlineVendorQuotes]);
+
+  useEffect(() => {
+    if (!createPrTabs.some((t) => t.id === activeTab)) {
+      setActiveTab('basic');
+    }
+  }, [activeTab, createPrTabs]);
+
+  const restoredKeyRef = useRef('');
+
+  const applyDraftSnapshot = (draft: CreatePrDraftSnapshot, options?: { preserveRicherLineItems?: boolean }) => {
+    const preserveRicher = options?.preserveRicherLineItems !== false;
+    setPrTitle(draft.prTitle || '');
+    setDepartment(draft.department || '');
+    setEntityId(draft.entityId === '' || draft.entityId == null ? '' : Number(draft.entityId));
+    setRequestType(draft.requestType || 'Opex');
+    setRequestCategory(normalizeRequestCategory(draft.requestCategory) || 'Product');
+    setProjectDetail(draft.projectDetail || '');
+    setSpecialNotes(draft.specialNotes || '');
+    setPurchaseType(
+      draft.purchaseType === 'work_order'
+        ? 'work_order'
+        : draft.purchaseType === 'sass'
+          ? 'sass'
+          : draft.purchaseType === 'online_purchase'
+            ? 'online_purchase'
+            : 'purchase_order'
+    );
+    setSassSubscriptionMode(
+      draft.sassSubscriptionMode === 'recurring'
+        ? 'recurring'
+        : draft.sassSubscriptionMode === 'one_time'
+          ? 'one_time'
+          : draft.purchaseType === 'sass'
+            ? 'one_time'
+            : null
+    );
+    setSassBillingFrequency(
+      draft.sassBillingFrequency === 'monthly' ||
+        draft.sassBillingFrequency === 'quarterly' ||
+        draft.sassBillingFrequency === 'yearly'
+        ? draft.sassBillingFrequency
+        : null
+    );
+    setSassSubscriptionStartDate(draft.sassSubscriptionStartDate || '');
+    setVendorSelection(draft.vendorSelection === 'own' ? 'own' : 'scm');
+    setPrFlow(draft.prFlow === 'functional' ? 'functional' : 'standard');
+    setPoCreationBy(draft.poCreationBy === 'requester' ? 'requester' : 'scm');
+    setApprovalUserIds(Array.isArray(draft.approvalUserIds) ? draft.approvalUserIds : []);
+    setRfqMaxRounds(draft.rfqMaxRounds || 1);
+    setRfqRecommendedKey(draft.rfqRecommendedKey || null);
+    setRfqRecommendedMeta({
+      vendorId: draft.rfqRecommendedVendorId || undefined,
+      vendorName: draft.rfqRecommendedVendorName || undefined,
+      vendorEmail: draft.rfqRecommendedVendorEmail || undefined,
+    });
+    setRfqRecommendationJustification(draft.rfqRecommendationJustification || '');
+    setRfqVendors((prev) => {
+      const next = (draft.rfqVendors || []).map((row) => ({
+        key: row.key,
+        vendorId: row.vendorId,
+        name: row.name,
+        email: row.email,
+        quotes: (row.quotes || []).map((q) => ({
+          round: q.round,
+          quotedPrice: q.quotedPrice,
+          leadTime: q.leadTime,
+          paymentTerms: q.paymentTerms,
+          file: null,
+          files: [],
+          savedFiles: q.savedFiles || (q.savedFileName ? [{ id: null, fileName: q.savedFileName, isPrimary: true }] : []),
+          savedFileName: q.savedFileName || undefined,
+          savedSubmissionId: q.savedSubmissionId || undefined,
+        })),
+      }));
+      return next.length ? next : prev;
+    });
+    setPriority(draft.priority || 'Medium');
+    setCurrency(normalizeCurrency(draft.currency));
+    setBusinessJustification(draft.businessJustification || '');
+    setScopeOfWork(draft.scopeOfWork || '');
+    setRequiredDate(draft.requiredDate || '');
+    setWorkStartDate(draft.workStartDate || '');
+    setWorkEndDate(draft.workEndDate || '');
+    setBillingLocationId(draft.billingLocationId === '' || draft.billingLocationId == null ? '' : Number(draft.billingLocationId));
+    setBillingLocation(draft.billingLocation || '');
+    setBillingGstNo(draft.billingGstNo || '');
+    setBillingAddress(draft.billingAddress || '');
+    setDeliveryPoc(draft.deliveryPoc || '');
+    setDeliveryPocEmail(draft.deliveryPocEmail || '');
+    setDeliveryPocPhone(draft.deliveryPocPhone || '');
+    setProjectManagerHo(draft.projectManagerHo || '');
+    setProjectManagerContact(draft.projectManagerContact || '');
+    setProjectManagerEmail(draft.projectManagerEmail || '');
+    setPlaceOfDelivery(draft.placeOfDelivery || '');
+    setExpectedDeliveryTimeline(draft.expectedDeliveryTimeline || '');
+    setPaymentTerms(draft.paymentTerms || '');
+    setLineItems((prev) => {
+      const next = (draft.lineItems || []).map((item) => ({
+        ...item,
+        gstPercentage: Number.isFinite(Number(item.gstPercentage)) ? Number(item.gstPercentage) : 18,
+      }));
+      // Ignore a blank remount. A shorter non-empty list is a removal and must stick.
+      if (preserveRicher && next.length === 0 && prev.length > 0) return prev;
+      return next;
+    });
+    setAttachedFiles((prev) => {
+      const persisted = (draft.attachedFiles || [])
+        .filter((f) => Number(f.existingId) > 0)
+        .map((f) => ({
+          id: f.id || `existing-${f.existingId}`,
+          name: f.name,
+          size: f.size,
+          existingId: Number(f.existingId),
+        }));
+      // localStorage cannot keep File blobs. Never wipe server-hydrated FSD files
+      // with a draft that only has unsaved names (no existingId).
+      if (!persisted.length) return prev;
+      return mergeAttachedFiles(prev, persisted);
+    });
+    if (draft.prNumber) setPrNumber(draft.prNumber);
+  };
+
+  useEffect(() => {
+    if (editPrId && editPrId > 0) {
+      bindSavedDraftId(editPrId);
+    }
+  }, [editPrId]);
+
+  // Create PR (?new=1) = blank form. Soft-resume / existing draft → edit-pr once at boot (never mid-edit).
+  useEffect(() => {
+    if (editPrId || isLoadingPr) return;
+    if (freshHandledRef.current) return;
+    freshHandledRef.current = true;
+
+    const soft = peekCreatePrSoftResume();
+    if (soft) {
+      // Coming back from another menu — resume same PR#, ignore ?new=
+      if (wantFreshStart) setSearchParams({}, { replace: true });
+      const softId = typeof soft === 'number' ? soft : null;
+      const draftId =
+        softId ||
+        Number(
+          readCreatePrDraft(user?.id, null)?.backendPrId ||
+            readCreatePrDraft('anon', null)?.backendPrId ||
+            0
+        ) ||
+        null;
+      if (draftId && !bootRedirectDoneRef.current) {
+        bootRedirectDoneRef.current = true;
+        bindSavedDraftId(draftId);
+        navigate(`/requester/edit-pr/${draftId}`, { replace: true });
+      }
+      return;
+    }
+    if (wantFreshStart) {
+      startFreshCreatePr(user?.id);
+      bindSavedDraftId(null);
+      savedDraftIdRef.current = null;
+      setSearchParams({}, { replace: true });
+      setSoftSaveHint('Starting a new purchase requisition');
+      return;
+    }
+
+    // Hard refresh on /create-pr with an active server draft — open edit-pr once before typing.
+    const existing =
+      Number(
+        readCreatePrDraft(user?.id, null)?.backendPrId ||
+          readCreatePrDraft('anon', null)?.backendPrId ||
+          0
+      ) || null;
+    if (existing && !bootRedirectDoneRef.current) {
+      bootRedirectDoneRef.current = true;
+      bindSavedDraftId(existing);
+      navigate(`/requester/edit-pr/${existing}`, { replace: true });
+    }
+  }, [editPrId, isLoadingPr, wantFreshStart, user?.id, setSearchParams, navigate]);
+
+  useEffect(() => {
+    if (!editPrId) return;
+    // Auth boot resolving user.id must not remount/reload and wipe a just-added line item.
+    if (loadedEditPrIdRef.current === editPrId) return;
+    let cancelled = false;
+    (async () => {
+      setIsLoadingPr(true);
+      setLoadError('');
+      try {
+        const res = await prApi.get(editPrId);
+        if (cancelled) return;
+        loadedEditPrIdRef.current = editPrId;
+        const pr = res.data as {
+          prNumber: string;
+          title?: string;
+          department: string;
+          entityId?: number;
+          requestType: 'Capex' | 'Opex' | 'Service';
+          requestCategory?: string;
+          projectDetail?: string;
+          specialNotes?: string;
+          purchaseType?: 'purchase_order' | 'work_order' | string;
+          vendorSelection?: 'own' | 'scm';
+          prFlow?: 'standard' | 'functional';
+          approvalUserId?: number | null;
+          approvalUserIds?: number[];
+          approvalUserName?: string;
+          priority: string;
+          currency?: string;
+          justification: string;
+          requiredDate: string;
+          billingLocationId?: number | null;
+          billingLocation?: string;
+          billingGstNo?: string;
+          billingAddress?: string;
+          deliveryPoc?: string;
+          deliveryPocEmail?: string;
+          deliveryPocPhone?: string;
+          projectManagerHo?: string;
+          projectManagerContact?: string;
+          projectManagerEmail?: string;
+          placeOfDelivery?: string;
+          expectedDeliveryTimeline?: string;
+          paymentTerms?: string;
+          vendorId?: number | null;
+          vendorName?: string;
+          vendorEmail?: string;
+          status: string;
+          lineItems: { id?: number; description: string; quantity: number; unitCost: number; category: string; unit?: string; gstPercentage?: number }[];
+          approvalHistory?: { stage: string; user: string; role: string; date: string; status: string; remarks: string }[];
+          attachments?: PrAttachmentRecord[];
+        };
+        setPrNumber(pr.prNumber);
+        setPrTitle(pr.title || '');
+        setDepartment(pr.department || '');
+        setEntityId(pr.entityId ? Number(pr.entityId) : '');
+        const loadedPurchaseType =
+          pr.purchaseType === 'work_order' || pr.purchaseType === 'Work Order'
+            ? 'work_order'
+            : pr.purchaseType === 'sass' ||
+                pr.purchaseType === 'SASS' ||
+                pr.purchaseType === 'SAAS' ||
+                pr.purchaseType === 'saas' ||
+                String(pr.purchaseType || '')
+                  .toLowerCase()
+                  .replace(/[\s-]+/g, '_') === 'cloud_subscription'
+              ? 'sass'
+              : String(pr.purchaseType || '')
+                    .toLowerCase()
+                    .replace(/[\s-]+/g, '_') === 'online_purchase' ||
+                  String(pr.purchaseType || '')
+                    .toLowerCase()
+                    .replace(/[\s-]+/g, '_') === 'op'
+                ? 'online_purchase'
+                : 'purchase_order';
+        setPurchaseType(loadedPurchaseType);
+        if (loadedPurchaseType === 'sass') {
+          const mode =
+            (pr as { sassSubscriptionMode?: string; sass_subscription_mode?: string })
+              .sassSubscriptionMode === 'recurring' ||
+            (pr as { sass_subscription_mode?: string }).sass_subscription_mode === 'recurring'
+              ? 'recurring'
+              : 'one_time';
+          setSassSubscriptionMode(mode);
+          const freq = String(
+            (pr as { sassBillingFrequency?: string; sass_billing_frequency?: string })
+              .sassBillingFrequency ||
+              (pr as { sass_billing_frequency?: string }).sass_billing_frequency ||
+              ''
+          ).toLowerCase();
+          setSassBillingFrequency(
+            freq === 'monthly' || freq === 'quarterly' || freq === 'yearly'
+              ? (freq as 'monthly' | 'quarterly' | 'yearly')
+              : null
+          );
+          const startRaw =
+            (pr as { sassSubscriptionStartDate?: string; sass_subscription_start_date?: string })
+              .sassSubscriptionStartDate ||
+            (pr as { sass_subscription_start_date?: string }).sass_subscription_start_date ||
+            '';
+          setSassSubscriptionStartDate(
+            typeof startRaw === 'string' && startRaw ? startRaw.slice(0, 10) : ''
+          );
+        } else {
+          setSassSubscriptionMode(null);
+          setSassBillingFrequency(null);
+          setSassSubscriptionStartDate('');
+        }
+        // Service is only allowed for Work Order
+        setRequestType(
+          loadedPurchaseType === 'purchase_order' && pr.requestType === 'Service'
+            ? 'Opex'
+            : pr.requestType
+        );
+        setRequestCategory(normalizeRequestCategory(pr.requestCategory) || 'Product');
+        setProjectDetail(pr.projectDetail || '');
+        setSpecialNotes(pr.specialNotes || '');
+        setVendorSelection(
+          loadedPurchaseType === 'sass' || pr.vendorSelection === 'own' ? 'own' : 'scm'
+        );
+        setPrFlow(pr.prFlow === 'functional' ? 'functional' : 'standard');
+        setPoCreationBy(
+          (pr as { poCreationBy?: string }).poCreationBy === 'requester' ? 'requester' : 'scm'
+        );
+        setApprovalUserIds(
+          Array.isArray(pr.approvalUserIds) && pr.approvalUserIds.length
+            ? pr.approvalUserIds.map((id) => Number(id)).filter((id) => id > 0)
+            : pr.approvalUserId
+              ? [Number(pr.approvalUserId)]
+              : []
+        );
+        setPriority(pr.priority);
+        setCurrency(normalizeCurrency(pr.currency));
+        setBusinessJustification(pr.justification || '');
+        setScopeOfWork(pr.scopeOfWork || '');
+        setRequiredDate(pr.requiredDate || '');
+        setWorkStartDate(String(pr.workStartDate || ''));
+        setWorkEndDate(String(pr.workEndDate || ''));
+        setBillingLocationId(pr.billingLocationId ? Number(pr.billingLocationId) : '');
+        setBillingLocation(pr.billingLocation || '');
+        setBillingGstNo(pr.billingGstNo || '');
+        setBillingAddress(pr.billingAddress || '');
+        setDeliveryPoc(pr.deliveryPoc || '');
+        setDeliveryPocEmail(pr.deliveryPocEmail || '');
+        setDeliveryPocPhone(pr.deliveryPocPhone || '');
+        setProjectManagerHo(pr.projectManagerHo || '');
+        setProjectManagerContact(pr.projectManagerContact || '');
+        setProjectManagerEmail(pr.projectManagerEmail || '');
+        setPlaceOfDelivery(pr.placeOfDelivery || '');
+        setExpectedDeliveryTimeline(pr.expectedDeliveryTimeline || '');
+        setPaymentTerms(pr.paymentTerms || '');
+        setPrStatus(pr.status);
+        setApprovalHistory(Array.isArray(pr.approvalHistory) ? pr.approvalHistory : []);
+
+        const latestReturn = [...(pr.approvalHistory || [])]
+          .reverse()
+          .find(
+            (item) =>
+              item.status?.toLowerCase() === 'return' ||
+              item.status?.toLowerCase() === 'rework' ||
+              item.status?.toLowerCase().includes('return')
+          );
+        if (latestReturn) {
+          setReturnFeedback({
+            stage: latestReturn.stage,
+            user: latestReturn.user,
+            role: latestReturn.role,
+            date: latestReturn.date,
+            remarks: latestReturn.remarks?.trim() || 'No justification provided.',
+          });
+        } else {
+          setReturnFeedback(null);
+        }
+
+        setLineItems((prev) => {
+          const fromServer =
+          pr.lineItems.length > 0
+            ? pr.lineItems.map((item, i) => ({
+                  id: String(item.id != null ? `${item.id}-${i}` : `row-${i + 1}`),
+                itemId: null,
+                  itemName: (item as { itemName?: string }).itemName || item.description,
+                description: item.description,
+                quantity: item.quantity,
+                estimatedCost: item.unitCost,
+                category: item.category,
+                  unit: item.unit || 'Nos',
+                hsnCode: '',
+                  gstPercentage: Number.isFinite(Number(item.gstPercentage))
+                    ? Number(item.gstPercentage)
+                    : 18,
+                }))
+              : [];
+          // Local draft wins for both adds and removals. A shorter local list is a delete.
+          const local = readCreatePrDraft(user?.id, editPrId);
+          const localItems = Array.isArray(local?.lineItems) ? local.lineItems : null;
+          const useLocal =
+            localItems != null &&
+            (localItems.length >= fromServer.length ||
+              (localItems.length < fromServer.length &&
+                Boolean(local?.savedAt) &&
+                hasMeaningfulCreatePrDraft(local)));
+          if (useLocal && localItems) {
+            return localItems.map((item) => ({
+              ...item,
+              gstPercentage: Number.isFinite(Number(item.gstPercentage))
+                ? Number(item.gstPercentage)
+                : 18,
+            }));
+          }
+          return fromServer.length ? fromServer : prev;
+        });
+        setAttachedFiles(mapServerAttachments(pr.attachments));
+
+        // Prefer newer local auto-draft (justification / address) over stale server — line items already merged above.
+        const local = readCreatePrDraft(user?.id, editPrId);
+        if (local && hasMeaningfulCreatePrDraft(local)) {
+          const serverScore =
+            (pr.lineItems?.length || 0) * 10 +
+            (pr.justification?.trim() ? 8 : 0) +
+            (pr.billingAddress?.trim() ? 4 : 0) +
+            (pr.placeOfDelivery?.trim() ? 4 : 0);
+          if (draftContentScore(local) >= serverScore) {
+            applyDraftSnapshot(local, { preserveRicherLineItems: true });
+            setSoftSaveHint('Restored your unsaved changes');
+          }
+        }
+      } catch (err) {
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Failed to load PR');
+      } finally {
+        if (!cancelled) setIsLoadingPr(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [editPrId]);
+
+  useEffect(() => {
+    if (!editPrId) loadedEditPrIdRef.current = null;
+  }, [editPrId]);
+
+  useEffect(() => {
+    if (isLoadingPr) return;
+    let cancelled = false;
+    const scopeKey = `${editPrId ?? 'new'}`;
+    const run = async () => {
+      // Do not re-apply a full draft when only auth user.id arrives later — that wiped line items.
+      if (hydrateDoneRef.current && restoredKeyRef.current === scopeKey) {
+        persistReadyRef.current = true;
+        return;
+      }
+      restoredKeyRef.current = scopeKey;
+      persistReadyRef.current = false;
+      const draft =
+        readCreatePrDraft(user?.id, editPrId) ||
+        readCreatePrDraft(undefined, editPrId) ||
+        readCreatePrDraft('anon', editPrId);
+      if (draft && hasMeaningfulCreatePrDraft(draft)) {
+        applyDraftSnapshot(draft, { preserveRicherLineItems: true });
+        setSoftSaveHint('Restored your unsaved changes');
+        if (user?.id) {
+          writeCreatePrDraft(user.id, editPrId ?? draft.backendPrId ?? null, draft);
+        }
+        const softResume = consumeCreatePrSoftResume();
+        const backendId = !editPrId
+          ? Number(
+              (typeof softResume === 'number' ? softResume : null) ||
+                draft.backendPrId ||
+                0
+            ) || null
+          : null;
+        if (backendId) {
+          // Bind immediately so autosave cannot create a second PR while get() is in flight.
+          bindSavedDraftId(backendId);
+          try {
+            const res = await prApi.get(backendId);
+            if (cancelled) return;
+            const data = res.data as {
+              status?: string;
+              prNumber?: string;
+              lineItems?: Array<{
+                id?: number;
+                description: string;
+                quantity: number;
+                unitCost: number;
+                category: string;
+                unit?: string;
+                gstPercentage?: number;
+              }>;
+              justification?: string;
+              billingAddress?: string;
+              placeOfDelivery?: string;
+              deliveryPoc?: string;
+              deliveryPocEmail?: string;
+              deliveryPocPhone?: string;
+              projectManagerHo?: string;
+              projectManagerContact?: string;
+              projectManagerEmail?: string;
+              expectedDeliveryTimeline?: string;
+              paymentTerms?: string;
+              title?: string;
+              attachments?: PrAttachmentRecord[];
+            };
+            if (isReusableDraftStatus(data.status)) {
+              bindSavedDraftId(backendId);
+              setPrStatus(String(data.status || '').toUpperCase());
+              if (data.prNumber) setPrNumber(data.prNumber);
+              setAttachedFiles((prev) => mergeAttachedFiles(prev, mapServerAttachments(data.attachments)));
+              const localCount = draft.lineItems?.length || 0;
+              const serverItems = Array.isArray(data.lineItems) ? data.lineItems : [];
+              if (localCount === 0 && serverItems.length > 0) {
+                setLineItems((prev) => {
+                  if (prev.length > 0) return prev;
+                  return serverItems.map((item, i) => ({
+                    id: String(item.id != null ? `${item.id}-${i}` : `row-${i + 1}`),
+                    itemId: null,
+                    itemName: (item as { itemName?: string }).itemName || item.description,
+                    description: item.description,
+                    quantity: item.quantity,
+                    estimatedCost: item.unitCost,
+                    category: item.category,
+                    unit: item.unit || 'Nos',
+                    hsnCode: '',
+                    gstPercentage: Number.isFinite(Number(item.gstPercentage))
+                      ? Number(item.gstPercentage)
+                      : 18,
+                  }));
+                });
+                if (data.justification && !draft.businessJustification?.trim()) {
+                  setBusinessJustification(data.justification);
+                }
+                if (data.billingAddress && !draft.billingAddress?.trim()) {
+                  setBillingAddress(data.billingAddress);
+                }
+                if (data.placeOfDelivery && !draft.placeOfDelivery?.trim()) {
+                  setPlaceOfDelivery(data.placeOfDelivery);
+                }
+                if (data.deliveryPoc && !draft.deliveryPoc?.trim()) {
+                  setDeliveryPoc(data.deliveryPoc);
+                }
+                if (data.deliveryPocEmail && !draft.deliveryPocEmail?.trim()) {
+                  setDeliveryPocEmail(data.deliveryPocEmail);
+                }
+                if (data.deliveryPocPhone && !draft.deliveryPocPhone?.trim()) {
+                  setDeliveryPocPhone(data.deliveryPocPhone);
+                }
+                if (data.projectManagerHo && !draft.projectManagerHo?.trim()) {
+                  setProjectManagerHo(data.projectManagerHo);
+                }
+                if (data.projectManagerContact && !draft.projectManagerContact?.trim()) {
+                  setProjectManagerContact(data.projectManagerContact);
+                }
+                if (data.projectManagerEmail && !draft.projectManagerEmail?.trim()) {
+                  setProjectManagerEmail(data.projectManagerEmail);
+                }
+                if (data.expectedDeliveryTimeline && !draft.expectedDeliveryTimeline?.trim()) {
+                  setExpectedDeliveryTimeline(data.expectedDeliveryTimeline);
+                }
+                if (data.paymentTerms && !draft.paymentTerms?.trim()) {
+                  setPaymentTerms(data.paymentTerms);
+                }
+                if (data.title && !draft.prTitle?.trim()) {
+                  setPrTitle(data.title);
+                }
+              }
+            } else {
+              bindSavedDraftId(null);
+            }
+          } catch {
+            // Keep optimistic id — update may still work; only clear if PR truly missing.
+            if (!cancelled) {
+              /* leave bindSavedDraftId(backendId) */
+            }
+          }
+        }
+      }
+      if (!cancelled) {
+        persistReadyRef.current = true;
+        hydrateDoneRef.current = true;
+        setHydrateVersion((v) => v + 1);
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+      // Strict Mode remount resets React state — allow re-hydrate from localStorage.
+      // user.id is intentionally NOT a dep (that used to wipe line items mid-edit).
+      restoredKeyRef.current = '';
+      hydrateDoneRef.current = false;
+      persistReadyRef.current = false;
+    };
+  }, [editPrId, isLoadingPr]);
+
+  // When auth resolves, migrate local draft key — never re-apply a full snapshot (wipes line items).
+  useEffect(() => {
+    if (!user?.id || isLoadingPr || !hydrateDoneRef.current) return;
+    const draft =
+      readCreatePrDraft(user.id, editPrId) ||
+      readCreatePrDraft(undefined, editPrId) ||
+      readCreatePrDraft('anon', editPrId);
+    if (!draft || !hasMeaningfulCreatePrDraft(draft)) return;
+    writeCreatePrDraft(user.id, editPrId ?? draft.backendPrId ?? null, draft);
+    setLineItems((prev) => {
+      if (prev.length > 0) return prev;
+      if (!draft.lineItems?.length) return prev;
+      return draft.lineItems.map((item) => ({
+        ...item,
+        gstPercentage: Number.isFinite(Number(item.gstPercentage)) ? Number(item.gstPercentage) : 18,
+      }));
+    });
+  }, [user?.id, editPrId, isLoadingPr]);
+
+  useEffect(() => {
+    snapshotRef.current = {
+      v: 1,
+      savedAt: Date.now(),
+      backendPrId: persistPrId,
+      prNumber: prNumber && prNumber !== 'Auto on save' ? prNumber : undefined,
+      isAdminEditFlow,
+      prTitle,
+      department,
+      entityId,
+      requestType,
+      purchaseType,
+      sassSubscriptionMode,
+      sassBillingFrequency,
+      sassSubscriptionStartDate,
+      requestCategory,
+      projectDetail,
+      specialNotes,
+      vendorSelection,
+      poCreationBy,
+      prFlow,
+      approvalUserIds,
+      rfqMaxRounds,
+      rfqRecommendedKey,
+      rfqRecommendedVendorId: rfqRecommendedMeta.vendorId || null,
+      rfqRecommendedVendorName: rfqRecommendedMeta.vendorName || null,
+      rfqRecommendedVendorEmail: rfqRecommendedMeta.vendorEmail || null,
+      rfqRecommendationJustification,
+      rfqVendors: rfqVendors.map((row) => ({
+        key: row.key,
+        vendorId: row.vendorId,
+        name: row.name,
+        email: row.email,
+        quotes: row.quotes.map((q) => ({
+          round: q.round,
+          quotedPrice: q.quotedPrice,
+          leadTime: q.leadTime,
+          paymentTerms: q.paymentTerms,
+          // Only persist server-confirmed file names — never File.name (lost on refresh).
+          savedFileName: q.savedFileName || undefined,
+          savedSubmissionId: q.savedSubmissionId || undefined,
+          savedFiles: savedQuoteFiles(q),
+        })),
+      })),
+      priority,
+      currency,
+      businessJustification,
+      scopeOfWork,
+      requiredDate,
+      workStartDate,
+      workEndDate,
+      billingLocationId,
+      billingLocation,
+      billingGstNo,
+      billingAddress,
+      deliveryPoc,
+      deliveryPocEmail,
+      deliveryPocPhone,
+      projectManagerHo,
+      projectManagerContact,
+      projectManagerEmail,
+      placeOfDelivery,
+      expectedDeliveryTimeline,
+      paymentTerms,
+      lineItems,
+      attachedFiles: attachedFiles.map((f) => ({
+        id: f.id,
+        name: f.name,
+        size: f.size,
+        existingId: f.existingId,
+      })),
+    };
+  });
+
+  useEffect(() => {
+    if (!hydrateDoneRef.current || !persistReadyRef.current || skipSoftSaveRef.current || isLoadingPr) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      if (skipSoftSaveRef.current || !hydrateDoneRef.current) return;
+      const snap = snapshotRef.current;
+      if (!snap || !hasMeaningfulCreatePrDraft(snap)) return;
+      writeCreatePrDraft(user?.id, persistPrId ?? editPrId, snap);
+      setSoftSaveHint('Draft auto-saved locally');
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [
+    hydrateVersion,
+    prTitle,
+    department,
+    entityId,
+    requestType,
+    purchaseType,
+    sassSubscriptionMode,
+    sassBillingFrequency,
+    sassSubscriptionStartDate,
+    requestCategory,
+    projectDetail,
+    specialNotes,
+    vendorSelection,
+    poCreationBy,
+    prFlow,
+    approvalUserIds,
+    rfqMaxRounds,
+    rfqVendors,
+    rfqRecommendedKey,
+    rfqRecommendedMeta,
+    rfqRecommendationJustification,
+    priority,
+    currency,
+    businessJustification,
+    scopeOfWork,
+    requiredDate,
+    workStartDate,
+    workEndDate,
+    billingLocationId,
+    billingLocation,
+    billingGstNo,
+    billingAddress,
+    deliveryPoc,
+    deliveryPocEmail,
+    deliveryPocPhone,
+    projectManagerHo,
+    projectManagerContact,
+    projectManagerEmail,
+    placeOfDelivery,
+    expectedDeliveryTimeline,
+    paymentTerms,
+    lineItems,
+    attachedFiles,
+    persistPrId,
+    editPrId,
+    user?.id,
+    isLoadingPr,
+  ]);
+
+  useEffect(() => {
+    const flushLocalOnly = () => {
+      if (suppressSoftResumeRef.current || skipSoftSaveRef.current || !hydrateDoneRef.current) return;
+      const snap = snapshotRef.current;
+      if (!snap || !hasMeaningfulCreatePrDraft(snap)) return;
+      const id = resolvePersistPrId();
+      writeCreatePrDraft(userIdRef.current, id ?? editPrIdRef.current, {
+        ...snap,
+        backendPrId: id ?? snap.backendPrId,
+      });
+      markCreatePrSoftResume(id);
+    };
+    /** Server persist only on real page hide — never on React effect cleanup (Strict Mode remount creates duplicate PRs). */
+    const flushToServer = () => {
+      flushLocalOnly();
+      if (lineEditorModeRef.current) return;
+      if (savingInFlightRef.current || submitClickLockRef.current || skipSoftSaveRef.current) return;
+      const snap = snapshotRef.current;
+      if (!snap?.entityId) return;
+      void savePRRef.current(false, {
+        silent: true,
+        forceUploadFiles: true,
+        // Only create if we still have no draft id; otherwise update.
+        allowCreate: !resolvePersistPrId(),
+      });
+    };
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') flushToServer();
+    };
+    window.addEventListener('pagehide', flushToServer);
+    window.addEventListener('beforeunload', flushLocalOnly);
+    document.addEventListener('visibilitychange', onHide);
+    return () => {
+      // Local draft only — do NOT create a server PR on unmount / Strict Mode remount.
+      flushLocalOnly();
+      window.removeEventListener('pagehide', flushToServer);
+      window.removeEventListener('beforeunload', flushLocalOnly);
+      document.removeEventListener('visibilitychange', onHide);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Debounced server draft — updates existing PR only (never create mid-edit / refresh the page).
+  useEffect(() => {
+    if (
+      !hydrateDoneRef.current ||
+      !persistReadyRef.current ||
+      skipSoftSaveRef.current ||
+      isLoadingPr ||
+      isAdminEditFlow
+    ) {
+      return;
+    }
+    if (!entityId) return;
+    if (
+      !businessJustification.trim() &&
+      !scopeOfWork.trim() &&
+      !billingAddress.trim() &&
+      !placeOfDelivery.trim() &&
+      !deliveryPoc.trim() &&
+      lineItems.length === 0 &&
+      !prTitle.trim() &&
+      rfqVendors.length === 0
+    ) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      if (
+        skipSoftSaveRef.current ||
+        savingInFlightRef.current ||
+        !hydrateDoneRef.current ||
+        !persistReadyRef.current
+      ) {
+        return;
+      }
+      const snap = snapshotRef.current;
+      if (!snap?.entityId) return;
+      const existingId = resolvePersistPrId();
+      writeCreatePrDraft(user?.id, existingId ?? editPrId, {
+        ...snap,
+        backendPrId: existingId ?? snap.backendPrId ?? null,
+      });
+      // Autosave must not create a new PR (that remounted /edit-pr and wiped the new line item).
+      if (!existingId) {
+        setSoftSaveHint('Draft auto-saved locally');
+        return;
+      }
+      // Keep Add/Edit line-item form open — silent save used to close it and wipe fields.
+      if (lineEditorModeRef.current) {
+        setSoftSaveHint('Draft auto-saved locally');
+        return;
+      }
+      void savePRRef.current(false, { silent: true, forceUploadFiles: true }).then(() => {
+        if (!skipSoftSaveRef.current) setSoftSaveHint('Draft auto-saved');
+      });
+    }, 2000);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    hydrateVersion,
+    prTitle,
+    department,
+    entityId,
+    requestType,
+    purchaseType,
+    sassSubscriptionMode,
+    sassBillingFrequency,
+    sassSubscriptionStartDate,
+    requestCategory,
+    projectDetail,
+    specialNotes,
+    vendorSelection,
+    prFlow,
+    approvalUserIds,
+    priority,
+    currency,
+    businessJustification,
+    scopeOfWork,
+    requiredDate,
+    workStartDate,
+    workEndDate,
+    billingLocationId,
+    billingLocation,
+    billingGstNo,
+    billingAddress,
+    deliveryPoc,
+    deliveryPocEmail,
+    deliveryPocPhone,
+    projectManagerHo,
+    projectManagerContact,
+    projectManagerEmail,
+    placeOfDelivery,
+    expectedDeliveryTimeline,
+    paymentTerms,
+    lineItems,
+    rfqVendors,
+    persistPrId,
+    editPrId,
+    user?.id,
+    isLoadingPr,
+    isAdminEditFlow,
+  ]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await prApi.listApprovalUsers();
+        setApprovalUsers(res.data || []);
+      } catch {
+        setApprovalUsers([]);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await vendorApi.list();
+        setVendorMaster(res.data || []);
+      } catch {
+        setVendorMaster([]);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!persistPrId || !showInlineVendorQuotes) {
+      setExistingRfqHasQuotes(false);
+      return;
+    }
+    (async () => {
+      try {
+        const res = await rfqApi.getByPr(persistPrId);
+        const data = res.data as {
+          config?: {
+            recommendedInvitationId?: number | null;
+            recommendationJustification?: string;
+            maxRounds?: number | null;
+          };
+          invitations?: Array<{
+            id?: number;
+            vendorId?: number;
+            vendorName?: string;
+            vendorEmail?: string;
+            submissions?: Array<{
+              id?: number;
+              round?: number;
+              quotedPrice?: number;
+              leadTime?: number;
+              paymentTerms?: string;
+              quotationFileName?: string;
+              quotationFiles?: Array<{ id?: number | null; fileName?: string; isPrimary?: boolean }>;
+            }>;
+          }>;
+        };
+        const invitations = data?.invitations || [];
+        const serverMax = Math.min(4, Math.max(1, Number(data.config?.maxRounds) || 1));
+        // User already reduced rounds in UI/draft → keep that; otherwise take server config
+        const effectiveMax = rfqMaxRounds > 1 ? Math.min(4, rfqMaxRounds) : serverMax;
+        if (rfqMaxRounds <= 1 && serverMax > 1) {
+          setRfqMaxRounds(serverMax);
+        }
+        const hasQuotes = invitations.some((inv) =>
+          (inv.submissions || []).some(
+            (q) =>
+              Number(q.round || 1) <= effectiveMax &&
+              Number(q.quotedPrice) >= 0 &&
+              Boolean(q.quotationFileName || (Array.isArray(q.quotationFiles) && q.quotationFiles.length))
+          )
+        );
+        setExistingRfqHasQuotes(hasQuotes);
+
+        // Restore Choose selection from RFQ config
+        const recId = data.config?.recommendedInvitationId
+          ? Number(data.config.recommendedInvitationId)
+          : null;
+        if (recId) {
+          const recInv = invitations.find((i) => Number(i.id) === recId);
+          if (recInv) {
+            setRfqRecommendationJustification(data.config?.recommendationJustification || '');
+            setRfqRecommendedMeta({
+              vendorName: recInv.vendorName,
+              vendorEmail: recInv.vendorEmail,
+            });
+          }
+        }
+
+        // Hydrate functional RFQ rows (incl. submission ids so Open / Show works)
+        if (invitations.length) {
+          setRfqVendors((prev) => {
+            let next: FunctionalRfqVendorRow[];
+            if (prev.length > 0) {
+              // Merge savedSubmissionId / savedFileName into existing rows by vendor
+              next = prev.map((row) => {
+                const inv = invitations.find(
+                  (i) =>
+                    (i.vendorName || '').toLowerCase() === row.name.toLowerCase() ||
+                    ((i.vendorEmail || '') &&
+                      (row.email || '') &&
+                      (i.vendorEmail || '').toLowerCase() === row.email.toLowerCase())
+                );
+                if (!inv) {
+                  return {
+                    ...row,
+                    quotes: row.quotes.filter((q) => q.round <= effectiveMax),
+                  };
+                }
+                const subs = (inv.submissions || []).filter(
+                  (s) => Number(s.round || 1) <= effectiveMax
+                );
+                const baseQuotes = row.quotes.filter((q) => q.round <= effectiveMax);
+                const merged = baseQuotes.map((q) => {
+                  const sub = subs.find((s) => Number(s.round) === Number(q.round));
+                  if (!sub && !q.file && !q.files?.length) return q;
+                  const locals = localQuoteFiles(q);
+                  const saved = filesFromSubmission(sub);
+                  const serverHasFile = saved.length > 0;
+                  const remainingLocals = serverHasFile
+                    ? locals.filter((f) => !saved.some((s) => s.fileName === f.name))
+                    : locals;
+                  return {
+                    ...q,
+                    quotedPrice: q.quotedPrice || (sub?.quotedPrice != null ? String(sub.quotedPrice) : ''),
+                    leadTime: q.leadTime || (sub?.leadTime != null ? String(sub.leadTime) : ''),
+                    paymentTerms: q.paymentTerms || sub?.paymentTerms || '',
+                    file: remainingLocals[0] || null,
+                    files: remainingLocals,
+                    savedFiles: saved.length ? saved : q.savedFiles,
+                    savedFileName: saved[0]?.fileName || q.savedFileName,
+                    savedSubmissionId: sub?.id ? Number(sub.id) : q.savedSubmissionId,
+                  };
+                });
+                // Ensure slots only up to effectiveMax (never re-add a deleted higher round)
+                const byRound = new Map(merged.map((q) => [q.round, q]));
+                const quotes = Array.from({ length: effectiveMax }, (_, i) => {
+                  const round = i + 1;
+                  return (
+                    byRound.get(round) || {
+                      round,
+                      quotedPrice: '',
+                      leadTime: '',
+                      paymentTerms: '',
+                      file: null as File | null,
+                      files: [] as File[],
+                      savedFiles: [] as { id?: number | null; fileName: string; isPrimary?: boolean }[],
+                      savedFileName: undefined as string | undefined,
+                      savedSubmissionId: undefined as number | undefined,
+                    }
+                  );
+                });
+                return { ...row, quotes };
+              });
+            } else {
+              next = invitations.map((inv, idx) => {
+                const subs = (inv.submissions || []).filter(
+                  (s) => Number(s.round || 1) <= effectiveMax
+                );
+                const maxR = Math.min(
+                  4,
+                  Math.max(1, effectiveMax, ...subs.map((s) => Number(s.round) || 1))
+                );
+                const quotes = Array.from({ length: maxR }, (_, i) => {
+                  const round = i + 1;
+                  const sub = subs.find((s) => Number(s.round) === round);
+                  const saved = filesFromSubmission(sub);
+                  return {
+                    round,
+                    quotedPrice: sub?.quotedPrice != null ? String(sub.quotedPrice) : '',
+                    leadTime: sub?.leadTime != null ? String(sub.leadTime) : '',
+                    paymentTerms: sub?.paymentTerms || '',
+                    file: null as File | null,
+                    files: [],
+                    savedFiles: saved,
+                    savedFileName: saved[0]?.fileName || sub?.quotationFileName || undefined,
+                    savedSubmissionId: sub?.id ? Number(sub.id) : undefined,
+                  };
+                });
+                return {
+                  key: `rfq-loaded-${inv.id || idx}`,
+                  vendorId: inv.vendorId != null ? String(inv.vendorId) : '',
+                  name: inv.vendorName || '',
+                  email: inv.vendorEmail || '',
+                  quotes,
+                };
+              });
+            }
+
+            // Re-bind Choose selection to current row keys
+            const recId = data.config?.recommendedInvitationId
+              ? Number(data.config.recommendedInvitationId)
+              : null;
+            const recInv = recId ? invitations.find((i) => Number(i.id) === recId) : null;
+            const match =
+              next.find((r) =>
+                recInv
+                  ? (recInv.vendorName || '').toLowerCase() === r.name.toLowerCase() ||
+                    ((recInv.vendorEmail || '') &&
+                      r.email &&
+                      (recInv.vendorEmail || '').toLowerCase() === r.email.toLowerCase())
+                  : false
+              ) ||
+              next.find(
+                (r) =>
+                  (rfqRecommendedMeta.vendorEmail &&
+                    r.email &&
+                    rfqRecommendedMeta.vendorEmail.toLowerCase() === r.email.toLowerCase()) ||
+                  (rfqRecommendedMeta.vendorName &&
+                    rfqRecommendedMeta.vendorName.toLowerCase() === r.name.toLowerCase()) ||
+                  (rfqRecommendedKey && r.key === rfqRecommendedKey)
+              );
+            if (match) {
+              setRfqRecommendedKey(match.key);
+              setRfqRecommendedMeta({
+                vendorId: match.vendorId,
+                vendorName: match.name,
+                vendorEmail: match.email,
+              });
+            }
+            return next;
+          });
+        }
+      } catch {
+        setExistingRfqHasQuotes(false);
+      }
+    })();
+  }, [persistPrId, showInlineVendorQuotes]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadMasters = async () => {
+      // Load entities independently so item/category failures don't blank the entity dropdown
+      try {
+        const entityRes = await masterApi.listEntities({ status: 'active' });
+        if (!cancelled) setEntities(entityRes.data || []);
+      } catch {
+        if (!cancelled) setEntities([]);
+      }
+
+      try {
+        const [itemsRes, catsRes, deptRes] = await Promise.all([
+          masterApi.listItems({ status: 'active' }),
+          masterApi.listCategories({ status: 'active' }),
+          masterApi.listDepartments({ status: 'active' }),
+        ]);
+        if (cancelled) return;
+        const items = itemsRes.data || [];
+        setMasterItems(items);
+        setMasterCategories(catsRes.data || []);
+        setDepartments(deptRes.data || []);
+        // Match existing line items to Item Master by name when editing
+        setLineItems((prev) =>
+          prev.map((row) => {
+            if (row.itemId) return row;
+            const name = (row.itemName || row.description || '').trim().toLowerCase();
+            if (!name) return row;
+            const match = items.find((m) => m.name.toLowerCase() === name);
+            if (!match) return row;
+            return {
+              ...row,
+              itemId: match.id,
+              itemName: match.name,
+              description: row.description || match.description || match.name,
+              category: row.category || match.categoryName || '',
+              unit: match.unit || row.unit || 'Nos',
+              hsnCode: match.hsnCode || '',
+              gstPercentage: Number(match.gstPercentage ?? 18),
+            };
+          })
+        );
+      } catch {
+        if (!cancelled) {
+          setMasterItems([]);
+          setMasterCategories([]);
+          setDepartments([]);
+        }
+      }
+    };
+    void loadMasters();
+
+    const refreshEntities = () => {
+      void masterApi
+        .listEntities({ status: 'active' })
+        .then((res) => {
+          if (!cancelled) setEntities(res.data || []);
+        })
+        .catch(() => {});
+    };
+    const onVis = () => {
+      if (document.visibilityState === 'visible') refreshEntities();
+    };
+    window.addEventListener('focus', refreshEntities);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', refreshEntities);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [requestType]);
+
+  const selectedEntity = useMemo(
+    () => (entityId === '' ? null : entities.find((e) => e.id === entityId) || null),
+    [entities, entityId]
+  );
+
+  const billingLocations = useMemo(
+    () => selectedEntity?.locations?.filter((loc) => loc.location) || [],
+    [selectedEntity]
+  );
+
+  useEffect(() => {
+    if (!billingLocations.length) return;
+    if (billingLocationId) {
+      const match = billingLocations.find((loc) => Number(loc.id) === Number(billingLocationId));
+      if (match) {
+        setBillingLocation(match.location);
+        return;
+      }
+    }
+    if (billingLocation.trim()) {
+      const match = billingLocations.find(
+        (loc) => loc.location.trim().toLowerCase() === billingLocation.trim().toLowerCase()
+      );
+      if (match) {
+        setBillingLocationId(match.id ? Number(match.id) : '');
+      }
+    }
+  }, [billingLocations, billingLocationId, billingLocation]);
+
+  const formatEntityLabel = (ent: EntityRecord) => {
+    const base = ent.code ? `${ent.code} — ${ent.name}` : ent.name;
+    return ent.costCenter ? `${base} (${ent.costCenter})` : base;
+  };
+
+  const priorityOptions = ['Low', 'Medium', 'High', 'Critical'];
+
+  const getTotalAmount = () =>
+    lineItems.reduce(
+      (sum, item) => sum + lineInclusiveAmount(item.quantity, item.estimatedCost, item.gstPercentage),
+      0
+    );
+
+  const openAddLineItem = () => {
+    setDeleteLineItemId(null);
+    lineEditorModeRef.current = 'add';
+    setLineEditor({ mode: 'add', item: createEmptyLineItem() });
+  };
+
+  const openEditLineItem = (item: LineItem) => {
+    setDeleteLineItemId(null);
+    lineEditorModeRef.current = 'edit';
+    setLineEditor({ mode: 'edit', item: { ...item } });
+  };
+
+  const closeLineEditor = () => {
+    pendingLineDraftRef.current = null;
+    lineEditorModeRef.current = null;
+    setLineEditor(null);
+  };
+
+  const saveLineItem = (item: LineItem) => {
+    setLineItems((prev) => {
+      const next =
+        lineEditor?.mode === 'edit'
+          ? prev.map((row) => (row.id === item.id ? item : row))
+          : [...prev, item];
+      // Persist immediately so auth hydrate / autosave cannot wipe this add.
+      const snap: CreatePrDraftSnapshot = {
+        ...(snapshotRef.current || {
+          v: 1 as const,
+          savedAt: Date.now(),
+          backendPrId: persistPrId,
+          prTitle,
+          department,
+          entityId,
+          requestType,
+          purchaseType,
+          requestCategory,
+          projectDetail,
+          specialNotes,
+          vendorSelection,
+          prFlow,
+          approvalUserIds,
+          rfqMaxRounds,
+          rfqVendors: [],
+          priority,
+          currency,
+          businessJustification,
+          scopeOfWork,
+          requiredDate,
+          workStartDate,
+          workEndDate,
+          billingLocationId,
+          billingLocation,
+          billingGstNo,
+          billingAddress,
+          deliveryPoc,
+          placeOfDelivery,
+          expectedDeliveryTimeline,
+          paymentTerms,
+          attachedFiles: [],
+        }),
+        lineItems: next,
+        backendPrId: persistPrId,
+        savedAt: Date.now(),
+      };
+      snapshotRef.current = snap;
+      writeCreatePrDraft(user?.id, persistPrId ?? editPrId, snap);
+      writeCreatePrDraft(user?.id || 'anon', persistPrId ?? editPrId, snap);
+      return next;
+    });
+    setErrors((prev) => {
+      const next = { ...prev };
+      delete next.lineItems;
+      return next;
+    });
+    pendingLineDraftRef.current = null;
+    lineEditorModeRef.current = null;
+    setLineEditor(null);
+    setSoftSaveHint('Line item saved');
+  };
+
+  /** Commit open Add/Edit form into the table before Save Draft / autosave. */
+  const commitPendingLineItem = (options?: { closeEditor?: boolean }): LineItem[] => {
+    const closeEditor = options?.closeEditor !== false;
+    const pending = pendingLineDraftRef.current;
+    const mode = lineEditorModeRef.current || lineEditor?.mode;
+    if (!pending || !mode) return lineItems;
+    const hasBasics =
+      Boolean(pending.category?.trim()) &&
+      Boolean(pending.description?.trim() || pending.itemName?.trim()) &&
+      Number(pending.quantity) >= 1;
+    if (!hasBasics) return lineItems;
+    const normalized: LineItem = {
+      ...pending,
+      itemName: pending.itemName || pending.description,
+      description: (pending.description || pending.itemName || '').trim(),
+      quantity: Number(pending.quantity) || 1,
+      estimatedCost: Number(pending.estimatedCost) || 0,
+      unit: pending.unit || 'Nos',
+      gstPercentage: Number.isFinite(Number(pending.gstPercentage)) ? Number(pending.gstPercentage) : 18,
+    };
+    let next = lineItems;
+    if (mode === 'edit') {
+      next = lineItems.map((row) => (row.id === normalized.id ? normalized : row));
+    } else if (!lineItems.some((row) => row.id === normalized.id)) {
+      next = [...lineItems, normalized];
+    }
+    setLineItems(next);
+    if (closeEditor) {
+      pendingLineDraftRef.current = null;
+      lineEditorModeRef.current = null;
+      setLineEditor(null);
+    }
+    return next;
+  };
+
+  const confirmRemoveLineItem = () => {
+    if (!deleteLineItemId) return;
+    const removedId = deleteLineItemId;
+    setLineItems((prev) => {
+      const next = prev.filter((item) => item.id !== removedId);
+      const snap = snapshotRef.current;
+      if (snap) {
+        const updated: CreatePrDraftSnapshot = {
+          ...snap,
+          lineItems: next,
+          backendPrId: persistPrId ?? snap.backendPrId,
+          savedAt: Date.now(),
+        };
+        snapshotRef.current = updated;
+        writeCreatePrDraft(user?.id, persistPrId ?? editPrId, updated);
+      }
+      return next;
+    });
+    if (lineEditor?.item.id === removedId) setLineEditor(null);
+    setDeleteLineItemId(null);
+  };
+
+  const rememberMasterItem = (created: ItemRecord) => {
+    setMasterItems((prev) => {
+      if (prev.some((item) => item.id === created.id)) return prev;
+      return [...prev, created].sort((a, b) => a.name.localeCompare(b.name));
+    });
+  };
+
+  const rememberDepartment = (created: DepartmentRecord) => {
+    setDepartments((prev) => {
+      if (prev.some((item) => item.id === created.id)) return prev;
+      return [...prev, created].sort((a, b) => a.name.localeCompare(b.name));
+    });
+  };
+
+  const rememberCategory = (created: CategoryRecord) => {
+    setMasterCategories((prev) => {
+      if (prev.some((item) => item.id === created.id)) return prev;
+      return [...prev, created].sort((a, b) => a.name.localeCompare(b.name));
+    });
+  };
+
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); };
+  const handleDragLeave = () => setIsDragging(false);
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault(); setIsDragging(false);
+    addFiles(Array.from(e.dataTransfer.files));
+  };
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) addFiles(Array.from(e.target.files));
+    e.target.value = '';
+  };
+  const addFiles = (files: File[]) => {
+    const allowed = /\.(pdf|doc|docx|xls|xlsx|jpg|jpeg|png)$/i;
+    const maxBytes = 25 * 1024 * 1024;
+    const accepted = files.filter((f) => allowed.test(f.name) && f.size <= maxBytes);
+    const rejected = files.filter((f) => !allowed.test(f.name) || f.size > maxBytes);
+    const newFiles: AttachedFile[] = accepted.map((f) => ({
+      id: Math.random().toString(36).substr(2, 9),
+      name: f.name,
+      size: f.size,
+      file: f,
+    }));
+    if (newFiles.length) setAttachedFiles((prev) => mergeAttachedFiles(prev, newFiles));
+    if (rejected.length) {
+      const msg = rejected
+        .map((f) =>
+          !allowed.test(f.name)
+            ? `${f.name} (type not allowed)`
+            : `${f.name} (over 25MB)`
+        )
+        .join(', ');
+      setSubmitError(`Could not add: ${msg}`);
+      showToast(`Could not add: ${msg}`, 'error');
+    }
+  };
+  const removeFile = async (id: string) => {
+    const target = attachedFiles.find((f) => f.id === id);
+    if (target?.existingId && persistPrId) {
+      try {
+        await prApi.deleteAttachment(persistPrId, target.existingId);
+      } catch (err) {
+        setSubmitError(err instanceof Error ? err.message : 'Failed to remove file');
+        showToast(err instanceof Error ? err.message : 'Failed to remove file', 'error');
+        return;
+      }
+    }
+    setAttachedFiles((prev) => prev.filter((f) => f.id !== id));
+  };
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  };
+
+  const validateForm = () => {
+    const newErrors: Record<string, string> = {};
+    if (!prTitle.trim()) newErrors.prTitle = 'PR Title is required';
+    if (!entityId) newErrors.entityId = 'Entity is required';
+    if (!department) newErrors.department = 'Department is required';
+    if (!requestCategory) newErrors.requestCategory = 'Request category is required';
+    if (!businessJustification.trim()) newErrors.businessJustification = 'Business justification is required';
+    if (showScopeAndPaymentTerms) {
+      if (!scopeOfWork.trim()) newErrors.scopeOfWork = 'Scope of Work is required';
+      if (!paymentTerms.trim()) newErrors.paymentTerms = 'Payment Terms is required';
+    }
+    if (!requiredDate) newErrors.requiredDate = 'Required date is required';
+    if (purchaseType === 'work_order') {
+      if (workStartDate && workEndDate && workEndDate < workStartDate) {
+        newErrors.workEndDate = 'End date must be on or after the start date';
+      }
+    }
+    if (askBillingOnCreatePr) {
+      if (billingLocations.length > 0 && !billingLocationId) {
+        newErrors.billingLocationId = 'Select billing region / GST for this entity';
+      }
+      if (!billingAddress.trim()) newErrors.billingAddress = 'Billing address is required';
+    }
+    if (prFlow === 'functional' && approvalUserIds.length === 0) {
+      newErrors.approvalUserId = 'Select at least one user for Functional Flow approval';
+    }
+    if (prFlow === 'functional' && approvalUserIds.length > 5) {
+      newErrors.approvalUserId = 'Select up to 5 users for Functional Flow approval';
+    }
+    if (purchaseType === 'sass' && approvalUserIds.length === 0) {
+      newErrors.approvalUserId = 'Select L1 Manager / User Approver for Cloud Subscription';
+    }
+    if (purchaseType === 'sass' && approvalUserIds.length > 1) {
+      newErrors.approvalUserId = 'Select exactly one L1 Manager / User Approver for Cloud Subscription';
+    }
+    if (purchaseType === 'online_purchase' && approvalUserIds.length === 0) {
+      newErrors.approvalUserId = 'Select L1 Manager / User Approver for Online Purchase';
+    }
+    if (purchaseType === 'online_purchase' && approvalUserIds.length > 1) {
+      newErrors.approvalUserId = 'Select exactly one L1 Manager / User Approver for Online Purchase';
+    }
+    if (purchaseType === 'sass' && !sassSubscriptionMode) {
+      newErrors.sassSubscriptionMode = 'Select One-Time or Recurring for Cloud Subscription';
+    }
+    if (purchaseType === 'sass' && sassSubscriptionMode === 'recurring') {
+      if (!sassBillingFrequency) {
+        newErrors.sassBillingFrequency = 'Select Monthly, Quarterly, or Yearly frequency';
+      }
+      if (!sassSubscriptionStartDate) {
+        newErrors.sassSubscriptionStartDate = 'Subscription start date is required';
+      }
+    }
+    if (showInlineVendorQuotes) {
+      const hasRound1 = rfqVendors.some((row) => {
+        const round1 = row.quotes.find((q) => q.round === 1);
+        const price = Number(round1?.quotedPrice);
+        return (
+          Boolean(row.vendorId) &&
+          Number.isFinite(price) &&
+          price >= 0 &&
+          String(round1?.quotedPrice ?? '').trim() !== '' &&
+          quoteHasQuotationFile(round1)
+        );
+      });
+      if (!hasRound1 && !existingRfqHasQuotes) {
+        newErrors.rfqVendors = 'Add at least one vendor with a round-1 quoted price and quotation file';
+      }
+      if (
+        !rfqRecommendedKey &&
+        !rfqRecommendedMeta.vendorId &&
+        !rfqRecommendedMeta.vendorEmail &&
+        !rfqRecommendedMeta.vendorName
+      ) {
+        newErrors.rfqVendors =
+          newErrors.rfqVendors || 'Pick one recommended vendor (Step 3) before submit';
+      }
+      if (!String(rfqRecommendationJustification || '').trim()) {
+        newErrors.rfqVendors =
+          newErrors.rfqVendors || 'Add justification when choosing the recommended vendor';
+      }
+    }
+    if (lineItems.length === 0) {
+      newErrors.lineItems = 'Add at least one line item';
+    }
+    lineItems.forEach((item, index) => {
+      if (!item.itemId && !item.description.trim()) {
+        newErrors[`item_${index}_description`] = 'Search an item or type a new name and save it';
+      } else if (!item.description.trim()) {
+        newErrors[`item_${index}_description`] = 'Item description is required';
+      }
+      if (!item.category) newErrors[`item_${index}_category`] = 'Category is required';
+      if (item.quantity <= 0) newErrors[`item_${index}_quantity`] = 'Quantity must be > 0';
+    });
+    setErrors(newErrors);
+    const ok = Object.keys(newErrors).length === 0;
+    if (!ok) {
+      const firstMsg =
+        Object.values(newErrors).find(Boolean) || 'Please fill the required fields';
+      showToast(firstMsg, 'error');
+      scrollToFirstError(newErrors, setActiveTab);
+    }
+    return ok;
+  };
+
+  const validateDraftBasics = () => {
+    const newErrors: Record<string, string> = {};
+    // Draft: only Entity is required (PR number needs entity). Department + line items are enforced on Submit.
+    if (!entityId) newErrors.entityId = 'Entity is required';
+    setErrors(newErrors);
+    const ok = Object.keys(newErrors).length === 0;
+    if (!ok) {
+      showToast(Object.values(newErrors)[0] || 'Entity is required', 'error');
+      scrollToFirstError(newErrors, setActiveTab);
+    }
+    return ok;
+  };
+
+  const selectedApprovalUsers = approvalUserIds
+    .map((id) => approvalUsers.find((u) => u.id === id))
+    .filter((u): u is { id: number; name: string; email: string; role: string; department: string } => Boolean(u));
+  const selectedApprovalUser = selectedApprovalUsers[0] || null;
+
+  const handleSaveDraft = async () => {
+    if (isSubmitting || savingInFlightRef.current) return;
+    if (!validateDraftBasics()) return;
+    setSubmitAction('draft');
+    await savePR(false);
+  };
+
+  const handleSubmitPR = async () => {
+    if (isSubmitting || submitClickLockRef.current || savingInFlightRef.current) return;
+    if (!validateForm()) return;
+      setSubmitAction('submit');
+      setShowConfirmModal(true);
+    if (purchaseType === 'sass') {
+      setNextStepLabel('L1 Manager Approval');
+      setL1Manager(
+        selectedApprovalUser
+          ? { name: selectedApprovalUser.name, email: selectedApprovalUser.email }
+          : null
+      );
+      setIsLoadingL1(false);
+      return;
+    }
+    if (prFlow === 'functional') {
+      setNextStepLabel(
+        selectedApprovalUsers.length > 1
+          ? `User Approval 1 of ${selectedApprovalUsers.length}`
+          : 'User Approval'
+      );
+      setL1Manager(
+        selectedApprovalUser
+          ? { name: selectedApprovalUser.name, email: selectedApprovalUser.email }
+          : null
+      );
+      setIsLoadingL1(false);
+      return;
+    }
+    setIsLoadingL1(true);
+    try {
+      const res = await prApi.previewL1Manager(department || undefined);
+      setNextStepLabel(res.data.nextStep || 'L1 Manager Approval');
+      setL1Manager(res.data.l1Manager || null);
+    } catch {
+      setNextStepLabel('L1 Manager Approval');
+      setL1Manager(null);
+    } finally {
+      setIsLoadingL1(false);
+    }
+  };
+
+  const buildRfqVendorsPayload = async (options?: { skipFileData?: boolean }) => {
+    const skipFileData = Boolean(options?.skipFileData);
+    const maxR = Math.min(4, Math.max(1, Number(rfqMaxRounds) || 1));
+    const packed = [];
+    for (const row of rfqVendors) {
+      const master = vendorMaster.find((v) => String(v.id) === String(row.vendorId));
+      const quotes = [];
+      for (const quote of row.quotes) {
+        if (Number(quote.round) > maxR) continue;
+        const price = Number(quote.quotedPrice);
+        if (!Number.isFinite(price) || price < 0) continue;
+        const locals = localQuoteFiles(quote);
+        const saved = savedQuoteFiles(quote);
+        const hasNewFile = locals.length > 0;
+        const hasSavedFile = saved.length > 0 || Boolean(quote.savedFileName || quote.savedSubmissionId);
+        if (!hasNewFile && !hasSavedFile) continue;
+        const entry: Record<string, unknown> = {
+          round: quote.round,
+          quotedPrice: price,
+          leadTime: Number(quote.leadTime) || 0,
+          paymentTerms: quote.paymentTerms || undefined,
+        };
+        const alreadyOnServer = Boolean(quote.savedSubmissionId || (saved.length && !locals.length));
+        if (skipFileData && alreadyOnServer) {
+          entry.quotationFileName = saved[0]?.fileName || quote.savedFileName;
+          entry.keepExtraFileIds = saved.filter((f) => f.id).map((f) => f.id);
+        } else if (locals.length) {
+          const uploaded = [];
+          for (const file of locals) {
+            uploaded.push(await fileToAttachmentPayload(file));
+          }
+          if (!saved.some((f) => f.isPrimary) && !quote.savedFileName) {
+            entry.quotationFileName = uploaded[0].fileName;
+            entry.quotationFileData = uploaded[0].data;
+            if (uploaded.length > 1) {
+              entry.quotationFiles = uploaded.slice(1).map((p) => ({ fileName: p.fileName, fileData: p.data }));
+            }
+          } else {
+            entry.quotationFileName = saved[0]?.fileName || quote.savedFileName;
+            entry.quotationFiles = uploaded.map((p) => ({ fileName: p.fileName, fileData: p.data }));
+          }
+          entry.keepExtraFileIds = saved.filter((f) => !f.isPrimary && f.id).map((f) => f.id);
+          if (!saved.some((f) => f.isPrimary) && quote.savedFileName) {
+            entry.replacePrimary = true;
+          }
+        } else if (quote.savedFileName) {
+          entry.quotationFileName = quote.savedFileName;
+          entry.keepExtraFileIds = saved.filter((f) => f.id).map((f) => f.id);
+        }
+        quotes.push(entry);
+      }
+      if (!quotes.length) continue;
+      packed.push({
+        vendorId: row.vendorId ? Number(row.vendorId) : undefined,
+        name: master?.name || row.name,
+        email: master?.email || row.email,
+        quotes,
+      });
+    }
+    return packed;
+  };
+
+  const buildPayload = (items: LineItem[] = lineItems) => ({
+    title: prTitle.trim() || items[0]?.description || `${requestType} Request`,
+    requestType,
+    purchaseType,
+    requestCategory,
+    projectDetail: projectDetail.trim() || undefined,
+    specialNotes: specialNotes.trim() || undefined,
+    department,
+    entityId: entityId ? Number(entityId) : undefined,
+    priority,
+    currency,
+    prFlow: purchaseType === 'sass' || purchaseType === 'online_purchase' ? 'standard' : prFlow,
+    approvalUserId:
+      (prFlow === 'functional' || purchaseType === 'sass' || purchaseType === 'online_purchase') &&
+      approvalUserIds[0]
+        ? Number(approvalUserIds[0])
+        : undefined,
+    approvalUserIds:
+      prFlow === 'functional' || purchaseType === 'sass' || purchaseType === 'online_purchase'
+        ? purchaseType === 'sass' || purchaseType === 'online_purchase'
+          ? approvalUserIds.slice(0, 1)
+          : approvalUserIds
+        : undefined,
+    vendorSelection:
+      purchaseType === 'sass' || purchaseType === 'online_purchase' ? 'own' : vendorSelection,
+    poCreationBy:
+      prFlow === 'standard' && purchaseType !== 'sass' && purchaseType !== 'online_purchase'
+        ? poCreationBy
+        : 'scm',
+    vendorId:
+      purchaseType === 'sass' && rfqRecommendedMeta.vendorId
+        ? Number(rfqRecommendedMeta.vendorId)
+        : undefined,
+    sassSubscriptionMode: purchaseType === 'sass' ? sassSubscriptionMode || 'one_time' : undefined,
+    sassBillingFrequency:
+      purchaseType === 'sass' && sassSubscriptionMode === 'recurring'
+        ? sassBillingFrequency || undefined
+        : undefined,
+    sassSubscriptionStartDate:
+      purchaseType === 'sass' && sassSubscriptionMode === 'recurring'
+        ? sassSubscriptionStartDate || undefined
+        : undefined,
+    justification: businessJustification,
+    scopeOfWork: scopeOfWork.trim() || undefined,
+    requiredDate: requiredDate || undefined,
+    workStartDate: purchaseType === 'work_order' ? workStartDate || undefined : undefined,
+    workEndDate: purchaseType === 'work_order' ? workEndDate || undefined : undefined,
+    billingLocationId: billingLocationId || undefined,
+    billingLocation: billingLocation.trim() || undefined,
+    billingGstNo: billingGstNo.trim() || undefined,
+    billingAddress: billingAddress.trim() || undefined,
+    deliveryPoc: deliveryPoc.trim() || undefined,
+    deliveryPocEmail: deliveryPocEmail.trim() || undefined,
+    deliveryPocPhone: deliveryPocPhone.trim() || undefined,
+    projectManagerHo: projectManagerHo.trim() || undefined,
+    projectManagerContact: projectManagerContact.trim() || undefined,
+    projectManagerEmail: projectManagerEmail.trim() || undefined,
+    placeOfDelivery: placeOfDelivery.trim() || undefined,
+    expectedDeliveryTimeline: expectedDeliveryTimeline.trim() || undefined,
+    paymentTerms: paymentTerms.trim() || undefined,
+    lineItems: items.map((item) => ({
+      category: item.category,
+      itemName: item.itemName || item.description,
+      description: item.description,
+      quantity: item.quantity,
+      unitCost: hideLinePricing ? 0 : item.estimatedCost,
+      unit: item.unit || 'Nos',
+      gstPercentage: hideLinePricing
+        ? 0
+        : Number.isFinite(Number(item.gstPercentage))
+          ? Number(item.gstPercentage)
+          : 18,
+    })),
+  });
+
+  const persistAttachedFilesSnapshot = (prId: number, files: AttachedFile[]) => {
+    const meta = files
+      .filter((f) => Number(f.existingId) > 0)
+      .map((f) => ({
+        id: f.id,
+        name: f.name,
+        size: f.size,
+        existingId: Number(f.existingId),
+      }));
+    if (!snapshotRef.current) return;
+    snapshotRef.current = {
+      ...snapshotRef.current,
+      backendPrId: prId,
+      attachedFiles: meta,
+    };
+    writeCreatePrDraft(user?.id, prId, snapshotRef.current);
+  };
+
+  const uploadNewAttachments = async (prId: number) => {
+    const pending = attachedFilesRef.current.filter((item) => item.file);
+    const toSend = pending.filter((item) => {
+      const file = item.file as File;
+      const key = `${file.name}|${file.size}|${file.lastModified}`;
+      if (uploadedAttachmentKeysRef.current.has(key)) return false;
+      uploadedAttachmentKeysRef.current.add(key);
+      return true;
+    });
+    if (!toSend.length) return;
+    const uploaded: AttachedFile[] = [];
+    const failed: string[] = [];
+    for (const item of toSend) {
+      const file = item.file as File;
+      const key = `${file.name}|${file.size}|${file.lastModified}`;
+      try {
+        const res = await prApi.uploadAttachmentFile(prId, file);
+        const rec = res.data;
+        if (rec?.id) {
+          uploaded.push({
+            id: `existing-${rec.id}`,
+            name: rec.fileName || item.name,
+            size: Number(rec.size) || item.size,
+            existingId: Number(rec.id),
+          });
+        }
+      } catch (err) {
+        uploadedAttachmentKeysRef.current.delete(key);
+        const reason = err instanceof Error ? err.message : 'upload failed';
+        failed.push(`${item.name}: ${reason}`);
+        console.warn('PR attachment upload failed:', err);
+      }
+    }
+    let next = mergeAttachedFiles(
+      attachedFilesRef.current.filter((item) => !item.file || !failed.some((f) => f.startsWith(item.name))),
+      uploaded
+    );
+    try {
+      const res = await prApi.get(prId);
+      const fromServer = mapServerAttachments(
+        (res.data as { attachments?: PrAttachmentRecord[] })?.attachments
+      );
+      if (fromServer.length) next = mergeAttachedFiles(next, fromServer);
+    } catch {
+      /* keep upload-response ids */
+    }
+    setAttachedFiles(next);
+    persistAttachedFilesSnapshot(prId, next);
+    if (failed.length) {
+      const msg = `PR saved. Could not attach — ${failed.join('; ')}`;
+      showSubmitError(msg);
+      showToast(msg, 'error');
+    }
+  };
+
+  const savePR = async (
+    submit: boolean,
+    options?: { silent?: boolean; forceUploadFiles?: boolean; allowCreate?: boolean }
+  ) => {
+    // Queue saves so overlapping clicks / autosave cannot create 3–4 PRs.
+    const previous = saveQueueRef.current;
+    let releaseQueue!: () => void;
+    saveQueueRef.current = new Promise<void>((resolve) => {
+      releaseQueue = resolve;
+    });
+    await previous.catch(() => undefined);
+
+    const silent = Boolean(options?.silent);
+    const allowCreate = Boolean(options?.allowCreate) || !silent;
+
+    // After waiting: another save may have created the draft — never create again for silent.
+    if (silent && savingInFlightRef.current) {
+      releaseQueue();
+      return;
+    }
+    if (!silent && submitClickLockRef.current && savingInFlightRef.current) {
+      releaseQueue();
+      return;
+    }
+
+      if (!silent) setSubmitError('');
+      if (!silent) setToast(null);
+    if (!silent) setIsSubmitting(true);
+    savingInFlightRef.current = true;
+    if (submit) skipSoftSaveRef.current = true;
+    try {
+      const itemsForSave = commitPendingLineItem({ closeEditor: !silent });
+      const draftSnap: CreatePrDraftSnapshot = {
+        ...(snapshotRef.current || {
+          v: 1 as const,
+          savedAt: Date.now(),
+          backendPrId: persistPrId,
+          prTitle,
+          department,
+          entityId,
+          requestType,
+          purchaseType,
+          requestCategory,
+          projectDetail,
+          specialNotes,
+          vendorSelection,
+          prFlow,
+          approvalUserIds,
+          rfqMaxRounds,
+          rfqVendors: [],
+          priority,
+          currency,
+          businessJustification,
+          scopeOfWork,
+          requiredDate,
+          workStartDate,
+          workEndDate,
+          billingLocationId,
+          billingLocation,
+          billingGstNo,
+          billingAddress,
+          deliveryPoc,
+          placeOfDelivery,
+          expectedDeliveryTimeline,
+          paymentTerms,
+          lineItems: itemsForSave,
+          attachedFiles: [],
+        }),
+        lineItems: itemsForSave,
+        businessJustification,
+        scopeOfWork,
+        billingAddress,
+        placeOfDelivery,
+        deliveryPoc,
+        expectedDeliveryTimeline,
+        paymentTerms,
+        prTitle,
+        backendPrId: persistPrId,
+        savedAt: Date.now(),
+        attachedFiles: attachedFiles.map((f) => ({
+          id: f.id,
+          name: f.name,
+          size: f.size,
+          existingId: f.existingId,
+        })),
+      };
+      if (hasMeaningfulCreatePrDraft(draftSnap)) {
+        writeCreatePrDraft(user?.id, persistPrId ?? editPrId, draftSnap);
+        snapshotRef.current = draftSnap;
+      }
+      const payload: Record<string, unknown> = {
+        ...buildPayload(itemsForSave),
+        vendorSelection:
+          purchaseType === 'sass' || purchaseType === 'online_purchase'
+            ? 'own'
+            : vendorSelection === 'own'
+              ? 'own'
+              : 'scm',
+        prFlow:
+          purchaseType === 'sass' || purchaseType === 'online_purchase'
+            ? 'standard'
+            : prFlow === 'functional'
+              ? 'functional'
+              : 'standard',
+      };
+      if (showInlineVendorQuotes) {
+        const needsQuotationUpload = rfqVendors.some((row) =>
+          row.quotes.some((q) => localQuoteFiles(q).length > 0)
+        );
+        // Only embed quotation bytes when there are NEW local files — never re-send
+        // already-saved PDFs (that was causing Cloud Run 413 Request Entity Too Large).
+        const packed = await buildRfqVendorsPayload({
+          skipFileData: !needsQuotationUpload,
+        });
+        if (packed.length) {
+          payload.rfqVendors = packed;
+          payload.maxRounds = rfqMaxRounds;
+          const chosen =
+            rfqVendors.find((r) => r.key === rfqRecommendedKey) ||
+            rfqVendors.find(
+              (r) =>
+                (rfqRecommendedMeta.vendorEmail &&
+                  r.email &&
+                  rfqRecommendedMeta.vendorEmail.toLowerCase() === r.email.toLowerCase()) ||
+                (rfqRecommendedMeta.vendorName &&
+                  rfqRecommendedMeta.vendorName.toLowerCase() === r.name.toLowerCase())
+            );
+          if (chosen) {
+            payload.rfqRecommendedVendorEmail = chosen.email;
+            payload.rfqRecommendedVendorName = chosen.name;
+            payload.vendorId = chosen.vendorId ? Number(chosen.vendorId) : undefined;
+            payload.rfqRecommendationJustification = rfqRecommendationJustification;
+          }
+        }
+
+        // Cloud Run rejects bodies over ~32MB — if still too large, strip file bytes and warn.
+        try {
+          const approx = JSON.stringify(payload).length;
+          if (approx > 28 * 1024 * 1024 && Array.isArray(payload.rfqVendors)) {
+            const lightPacked = await buildRfqVendorsPayload({ skipFileData: true });
+            payload.rfqVendors = lightPacked;
+            if (!silent) {
+              showToast(
+                'Quotation files are too large to send in one save. PR details will save; re-add quotation files one at a time (under 25MB each).',
+                'error'
+              );
+            }
+          }
+        } catch {
+          /* ignore size probe failures */
+        }
+      }
+
+      const markQuoteFilesSaved = async (savedPrId?: number) => {
+        if (payload.rfqVendors) setExistingRfqHasQuotes(true);
+        const prId = Number(savedPrId || persistPrId || editPrId);
+        if (!prId) return;
+        try {
+          const res = await rfqApi.getByPr(prId);
+          const invitations = (res.data as {
+            invitations?: Array<{
+              vendorName?: string;
+              vendorEmail?: string;
+              submissions?: Array<{
+                id?: number;
+                round?: number;
+                quotationFileName?: string;
+                quotationFiles?: Array<{ id?: number | null; fileName?: string; isPrimary?: boolean }>;
+              }>;
+            }>;
+          })?.invitations || [];
+          if (!invitations.length) return;
+          setRfqVendors((prev) => {
+            const maxR = Math.min(4, Math.max(1, Number(rfqMaxRounds) || 1));
+            const next = prev.map((row) => {
+              const inv = invitations.find(
+                (i) =>
+                  (i.vendorName || '').toLowerCase() === row.name.toLowerCase() ||
+                  ((i.vendorEmail || '') &&
+                    (row.email || '') &&
+                    (i.vendorEmail || '').toLowerCase() === row.email.toLowerCase())
+              );
+              if (!inv) {
+                return { ...row, quotes: row.quotes.filter((q) => q.round <= maxR) };
+              }
+              return {
+                ...row,
+                quotes: row.quotes
+                  .filter((q) => q.round <= maxR)
+                  .map((q) => {
+                    const sub = (inv.submissions || []).find(
+                      (s) => Number(s.round) === Number(q.round) && Number(s.round) <= maxR
+                    );
+                    if (!sub?.id && !sub?.quotationFileName && !sub?.quotationFiles?.length) return q;
+                    const saved = filesFromSubmission(sub);
+                    const keepLocal = localQuoteFiles(q);
+                    const serverHasFile = saved.length > 0 || Boolean(sub.quotationFileName);
+                    return {
+                      ...q,
+                      file: serverHasFile ? null : keepLocal[0] || q.file,
+                      files: serverHasFile ? [] : keepLocal,
+                      savedFiles: saved.length ? saved : q.savedFiles,
+                      savedFileName: saved[0]?.fileName || sub.quotationFileName || q.savedFileName,
+                      savedSubmissionId: sub.id ? Number(sub.id) : q.savedSubmissionId,
+                    };
+                  }),
+              };
+            });
+            const snap = snapshotRef.current;
+            if (snap) {
+              writeCreatePrDraft(user?.id, prId, {
+                ...snap,
+                backendPrId: prId,
+                rfqMaxRounds: maxR,
+                rfqVendors: next.map((row) => ({
+                  key: row.key,
+                  vendorId: row.vendorId,
+                  name: row.name,
+                  email: row.email,
+                  quotes: row.quotes.map((q) => ({
+                    round: q.round,
+                    quotedPrice: q.quotedPrice,
+                    leadTime: q.leadTime,
+                    paymentTerms: q.paymentTerms,
+                    savedFileName: q.savedFileName,
+                    savedSubmissionId: q.savedSubmissionId,
+                    savedFiles: q.savedFiles,
+                  })),
+                })),
+              });
+            }
+            return next;
+          });
+        } catch {
+          /* ignore hydrate errors */
+        }
+      };
+
+      const markSubmitSuccess = () => {
+        skipSoftSaveRef.current = true;
+        suppressSoftResumeRef.current = true;
+        clearCreatePrDraft(user?.id, editPrId);
+        clearCreatePrDraft(user?.id, persistPrId);
+        startFreshCreatePr(user?.id);
+      };
+
+      const finishCreate = async (res: { data: unknown }) => {
+        const data = res.data as {
+          id?: number;
+          prNumber: string;
+          nextStep?: string;
+          l1Manager?: { name: string | null; email: string | null };
+        };
+        if (data.id) {
+          await uploadNewAttachments(data.id);
+          if (!submit) bindSavedDraftId(data.id);
+          await markQuoteFilesSaved(data.id);
+          writeCreatePrDraft(user?.id, data.id, {
+            ...snapshotRef.current!,
+            backendPrId: data.id,
+            prNumber: data.prNumber,
+          });
+        }
+        setCreatedPrNumber(data.prNumber);
+        if (data.prNumber) setPrNumber(data.prNumber);
+        if (submit) {
+          markSubmitSuccess();
+          setNextStepLabel(data.nextStep || 'L1 Manager Approval');
+          setL1Manager(data.l1Manager || null);
+          setShowConfirmModal(false);
+        } else {
+          setNextStepLabel('');
+          setL1Manager(null);
+        }
+        if (silent) return;
+        if (!submit) {
+          suppressSoftResumeRef.current = true;
+          // Save Draft → leave Create PR and open dashboard / Track PR
+          window.REACT_APP_NAVIGATE(backTo);
+          return;
+        }
+        setShowSuccessModal(true);
+      };
+
+      const finishExisting = async (id: number) => {
+        if (isAdminEditFlow) {
+          const res = await prApi.adminUpdate(id, { ...payload, silent });
+          const updated = res.data as
+            | { approvalHistory?: typeof approvalHistory }
+            | undefined;
+          if (Array.isArray(updated?.approvalHistory)) {
+            setApprovalHistory(updated.approvalHistory);
+          }
+          await uploadNewAttachments(id);
+          await markQuoteFilesSaved(id);
+          if (silent) return;
+        setCreatedPrNumber(prNumber);
+          setNextStepLabel('');
+          setL1Manager(null);
+          setShowConfirmModal(false);
+        setShowSuccessModal(true);
+        return;
+      }
+        if (submit) {
+          const res = await prApi.resubmit(id, { ...payload, remarks: resubmitRemarks });
+          const data = res.data as {
+            prNumber?: string;
+            nextStep?: string;
+            l1Manager?: { name: string | null; email: string | null };
+          };
+          await uploadNewAttachments(id);
+          await markQuoteFilesSaved(id);
+          markSubmitSuccess();
+          setCreatedPrNumber(data.prNumber || prNumber);
+          setNextStepLabel(data.nextStep || 'L1 Manager Approval');
+          setL1Manager(data.l1Manager || null);
+        } else {
+          await prApi.update(id, payload);
+          await uploadNewAttachments(id);
+          await markQuoteFilesSaved(id);
+          bindSavedDraftId(id);
+          setCreatedPrNumber(prNumber);
+          setNextStepLabel('');
+          setL1Manager(null);
+          writeCreatePrDraft(user?.id, id, {
+            ...snapshotRef.current!,
+            backendPrId: id,
+            prNumber,
+            lineItems: (snapshotRef.current?.lineItems?.length
+              ? snapshotRef.current.lineItems
+              : lineItems) as CreatePrDraftSnapshot['lineItems'],
+            attachedFiles: snapshotRef.current?.attachedFiles || [],
+          });
+        }
+        if (silent) return;
+        if (!submit) {
+          suppressSoftResumeRef.current = true;
+          window.REACT_APP_NAVIGATE(backTo);
+          return;
+        }
+        setShowConfirmModal(false);
+      setShowSuccessModal(true);
+      };
+
+      // Always resolve from ref/localStorage — never create duplicates while setState is pending.
+      let targetId = resolvePersistPrId();
+
+      // If another create is already running, wait and then UPDATE that draft.
+      if (!targetId && createDraftLockRef.current) {
+        const lockedId = await createDraftLockRef.current;
+        if (lockedId) {
+          bindSavedDraftId(lockedId);
+          targetId = lockedId;
+        }
+      }
+
+      // Claim create slot synchronously before any further await when we still have no id.
+      let createSlotResolve: ((id: number | null) => void) | null = null;
+      if (!targetId && !createDraftLockRef.current && !(silent && !allowCreate)) {
+        createDraftLockRef.current = new Promise<number | null>((resolve) => {
+          createSlotResolve = resolve;
+        });
+      }
+
+      if (targetId) {
+        try {
+          await finishExisting(targetId);
+          if (createSlotResolve) {
+            createSlotResolve(targetId);
+            createDraftLockRef.current = null;
+            createSlotResolve = null;
+          }
+          return;
+    } catch (err) {
+          if (silent) throw err;
+          if (isAdminEditFlow || !isUnusablePersistError(err)) throw err;
+          bindSavedDraftId(null);
+          if (snapshotRef.current) {
+            snapshotRef.current = { ...snapshotRef.current, backendPrId: null };
+          }
+        }
+      }
+
+      targetId = resolvePersistPrId();
+      if (targetId) {
+        await finishExisting(targetId);
+        if (createSlotResolve) {
+          createSlotResolve(targetId);
+          createDraftLockRef.current = null;
+          createSlotResolve = null;
+        }
+        return;
+      }
+
+      // First server draft: manual Save Draft / submit, or leave-menu flush (allowCreate).
+      // Silent autosave without an id stays local — creating here remounted the page and wiped line items.
+      if (silent && !allowCreate) {
+        if (createSlotResolve) {
+          createSlotResolve(null);
+          createDraftLockRef.current = null;
+        }
+        setSoftSaveHint('Draft auto-saved locally');
+        return;
+      }
+      if (silent && !entityId) {
+        if (createSlotResolve) {
+          createSlotResolve(null);
+          createDraftLockRef.current = null;
+        }
+        setSoftSaveHint('Draft auto-saved locally');
+        return;
+      }
+
+      try {
+        const res = await prApi.create({ ...payload, submit: Boolean(submit) });
+        const created = res.data as { id?: number };
+        const newId = created.id ? Number(created.id) : null;
+        if (newId) bindSavedDraftId(newId);
+        if (createSlotResolve) {
+          createSlotResolve(newId);
+          createDraftLockRef.current = null;
+          createSlotResolve = null;
+        }
+        await finishCreate(res);
+      } catch (err) {
+        if (createSlotResolve) {
+          createSlotResolve(null);
+          createDraftLockRef.current = null;
+          createSlotResolve = null;
+        }
+        throw err;
+      }
+    } catch (err) {
+      if (submit) {
+        skipSoftSaveRef.current = false;
+        submitClickLockRef.current = false;
+      }
+      if (!silent) showSubmitError(err instanceof Error ? err.message : 'Failed to save PR');
+    } finally {
+      savingInFlightRef.current = false;
+      if (!silent) setIsSubmitting(false);
+      releaseQueue();
+    }
+  };
+
+  savePRRef.current = savePR;
+
+  const confirmSubmit = async () => {
+    if (submitClickLockRef.current || savingInFlightRef.current || isSubmitting) return;
+    submitClickLockRef.current = true;
+    setIsSubmitting(true);
+    if (snapshotRef.current && hasMeaningfulCreatePrDraft(snapshotRef.current)) {
+      writeCreatePrDraft(user?.id, persistPrId ?? editPrId, snapshotRef.current);
+    }
+    try {
+      await savePR(true);
+    } catch {
+      submitClickLockRef.current = false;
+      setIsSubmitting(false);
+    }
+  };
+
+  const typeColors: Record<string, string> = {
+    Capex: 'bg-[#EEF4FF] text-[#2B5AED] border-[#C7D2FE]',
+    Opex: 'bg-[#E3F2FD] text-[#1E88E5] border-[#90CAF9]',
+    Service: 'bg-amber-50 text-[#FB8C00] border-amber-200',
+  };
+
+  const priorityColors: Record<string, string> = {
+    Low: 'bg-slate-100 text-slate-600',
+    Medium: 'bg-[#E3F2FD] text-[#1E88E5]',
+    High: 'bg-amber-50 text-[#FB8C00]',
+    Critical: 'bg-red-50 text-[#E53935]',
+  };
+
+  return (
+    <DashboardLayout>
+      {toast ? (
+        <div
+          className={`fixed top-4 right-4 z-[80] max-w-sm px-4 py-3 rounded-xl shadow-lg text-sm font-medium flex items-start gap-2 ${
+            toast.type === 'success' ? 'bg-[#43A047] text-white' : 'bg-[#E53935] text-white'
+          }`}
+          role="alert"
+        >
+          <i
+            className={`${toast.type === 'success' ? 'ri-checkbox-circle-line' : 'ri-error-warning-line'} text-base mt-0.5 shrink-0`}
+          ></i>
+          <span className="leading-snug">{toast.text}</span>
+          <button
+            type="button"
+            onClick={() => setToast(null)}
+            className="ml-1 shrink-0 opacity-80 hover:opacity-100"
+            aria-label="Dismiss"
+          >
+            <i className="ri-close-line text-lg"></i>
+          </button>
+        </div>
+      ) : null}
+      {isLoadingPr ? (
+        <div
+          className="flex items-center justify-center min-h-[60vh] font-sans"
+          style={{ background: PM_PAGE_BG }}
+        >
+          <div className="text-center space-y-3">
+            <div className="w-12 h-12 mx-auto rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-center">
+              <i className="ri-loader-4-line text-2xl text-[#1E88E5] animate-spin"></i>
+            </div>
+            <p className="text-sm font-medium text-[#64748B]">Loading purchase request...</p>
+          </div>
+        </div>
+      ) : loadError ? (
+        <div className="p-8 font-sans" style={{ background: PM_PAGE_BG }}>
+          <div className="max-w-md mx-auto p-6 bg-white border border-red-200 rounded-2xl text-center shadow-sm">
+            <p className="text-sm text-red-700 mb-4">{loadError}</p>
+            <Link to={backTo} className="text-sm font-semibold text-[#1E88E5] hover:underline">
+              {isAdminEditFlow || isEditMode ? 'Back to Track PR' : 'Back to Dashboard'}
+            </Link>
+          </div>
+        </div>
+      ) : (
+      <div className="cpr-fx min-h-full font-sans text-[#0F172A]">
+      {/* ── Hero header ── */}
+      <header className="cpr-hero">
+        <div className="cpr-art" aria-hidden="true" />
+        <div className="cpr-hero-bubbles" aria-hidden="true">
+          <i /><i /><i /><i /><i />
+        </div>
+        <div className="cpr-hero-inner">
+          <div className="cpr-hero-text min-w-0">
+            <div className="cpr-crumbs">
+              <Link to={backTo}>{isAdminEditFlow || isEditMode ? 'Track PR' : 'Dashboard'}</Link>
+              <i className="ri-arrow-right-s-line"></i>
+              <span>
+                {isAdminEditFlow
+                  ? 'Admin Edit PR'
+                  : isEditMode
+                    ? isReturned
+                      ? 'Edit & Resubmit PR'
+                      : 'Edit Purchase Requisition'
+                    : 'Create Purchase Requisition'}
+              </span>
+            </div>
+            <h1 className="cpr-title">
+              {isAdminEditFlow
+                ? 'Admin Edit Purchase Requisition'
+                : isEditMode
+                  ? isReturned
+                    ? 'Edit & Resubmit PR'
+                    : 'Edit Purchase Requisition'
+                  : 'New Purchase Requisition'}
+            </h1>
+            <p className="cpr-sub">
+              {isAdminEditFlow
+                ? 'Update any PR field or line item, then save changes'
+                : isReturned
+                ? 'Update the fields based on feedback, then resubmit for approval'
+                : isPendingEditFlow
+                ? 'Update the request. It stays in the current approval step.'
+                : isEditMode
+                ? 'Update your draft or submit when ready'
+                : 'Fill in the details to raise a new procurement request'}
+            </p>
+            <div className="cpr-chips">
+              <span className={`cpr-chip ${typeColors[requestType]}`}>{requestType}</span>
+              <span className={`cpr-chip ${priorityColors[priority]}`}>{priority} Priority</span>
+              {department && (
+                <span className="cpr-chip cpr-chip-dept">
+                  <i className="ri-building-line mr-1"></i>
+                  {department}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="cpr-hero-side">
+            <div className="cpr-stats">
+              <div className="cpr-stat" style={{ '--i': 0 } as React.CSSProperties}>
+                <span className="cpr-stat-ic tone-teal">
+                  <i className="ri-file-list-3-line"></i>
+                </span>
+                <div className="min-w-0">
+                  <small>PR Number</small>
+                  <b className="cpr-stat-accent truncate">{displayPrNumber}</b>
+                </div>
+              </div>
+              <div className="cpr-stat" style={{ '--i': 1 } as React.CSSProperties}>
+                <span className="cpr-stat-ic tone-green">
+                  <i className="ri-money-rupee-circle-line"></i>
+                </span>
+                <div className="min-w-0">
+                  <small>{hideLinePricing ? 'Vendor Path' : 'Total Amount'}</small>
+                  <b className="truncate tabular-nums">
+                    {hideLinePricing
+                      ? 'Own Vendor'
+                      : formatMoney(getTotalAmount(), currency, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </b>
+                </div>
+              </div>
+              <div className="cpr-stat" style={{ '--i': 2 } as React.CSSProperties}>
+                <span className="cpr-stat-ic tone-violet">
+                  <i className="ri-shopping-cart-2-line"></i>
+                </span>
+                <div className="min-w-0">
+                  <small>Line Items</small>
+                  <b className="tabular-nums">{lineItems.length}</b>
+                </div>
+              </div>
+            </div>
+
+            <div className="cpr-status">
+              <span className="cpr-status-msg">
+                <i className="cpr-status-dot" />
+                {softSaveHint ||
+                  (isEditMode || isAdminEditFlow ? 'Editing purchase requisition' : 'Starting a new purchase requisition')}
+              </span>
+              <span className="cpr-status-count">
+                {lineItems.length === 0
+                  ? 'No items yet'
+                  : hideLinePricing
+                    ? `${lineItems.filter((i) => i.description || i.itemName).length}/${lineItems.length} items filled`
+                    : `${lineItems.filter((i) => i.description && i.estimatedCost > 0).length}/${lineItems.length} items filled`}
+              </span>
+              <div className="cpr-status-track">
+                <div
+                  className="cpr-status-fill"
+                  style={{
+                    width: `${
+                      lineItems.length > 0
+                        ? ((hideLinePricing
+                            ? lineItems.filter((i) => i.description || i.itemName).length
+                            : lineItems.filter((i) => i.description && i.estimatedCost > 0).length) /
+                            lineItems.length) *
+                          100
+                        : 0
+                    }%`,
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* ── Main Content ── */}
+      <div className="cpr-body w-full min-w-0 max-w-full space-y-4 pt-3">
+
+        {isReturned && (
+          <div className="p-5 bg-orange-50 border border-orange-200 rounded-xl space-y-4">
+            <div className="flex items-start gap-3">
+              <i className="ri-arrow-go-back-line text-orange-600 text-xl mt-0.5"></i>
+              <div>
+                <p className="text-sm font-semibold text-orange-800">Returned for Rework</p>
+                <p className="text-xs text-orange-700 mt-1">
+                  Review the feedback below, update the form fields, then resubmit for L1 Manager approval.
+                </p>
+              </div>
+            </div>
+
+            {returnFeedback ? (
+              <div className="bg-white border border-orange-200 rounded-xl p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                  <div>
+                    <p className="text-xs font-semibold text-orange-800 uppercase tracking-wide">Return Justification</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {returnFeedback.user} · {returnFeedback.role} · {returnFeedback.stage}
+                    </p>
+                  </div>
+                  <span className="text-xs text-gray-400">{returnFeedback.date}</span>
+                </div>
+                <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap bg-orange-50/60 rounded-lg p-3 border border-orange-100">
+                  {returnFeedback.remarks}
+                </p>
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        {isAdminEditFlow && approvalHistory.length > 0 ? (
+          <div className={PM_CARD}>
+            <div className="relative z-[1] flex items-center justify-between gap-3 border-b border-slate-100/80 bg-gradient-to-r from-white to-[#E3F2FD]/40 px-4 py-2.5 sm:px-4 sm:py-3">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">Approval History</h2>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Full workflow (submit, approve, return) plus admin saves
+                </p>
+              </div>
+              <span className="text-xs font-medium text-gray-500">{approvalHistory.length} events</span>
+            </div>
+            <div className="px-6 py-4 max-h-[420px] overflow-y-auto">
+              <ApprovalHistoryPanel history={approvalHistory} />
+            </div>
+          </div>
+        ) : null}
+
+        {/* ── Create PR step tabs ── */}
+        <div className="cpr-steps">
+          {createPrTabs.map((tab, index) => {
+            const isActive = activeTab === tab.id;
+            const activeIdx = createPrTabs.findIndex((t) => t.id === activeTab);
+            const isDone = index < activeIdx;
+            return (
+              <div key={tab.id} className="flex min-w-0 flex-1 items-center">
+                {index > 0 ? (
+                  <i
+                    className={`cpr-step-sep ri-arrow-right-s-line${isDone || isActive ? ' is-on' : ''}`}
+                    aria-hidden
+                  />
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`cpr-step${isActive ? ' is-active' : ''}${isDone ? ' is-done' : ''}`}
+                >
+                  <span className="cpr-step-ic">
+                    <i className={isDone && !isActive ? 'ri-check-line' : tab.icon}></i>
+                    {tab.id === 'items' && lineItems.length > 0 ? (
+                      <span className="cpr-step-badge">{lineItems.length}</span>
+                    ) : null}
+                  </span>
+                  <span className="cpr-step-label">{tab.label}</span>
+                  {isActive ? <i className="cpr-step-go ri-arrow-right-s-line" aria-hidden /> : null}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        {activeTab === 'basic' && (
+          <div className="space-y-4">
+        {/* ── Section 1: Basic Information ── */}
+        <div className={PM_CARD}>
+          <div className="cpr-sec-head relative z-[1] flex items-center gap-3 border-b border-slate-100/80 bg-gradient-to-r from-white to-[#E3F2FD]/40 px-4 py-2.5 sm:px-4 sm:py-3">
+            <div className={PM_ICON_CHIP_SOLID}>
+              <i className="ri-information-line text-sm"></i>
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-[#0F172A]">Basic Information</h2>
+              <p className="text-xs text-[#64748B]">General details about this requisition</p>
+            </div>
+          </div>
+
+          <div className="relative z-[1] grid w-full min-w-0 grid-cols-1 items-start gap-x-4 gap-y-3 p-3 sm:grid-cols-2 sm:p-4">
+            {/* PR Number */}
+            <div className="flex w-full min-w-0 flex-col">
+              <label className="block text-xs font-semibold text-[#7F8C8D] uppercase tracking-wider mb-2">PR Number</label>
+              <div className="flex h-11 w-full min-w-0 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4">
+                <i className="ri-lock-line shrink-0 text-sm text-slate-400"></i>
+                <span className="min-w-0 truncate text-sm font-bold tracking-wide text-slate-700">{displayPrNumber}</span>
+                <span className="ml-auto shrink-0 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-500">On submit</span>
+              </div>
+              <p className="mt-1 text-[11px] leading-snug text-slate-400">Official number assigned when you submit</p>
+            </div>
+
+            {/* PR Title */}
+            <div className="flex w-full min-w-0 flex-col" data-field="prTitle">
+              <label className="block text-xs font-semibold text-[#7F8C8D] uppercase tracking-wider mb-2">
+                PR Title <span className="text-red-500">*</span>
+              </label>
+              <div className="cpr-ic-wrap">
+                <i className="ri-file-text-line" aria-hidden />
+                <input
+                  type="text"
+                  value={prTitle}
+                  onChange={(e) => {
+                    setPrTitle(e.target.value);
+                    if (errors.prTitle) {
+                      setErrors((prev) => {
+                        const next = { ...prev };
+                        delete next.prTitle;
+                        return next;
+                      });
+                    }
+                  }}
+                  placeholder="Enter a short title for this purchase request"
+                  className={`cpr-has-ic box-border h-11 w-full rounded-xl border border-gray-200 bg-white px-4 text-sm focus:border-[#1E88E5] focus:outline-none focus:ring-2 focus:ring-[#1E88E5]/30 ${
+                    errors.prTitle ? 'border-red-400 bg-red-50' : 'border-gray-200 bg-white'
+                  }`}
+                />
+              </div>
+              {errors.prTitle && <p className="mt-1 text-xs text-red-500">{errors.prTitle}</p>}
+            </div>
+
+            {/* Entity */}
+            <div className="flex w-full min-w-0 flex-col" data-field="entityId">
+              <label className="block text-xs font-semibold text-[#7F8C8D] uppercase tracking-wider mb-2">
+                Entity <span className="text-red-500">*</span>
+              </label>
+              <SearchCreateField
+                options={entities.map((ent) => ({
+                  id: ent.id,
+                  label: formatEntityLabel(ent),
+                  subLabel: ent.costCenter || undefined,
+                }))}
+                displayValue={selectedEntity ? formatEntityLabel(selectedEntity) : ''}
+                selectedId={entityId || null}
+                placeholder="Search entity by code, name, cost center…"
+                hasError={Boolean(errors.entityId)}
+                addNoun="entity"
+                emptyHint={
+                  entities.length
+                    ? undefined
+                    : 'No entities found. Add them in Entity Master, then click here again.'
+                }
+                onSelect={(opt) => {
+                  setEntityId(Number(opt.id));
+                  const ent = entities.find((e) => e.id === Number(opt.id));
+                  const locs = ent?.locations?.filter((loc) => loc.location) || [];
+                  const stillValid = locs.some((loc) => Number(loc.id) === Number(billingLocationId));
+                  if (!stillValid) {
+                    if (locs.length === 1) {
+                      const loc = locs[0];
+                      setBillingLocationId(loc.id ? Number(loc.id) : '');
+                      setBillingLocation(loc.location || '');
+                      setBillingGstNo((loc.gstNo || '').toUpperCase());
+                      setBillingAddress(
+                        String(loc.billingAddress || '').trim() || loc.location || ''
+                      );
+                      setPlaceOfDelivery(String(loc.siteAddress || '').trim());
+                    } else {
+                      setBillingLocationId('');
+                      setBillingLocation('');
+                      setBillingGstNo('');
+                      setBillingAddress('');
+                      setPlaceOfDelivery('');
+                    }
+                  }
+                  if (errors.entityId || errors.billingLocationId) {
+                    setErrors((prev) => {
+                      const next = { ...prev };
+                      delete next.entityId;
+                      delete next.billingLocationId;
+                      return next;
+                    });
+                  }
+                }}
+                onClear={() => {
+                  setEntityId('');
+                  setBillingLocationId('');
+                  setBillingLocation('');
+                  setBillingGstNo('');
+                  setBillingAddress('');
+                  setPlaceOfDelivery('');
+                }}
+                onCreate={async (name) => {
+                  const created = await masterApi.chatCreateEntity({ name });
+                  const ent = created.data;
+                  setEntities((prev) => {
+                    if (prev.some((e) => e.id === ent.id)) return prev;
+                    return [...prev, ent].sort((a, b) => a.name.localeCompare(b.name));
+                  });
+                  setEntityId(ent.id);
+                }}
+                onOpen={() => {
+                  void masterApi
+                    .listEntities({ status: 'active' })
+                    .then((res) => setEntities(res.data || []))
+                    .catch(() => {});
+                }}
+              />
+              {errors.entityId && (
+                <p className="text-xs text-red-500 mt-1">{errors.entityId}</p>
+              )}
+              {!errors.entityId && entities.length === 0 ? (
+                <p className="text-xs text-amber-600 mt-1.5">
+                  No entities loaded from Entity Master. Add an entity there, then reopen this field.
+                </p>
+              ) : null}
+            </div>
+
+            {/* Purchase Type */}
+            <div className="w-full min-w-0 sm:col-span-2">
+              <label className="block text-xs font-semibold text-[#7F8C8D] uppercase tracking-wider mb-2">
+                Purchase Type <span className="text-red-500">*</span>
+              </label>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 w-full">
+                {(
+                  [
+                    { id: 'purchase_order' as const, label: 'Purchase Order', hint: 'Number: PO-Entity-FY-####', icon: 'ri-file-list-3-line' },
+                    { id: 'work_order' as const, label: 'Work Order', hint: 'Number: WO-Entity-FY-####', icon: 'ri-file-settings-line' },
+                    {
+                      id: 'sass' as const,
+                      label: 'Cloud Subscription',
+                      hint: 'No PO · L1 → invoice path',
+                      icon: 'ri-cloud-fill',
+                    },
+                    {
+                      id: 'online_purchase' as const,
+                      label: 'Online Purchase',
+                      hint: 'Number: OP-Entity-FY-####',
+                      icon: 'ri-shopping-cart-2-line',
+                    },
+                  ]
+                ).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => {
+                      if (opt.id === 'sass') {
+                        setPreviousPurchaseType(purchaseType);
+                        setSassSubscriptionModalStep('mode');
+                        setSassSubscriptionModalOpen(true);
+                        return;
+                      }
+                      setPurchaseType(opt.id);
+                      setSassSubscriptionMode(null);
+                      setSassBillingFrequency(null);
+                      setSassSubscriptionStartDate('');
+                      if (opt.id === 'online_purchase') {
+                        setVendorSelection('own');
+                        setPrFlow('standard');
+                        setApprovalUserIds([]);
+                      }
+                      // Service is only valid for Work Order
+                      if (opt.id === 'purchase_order' && requestType === 'Service') {
+                        setRequestType('Opex');
+                      }
+                      if (opt.id === 'purchase_order' || opt.id === 'online_purchase') {
+                        setWorkStartDate('');
+                        setWorkEndDate('');
+                      }
+                    }}
+                    className={`cpr-ptype${purchaseType === opt.id ? ' is-active' : ''}`}
+                  >
+                    <span className="cpr-ptype-ic">
+                      <i className={opt.icon}></i>
+                    </span>
+                    {purchaseType === opt.id ? (
+                      <i className="cpr-ptype-check ri-checkbox-circle-fill" aria-hidden />
+                    ) : null}
+                    <span className="min-w-0">
+                      <span className="block truncate">{opt.label}</span>
+                      <span className="cpr-ptype-hint block truncate" title={opt.hint}>
+                        {opt.hint}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {purchaseType === 'sass' && (
+                <div className="mt-3 rounded-xl border border-[#90CAF9] bg-[#E3F2FD]/80 px-4 py-3 text-sm text-[#0D47A1]">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold">
+                      {sassSubscriptionMode === 'recurring' ? 'Recurring' : 'One-Time'} Cloud Subscription
+                    </span>
+                    {sassSubscriptionMode === 'recurring' && sassBillingFrequency && (
+                      <span className="text-xs font-medium uppercase tracking-wide bg-white/80 border border-[#90CAF9] px-2 py-0.5 rounded-lg">
+                        {sassBillingFrequency}
+                      </span>
+                    )}
+                    {sassSubscriptionMode === 'recurring' && sassSubscriptionStartDate && (
+                      <span className="text-xs text-[#1565C0]">Start: {sassSubscriptionStartDate}</span>
+                    )}
+                    <button
+                      type="button"
+                      className="ml-auto text-xs font-semibold text-[#1565C0] underline"
+                      onClick={() => {
+                        setSassSubscriptionModalStep('mode');
+                        setSassSubscriptionModalOpen(true);
+                      }}
+                    >
+                      Change
+                    </button>
+                  </div>
+                  {(errors.sassSubscriptionMode ||
+                    errors.sassBillingFrequency ||
+                    errors.sassSubscriptionStartDate) && (
+                    <p className="text-xs text-red-600 mt-2">
+                      {errors.sassSubscriptionMode ||
+                        errors.sassBillingFrequency ||
+                        errors.sassSubscriptionStartDate}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Department */}
+            <div className="flex w-full min-w-0 flex-col" data-field="department">
+              <label className="block text-xs font-semibold text-[#7F8C8D] uppercase tracking-wider mb-2">
+                Department <span className="text-red-500">*</span>
+              </label>
+              <DepartmentCombobox
+                departments={departments}
+                selectedName={department}
+                hasError={Boolean(errors.department)}
+                onSelect={(dept) => {
+                  setDepartment(dept.name);
+                  if (errors.department) {
+                    setErrors((prev) => {
+                      const next = { ...prev };
+                      delete next.department;
+                      return next;
+                    });
+                  }
+                }}
+                onClear={() => setDepartment('')}
+                onCreated={(created) => {
+                  rememberDepartment(created);
+                  setDepartment(created.name);
+                }}
+              />
+              {errors.department && (
+                <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+                  <i className="ri-error-warning-line"></i>
+                  {errors.department}
+                </p>
+              )}
+            </div>
+
+            {/* Required Date */}
+            <div className="flex w-full min-w-0 flex-col" data-field="requiredDate">
+              <label className="block text-xs font-semibold text-[#7F8C8D] uppercase tracking-wider mb-2">
+                Required Date <span className="text-red-500">*</span>
+              </label>
+              <div className="cpr-ic-wrap">
+                <i className="ri-calendar-event-line" aria-hidden />
+                <input
+                  type="date"
+                  value={requiredDate}
+                  onChange={e => setRequiredDate(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                  className={`cpr-has-ic h-11 w-full cursor-pointer rounded-xl border border-gray-200 bg-white px-4 text-sm focus:border-[#1E88E5] focus:outline-none focus:ring-2 focus:ring-[#1E88E5]/30 ${errors.requiredDate ? 'border-red-400 bg-red-50' : 'border-gray-200'}`}
+                />
+              </div>
+              {errors.requiredDate && <p className="text-xs text-red-500 mt-1 flex items-center gap-1"><i className="ri-error-warning-line"></i>{errors.requiredDate}</p>}
+            </div>
+
+            {purchaseType === 'work_order' && (
+              <>
+                <div data-field="workStartDate">
+                  <label className="block text-xs font-semibold text-[#7F8C8D] uppercase tracking-wider mb-2">
+                    Work Start Date
+                  </label>
+                  <input
+                    type="date"
+                    value={workStartDate}
+                    onChange={(e) => {
+                      setWorkStartDate(e.target.value);
+                      if (errors.workStartDate) {
+                        setErrors((prev) => {
+                          const next = { ...prev };
+                          delete next.workStartDate;
+                          return next;
+                        });
+                      }
+                    }}
+                    className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white cursor-pointer ${
+                      errors.workStartDate ? 'border-red-400 bg-red-50' : 'border-violet-200'
+                    }`}
+                  />
+                  {errors.workStartDate && (
+                    <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+                      <i className="ri-error-warning-line"></i>
+                      {errors.workStartDate}
+                    </p>
+                  )}
+                </div>
+                <div data-field="workEndDate">
+                  <label className="block text-xs font-semibold text-[#7F8C8D] uppercase tracking-wider mb-2">
+                    Work End Date
+                  </label>
+                  <input
+                    type="date"
+                    value={workEndDate}
+                    onChange={(e) => {
+                      setWorkEndDate(e.target.value);
+                      if (errors.workEndDate) {
+                        setErrors((prev) => {
+                          const next = { ...prev };
+                          delete next.workEndDate;
+                          return next;
+                        });
+                      }
+                    }}
+                    min={workStartDate || undefined}
+                    className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white cursor-pointer ${
+                      errors.workEndDate ? 'border-red-400 bg-red-50' : 'border-violet-200'
+                    }`}
+                  />
+                  {errors.workEndDate && (
+                    <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+                      <i className="ri-error-warning-line"></i>
+                      {errors.workEndDate}
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* Currency — INR / USD / EUR */}
+            <div className="flex w-full min-w-0 flex-col">
+              <label className="block text-xs font-semibold text-[#7F8C8D] uppercase tracking-wider mb-2">
+                Currency <span className="text-red-500">*</span>
+              </label>
+              <div className="inline-flex h-11 w-full items-center rounded-xl border border-gray-200 bg-white p-0.5">
+                {CURRENCY_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.code}
+                    type="button"
+                    onClick={() => setCurrency(opt.code)}
+                    className={`h-10 flex-1 cursor-pointer whitespace-nowrap rounded-lg px-2 text-xs font-semibold transition-colors ${
+                      currency === opt.code
+                        ? 'cpr-seg-on text-white'
+                        : 'text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    {opt.symbol} {opt.code}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Request Type — Service only for Work Order */}
+            <div className="flex w-full min-w-0 flex-col">
+              <label className="block text-xs font-semibold text-[#7F8C8D] uppercase tracking-wider mb-2">
+                Request Type <span className="text-red-500">*</span>
+              </label>
+              <div className="flex gap-2">
+                {(
+                  purchaseType === 'work_order'
+                    ? (['Capex', 'Opex', 'Service'] as const)
+                    : (['Capex', 'Opex'] as const)
+                ).map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => setRequestType(type)}
+                    className={`h-11 flex-1 cursor-pointer whitespace-nowrap rounded-xl border text-xs font-semibold transition-all ${
+                      requestType === type
+                        ? typeColors[type] + ' shadow-sm'
+                        : 'border-gray-200 text-gray-500 hover:border-gray-300 bg-white'
+                    }`}
+                  >
+                    {type}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Request Category — Product or Service */}
+            <div className="flex w-full min-w-0 flex-col" data-field="requestCategory">
+              <label className="block text-xs font-semibold text-[#7F8C8D] uppercase tracking-wider mb-2">
+                Request Category <span className="text-red-500">*</span>
+              </label>
+              <div className="flex gap-2">
+                {PR_REQUEST_CATEGORY_OPTIONS.map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => {
+                      setRequestCategory(cat);
+                      if (errors.requestCategory) {
+                        setErrors((prev) => {
+                          const next = { ...prev };
+                          delete next.requestCategory;
+                          return next;
+                        });
+                      }
+                    }}
+                    className={`h-11 flex-1 cursor-pointer whitespace-nowrap rounded-xl border text-xs font-semibold transition-all ${
+                      requestCategory === cat
+                        ? cat === 'Product'
+                          ? 'bg-sky-100 text-sky-700 border-sky-200 shadow-sm'
+                          : 'bg-amber-100 text-amber-700 border-amber-200 shadow-sm'
+                        : 'border-gray-200 text-gray-500 hover:border-gray-300 bg-white'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+              {errors.requestCategory && (
+                <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+                  <i className="ri-error-warning-line"></i>
+                  {errors.requestCategory}
+                </p>
+              )}
+            </div>
+
+            {/* Project Detail */}
+            <div className="sm:col-span-2" data-field="projectDetail">
+              <label className="block text-xs font-semibold text-[#7F8C8D] uppercase tracking-wider mb-2">
+                Project Detail
+              </label>
+              <input
+                type="text"
+                value={projectDetail}
+                onChange={(e) => setProjectDetail(e.target.value)}
+                placeholder="Project name, code, or reference"
+                className="h-11 w-full rounded-xl border border-gray-200 bg-white px-4 text-sm focus:border-[#1E88E5] focus:outline-none focus:ring-2 focus:ring-[#1E88E5]/30"
+              />
+            </div>
+
+            {/* Special Notes */}
+            <div className="sm:col-span-2" data-field="specialNotes">
+              <label className="block text-xs font-semibold text-[#7F8C8D] uppercase tracking-wider mb-2">
+                Special Notes
+              </label>
+              <textarea
+                value={specialNotes}
+                onChange={(e) => setSpecialNotes(e.target.value)}
+                rows={3}
+                placeholder="Any special instructions or notes for SCM / vendors"
+                className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]/30 focus:border-[#1E88E5] resize-none bg-white"
+              />
+            </div>
+
+            {/* Priority */}
+            <div className="flex w-full min-w-0 flex-col">
+              <label className="block text-xs font-semibold text-[#7F8C8D] uppercase tracking-wider mb-2">Priority</label>
+              <div className="flex gap-2">
+                {priorityOptions.map(p => (
+                  <button
+                    key={p}
+                    onClick={() => setPriority(p)}
+                    className={`h-11 flex-1 cursor-pointer whitespace-nowrap rounded-xl border text-xs font-semibold transition-all ${
+                      priority === p
+                        ? priorityColors[p] + ' border-current shadow-sm'
+                        : 'border-gray-200 text-gray-500 hover:border-gray-300 bg-white'
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {purchaseType === 'online_purchase' ? (
+              <>
+                <div className="sm:col-span-2 rounded-xl border border-[#90CAF9] bg-[#E3F2FD]/60 px-4 py-3">
+                  <p className="text-sm font-semibold text-[#0D47A1]">Online Purchase approval path</p>
+                  <p className="text-xs text-[#1565C0] mt-1 leading-relaxed">
+                    Select L1 / User Approver → Mugesh L1 → Srivaths (L2) → Mugesh Invoice Upload →
+                    Completed. If Srivaths is selected as L1, L2 is skipped (same person already
+                    approved once). SCM RFQ is skipped.
+                  </p>
+                </div>
+                <div className="sm:col-span-2" data-field="approvalUserId">
+                  <label className="block text-xs font-semibold text-[#7F8C8D] uppercase tracking-wider mb-2">
+                    L1 Manager / User Approver <span className="text-red-500">*</span>
+                  </label>
+                  <UserSearchSelect
+                    users={approvalUsers}
+                    value={approvalUserIds}
+                    onChange={(ids) => setApprovalUserIds(ids.slice(0, 1))}
+                    placeholder="Search and select L1 approver"
+                    error={Boolean(errors.approvalUserId)}
+                    max={1}
+                  />
+                  {errors.approvalUserId && (
+                    <p className="text-xs text-red-500 mt-1">{errors.approvalUserId}</p>
+                  )}
+                  <p className="text-xs text-gray-500 mt-1.5">
+                    After L1: Mugesh (mugesh.m@refex.co.in) L1 → Srivaths (L2) → Mugesh Invoice
+                    Upload → Completed. If you select Srivaths as L1, L2 is skipped automatically.
+                  </p>
+                </div>
+              </>
+            ) : null}
+
+            {purchaseType === 'sass' ? (
+              <>
+                <div className="sm:col-span-2 rounded-xl border border-[#90CAF9] bg-[#E3F2FD]/60 px-4 py-3">
+                  <p className="text-sm font-semibold text-[#0D47A1]">Cloud Subscription approval path</p>
+                  <p className="text-xs text-[#1565C0] mt-1">
+                    {String(user?.email || '')
+                      .trim()
+                      .toLowerCase() === 'mugesh.m@refex.co.in' ? (
+                      <>
+                        You are Mugesh — select L1 user approver → after L1 approval, this comes
+                        back to you for <strong>Invoice Upload</strong> (Mugesh approval &amp;
+                        Srivaths L2 are skipped) → Accounts. SCM RFQ is skipped.
+                      </>
+                    ) : (
+                      <>
+                        Add vendors &amp; quotes below, pick one recommended vendor, select L1 →
+                        Mugesh approves → Srivaths (L2) → Mugesh Invoice Upload → Accounts. If
+                        Srivaths is selected as L1, L2 is skipped (same person already approved
+                        once). SCM RFQ is skipped.
+                      </>
+                    )}
+                  </p>
+                </div>
+                <div className="sm:col-span-2" data-field="approvalUserId">
+                  <label className="block text-xs font-semibold text-[#7F8C8D] uppercase tracking-wider mb-2">
+                    L1 Manager / User Approver <span className="text-red-500">*</span>
+                  </label>
+                  <UserSearchSelect
+                    users={approvalUsers}
+                    value={approvalUserIds}
+                    onChange={(ids) => setApprovalUserIds(ids.slice(0, 1))}
+                    placeholder="Search and select L1 approver"
+                    error={Boolean(errors.approvalUserId)}
+                    max={1}
+                  />
+                  {errors.approvalUserId && (
+                    <p className="text-xs text-red-500 mt-1">{errors.approvalUserId}</p>
+                  )}
+                  <p className="text-xs text-gray-500 mt-1.5">
+                    {String(user?.email || '')
+                      .trim()
+                      .toLowerCase() === 'mugesh.m@refex.co.in'
+                      ? 'After L1 approves, you get an assigned My Task to upload the invoice. Do not select yourself as L1.'
+                      : 'After L1: Mugesh (mugesh.m@refex.co.in) approves, then Srivaths (L2), then Mugesh Invoice Upload. If you select Srivaths as L1, L2 is skipped automatically.'}
+                  </p>
+                </div>
+              </>
+            ) : purchaseType === 'online_purchase' ? null : (
+              <>
+            <div className="grid grid-cols-1 items-start gap-4 sm:col-span-2 sm:grid-cols-2">
+            {/* Request Flow */}
+            <div className="min-w-0">
+              <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-[#7F8C8D]">
+                Flow <span className="text-red-500">*</span>
+              </label>
+              <div className="relative">
+                <select
+                  value={prFlow}
+                  onChange={(e) => {
+                    const next = e.target.value === 'functional' ? 'functional' : 'standard';
+                    setPrFlow(next);
+                  }}
+                  className="h-11 w-full cursor-pointer appearance-none rounded-xl border border-gray-200 bg-white pl-4 pr-10 text-sm text-[#2C3E50] focus:border-[#1E88E5] focus:outline-none focus:ring-2 focus:ring-[#1E88E5]/30"
+                >
+                  <option value="standard">Standard</option>
+                  <option value="functional">Functional</option>
+                </select>
+                <i className="ri-arrow-down-s-line pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-base text-slate-400" />
+              </div>
+              <p className="mt-2 text-xs leading-5 text-gray-500">
+                {prFlow === 'standard'
+                  ? 'Standard: current L1 / L2 / Mugesh / RFQ path (Own vendor or SCM vendor).'
+                  : 'Functional: shortened path — quotes on Create PR for Own vendor, selected user approval, then SCM RFQ / Final RFQ.'}
+              </p>
+            </div>
+
+            <div className="min-w-0">
+              <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-[#7F8C8D]">
+                Vendor Selection <span className="text-red-500">*</span>
+              </label>
+              <div className="relative">
+                <select
+                  value={vendorSelection}
+                  onChange={(e) => setVendorSelection(e.target.value === 'own' ? 'own' : 'scm')}
+                  className="h-11 w-full cursor-pointer appearance-none rounded-xl border border-gray-200 bg-white pl-4 pr-10 text-sm text-[#2C3E50] focus:border-[#1E88E5] focus:outline-none focus:ring-2 focus:ring-[#1E88E5]/30"
+                >
+                  <option value="scm">SCM vendor Selection</option>
+                  <option value="own">Own vendor</option>
+                </select>
+                <i className="ri-arrow-down-s-line pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-base text-slate-400" />
+              </div>
+              <p className="mt-2 text-xs leading-5 text-gray-500">
+                {prFlow === 'standard'
+                  ? vendorSelection === 'own'
+                    ? poCreationBy === 'requester'
+                      ? 'L1 → your RFQ entry (billing and delivery are asked there) → L1 vendor final → L2 → (optional Mugesh) → SCM Final RFQ → you create the PO → L1 Manager approval → Mugesh Sign & Upload.'
+                      : 'L1 → your RFQ entry (billing and delivery are asked there) → L1 vendor final → L2 → (optional Mugesh) → SCM Final RFQ → Create PO → SCM Manager sign-off.'
+                    : poCreationBy === 'requester'
+                      ? 'L1 → L2 → Mugesh → SCM RFQ entry → SCM Manager vendor approval → you create the PO → L1 Manager approval → Mugesh Sign & Upload. Billing and delivery are filled on this page.'
+                      : 'L1 → L2 → Mugesh → SCM RFQ entry → SCM Manager vendor approval → Create PO → SCM Manager sign-off. Billing and delivery are filled on this page.'
+                  : vendorSelection === 'own'
+                    ? 'Enter vendor quotes on this page, pick approvers in order, then SCM Final RFQ → Buyer Final Verify → Create PO → SCM Manager approval.'
+                    : 'No inline RFQ. Pick approvers in order, then SCM RFQ Entry → Buyer Final Verify → Create PO → SCM Manager approval. Billing and delivery are filled on this page.'}
+              </p>
+            </div>
+            </div>
+
+            {prFlow === 'standard' && (
+              <div className="min-w-0 sm:col-span-2 sm:max-w-[calc(50%-0.5rem)]">
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-[#7F8C8D]">
+                  PO Creation By <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <select
+                    value={poCreationBy}
+                    onChange={(e) => setPoCreationBy(e.target.value === 'requester' ? 'requester' : 'scm')}
+                    className="h-11 w-full cursor-pointer appearance-none rounded-xl border border-gray-200 bg-white pl-4 pr-10 text-sm text-[#2C3E50] focus:border-[#1E88E5] focus:outline-none focus:ring-2 focus:ring-[#1E88E5]/30"
+                  >
+                    <option value="scm">SCM</option>
+                    <option value="requester">Requester</option>
+                  </select>
+                  <i className="ri-arrow-down-s-line pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-base text-slate-400" />
+                </div>
+                <p className="mt-2 text-xs leading-5 text-gray-500">
+                  {poCreationBy === 'requester'
+                    ? 'After the existing PR approval, you create the PO. L1 Manager approves, then Mugesh signs and uploads.'
+                    : 'After the existing PR approval, SCM creates and signs the PO. This is the current standard path.'}
+                </p>
+              </div>
+            )}
+
+            {prFlow === 'functional' && (
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold text-[#7F8C8D] uppercase tracking-wider mb-2">
+                  Select User Approval <span className="text-red-500">*</span>
+                </label>
+                <UserSearchSelect
+                  users={approvalUsers}
+                  value={approvalUserIds}
+                  onChange={setApprovalUserIds}
+                  placeholder="Search by name, email, role, or department"
+                  error={Boolean(errors.approvalUserId)}
+                />
+                {errors.approvalUserId && (
+                  <p className="text-xs text-red-500 mt-1">{errors.approvalUserId}</p>
+                )}
+                <p className="text-xs text-gray-500 mt-1.5">
+                  Select 1–5 people in approval order. Person 1 approves first, then person 2, then the rest in that order.
+                  After all selected users approve:{' '}
+                  {vendorSelection === 'own' ? 'SCM Final RFQ' : 'SCM RFQ Entry'} → Buyer Final Verify → Create PO → SCM Manager approval.
+                </p>
+              </div>
+            )}
+              </>
+            )}
+
+          </div>
+        </div>
+
+        {/* ── Section 4: Business Justification ── */}
+        <div className={PM_CARD} data-field="businessJustification">
+          <div className="cpr-sec-head relative z-[1] flex items-center gap-3 border-b border-slate-100/80 bg-gradient-to-r from-white to-[#E3F2FD]/40 px-4 py-2.5 sm:px-4 sm:py-3">
+            <div className={PM_ICON_CHIP_SOLID}>
+              <i className="ri-article-line text-sm"></i>
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">Business Justification</h2>
+              <p className="text-xs text-gray-500">Explain the business need and expected benefits</p>
+            </div>
+          </div>
+          <div className="p-3 sm:p-4">
+            <textarea
+              value={businessJustification}
+              onChange={e => setBusinessJustification(e.target.value)}
+              rows={5}
+              placeholder="Describe the business need, expected benefits, and why this purchase is necessary for operations..."
+              className={`w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]/30 focus:border-[#1E88E5] resize-none bg-white ${errors.businessJustification ? 'border-red-400 bg-red-50' : 'border-gray-200'}`}
+            />
+            <div className="flex items-center justify-between mt-2">
+              {errors.businessJustification
+                ? <p className="text-xs text-red-500 flex items-center gap-1"><i className="ri-error-warning-line"></i>{errors.businessJustification}</p>
+                : <p className="text-xs text-gray-400">Minimum 50 characters recommended</p>
+              }
+              <p className="text-xs text-gray-400">{businessJustification.length} chars</p>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Section 5: Attachments ── */}
+        <div className={PM_CARD}>
+          <div className="cpr-sec-head relative z-[1] flex items-center gap-3 border-b border-slate-100/80 bg-gradient-to-r from-white to-[#E3F2FD]/40 px-4 py-2.5 sm:px-4 sm:py-3">
+            <div className={PM_ICON_CHIP_SOLID}>
+              <i className="ri-attachment-2 text-sm"></i>
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">FSD Document (Functional Specification Document)</h2>
+              <p className="text-xs text-gray-500">Upload FSD / functional specification documents</p>
+            </div>
+          </div>
+          <div className="p-3 sm:p-4">
+            <div
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={`cursor-pointer rounded-xl border-2 border-dashed p-4 text-center transition-all ${isDragging ? 'border-slate-500 bg-slate-50' : 'border-gray-200 hover:border-slate-400 hover:bg-gray-50'}`}
+            >
+              <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100">
+                <i className="ri-upload-cloud-2-line text-lg text-slate-500"></i>
+              </div>
+              <p className="text-sm font-medium text-gray-700 mb-1">Drop files here or click to browse</p>
+              <p className="text-xs text-gray-400">PDF, DOC, DOCX, XLS, XLSX, JPG, PNG — Max 25MB each</p>
+              <input ref={fileInputRef} type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" onChange={handleFileSelect} className="hidden" />
+            </div>
+
+            {attachedFiles.length > 0 && (
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                {attachedFiles.map(file => (
+                  <div key={file.id} className="flex items-center gap-3 p-3 border border-gray-200 rounded-xl bg-gray-50 hover:bg-white transition-colors">
+                    <div className="w-9 h-9 flex items-center justify-center bg-slate-100 rounded-lg flex-shrink-0">
+                      <i className="ri-file-text-line text-slate-600 text-sm"></i>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      {file.existingId && persistPrId ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            prApi.downloadAttachment(persistPrId, file.existingId as number, file.name);
+                          }}
+                          className="text-sm font-medium text-[#1565C0] hover:underline truncate text-left cursor-pointer"
+                        >
+                          {file.name}
+                        </button>
+                      ) : (
+                      <p className="text-sm font-medium text-gray-800 truncate">{file.name}</p>
+                      )}
+                      <p className="text-xs text-gray-400">{formatFileSize(file.size)}</p>
+                    </div>
+                    <button onClick={e => { e.stopPropagation(); removeFile(file.id); }} className="text-red-400 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 transition-colors cursor-pointer flex-shrink-0">
+                      <i className="ri-close-line text-sm"></i>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+          </div>
+        )}
+
+        {activeTab === 'items' && (
+          <div className="space-y-4">
+        {/* ── Section 2: Line Items ── */}
+        <div className={PM_CARD} data-field="lineItems">
+          <div className="relative z-[1] flex items-center justify-between border-b border-slate-100/80 bg-gradient-to-r from-white to-[#E3F2FD]/40 px-4 py-2.5 sm:px-4 sm:py-3">
+            <div className="flex items-center gap-3">
+              <div className={PM_ICON_CHIP_SOLID}>
+                <i className="ri-shopping-cart-line text-sm"></i>
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-gray-900">Line Items</h2>
+                <p className="text-xs text-gray-500">Add all items required for this requisition</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={openAddLineItem}
+              disabled={Boolean(lineEditor)}
+              className="flex items-center gap-2 px-4 py-2 bg-[#1E88E5] text-white text-xs font-semibold rounded-xl hover:bg-[#1565C0] transition-colors cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <i className="ri-add-line"></i>
+              Add Line Item
+            </button>
+          </div>
+
+          <div className="space-y-3 p-3 sm:p-4">
+            {errors.lineItems && (
+              <p className="text-xs text-red-500 flex items-center gap-1">
+                <i className="ri-error-warning-line"></i>
+                {errors.lineItems}
+              </p>
+            )}
+
+            {lineEditor && (
+              <LineItemEditorForm
+                key={`${lineEditor.mode}-${lineEditor.item.id}`}
+                mode={lineEditor.mode}
+                initial={lineEditor.item}
+                masterItems={masterItems}
+                masterCategories={masterCategories}
+                requestType={requestType}
+                currency={currency}
+                moneySymbol={moneySymbol}
+                hidePricing={hideLinePricing}
+                onSave={saveLineItem}
+                onCancel={closeLineEditor}
+                onMasterItemCreated={rememberMasterItem}
+                onCategoryCreated={rememberCategory}
+                onLiveChange={(item) => {
+                  pendingLineDraftRef.current = item;
+                }}
+              />
+            )}
+
+            {/* Soft dashboard card rows */}
+            <div className="space-y-3 md:hidden">
+              {lineItems.length === 0 ? (
+                <div className="relative overflow-hidden rounded-2xl border border-transparent bg-white px-4 py-6 text-center shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] sm:rounded-[18px]">
+                  <div
+                    className="pointer-events-none absolute inset-0"
+                    style={{
+                      background:
+                        'radial-gradient(120% 90% at 100% 0%, rgba(30, 136, 229, 0.08) 0%, rgba(255,255,255,0) 55%)',
+                    }}
+                  />
+                  <div className="relative z-[1]">
+                    <p className="text-sm font-medium text-slate-600">No line items yet</p>
+                    <p className="mt-1 text-xs text-slate-400">Tap Add Line Item to enter the first item</p>
+                    {!lineEditor && (
+                      <button
+                        type="button"
+                        onClick={openAddLineItem}
+                        className="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-xl bg-[#1E88E5] px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#1565C0]"
+                      >
+                        <i className="ri-add-line"></i>
+                        Add Line Item
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                lineItems.map((item, index) => {
+                  const isEditing = lineEditor?.mode === 'edit' && lineEditor.item.id === item.id;
+                  return (
+                    <div
+                      key={`line-card-${item.id}-${index}`}
+                      className={`relative overflow-hidden rounded-2xl border border-transparent bg-white p-4 shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] transition-[border-color,box-shadow] sm:rounded-[18px] ${
+                        isEditing
+                          ? 'border-[#90CAF9] shadow-[0_14px_32px_-14px_rgba(15,23,42,0.18)]'
+                          : 'hover:border-[#90CAF9] hover:shadow-[0_14px_32px_-14px_rgba(15,23,42,0.16)]'
+                      }`}
+                    >
+                      <div
+                        className="pointer-events-none absolute inset-0"
+                        style={{
+                          background:
+                            'radial-gradient(120% 90% at 100% 0%, rgba(30, 136, 229, 0.08) 0%, rgba(255,255,255,0) 55%)',
+                        }}
+                      />
+                      <div className="relative z-[1] flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="mb-1 flex items-center gap-2">
+                            <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-xl bg-[#E3F2FD] px-1.5 text-[11px] font-bold text-[#1E88E5]">
+                              #{index + 1}
+                            </span>
+                            <p className="truncate text-sm font-semibold text-[#2C3E50]">
+                              {item.itemName || item.description || `Item ${index + 1}`}
+                            </p>
+                          </div>
+                          {item.description && item.description !== item.itemName && (
+                            <p className="mb-2 line-clamp-2 text-xs text-slate-400" title={item.description}>
+                              {item.description}
+                            </p>
+                          )}
+                          <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Category</p>
+                              <p className="mt-0.5 text-[#2C3E50]">{item.category || '—'}</p>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Qty</p>
+                              <p className="mt-0.5 text-[#2C3E50]">
+                                {item.quantity}{' '}
+                                <span className="text-xs text-slate-400">{item.unit || 'Nos'}</span>
+                              </p>
+                            </div>
+                            {!hideLinePricing && (
+                              <>
+                                <div>
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Unit Price</p>
+                                  <p className="mt-0.5 tabular-nums text-[#2C3E50]">
+                                    {formatMoney(item.estimatedCost, currency, {
+                                      minimumFractionDigits: 2,
+                                      maximumFractionDigits: 2,
+                                    })}
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">GST %</p>
+                                  <p className="mt-0.5 text-[#2C3E50]">
+                                    {item.gstPercentage != null ? `${item.gstPercentage}%` : '—'}
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">HSN</p>
+                                  <p className="mt-0.5 text-[#2C3E50]">{item.hsnCode || '—'}</p>
+                                </div>
+                                <div>
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Amount (incl. GST)</p>
+                                  <p className="mt-0.5 text-sm font-bold tabular-nums text-[#1E88E5]">
+                                    {formatMoney(
+                                      lineInclusiveAmount(item.quantity, item.estimatedCost, item.gstPercentage),
+                                      currency,
+                                      { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+                                    )}
+                                  </p>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => openEditLineItem(item)}
+                            className="cursor-pointer rounded-xl p-2 text-slate-500 transition-colors hover:bg-[#E3F2FD] hover:text-[#1E88E5]"
+                            title="Edit"
+                            aria-label={`Edit ${item.itemName || item.description || 'line item'}`}
+                          >
+                            <i className="ri-pencil-line text-base"></i>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeleteLineItemId(item.id)}
+                            className="cursor-pointer rounded-xl p-2 text-[#F43F5E] transition-colors hover:bg-[#FFE4E6]"
+                            title="Delete"
+                            aria-label={`Delete ${item.itemName || item.description || 'line item'}`}
+                          >
+                            <i className="ri-delete-bin-line text-base"></i>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="relative z-[1] hidden w-full overflow-x-auto md:block">
+              <table className="w-max min-w-full border-separate border-spacing-x-0 border-spacing-y-3 text-sm">
+                <thead>
+                  <tr>
+                    <th className="px-3 pb-1 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">#</th>
+                    <th className="px-3 pb-1 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Item Name</th>
+                    <th className="px-3 pb-1 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Category</th>
+                    <th className="px-3 pb-1 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Qty</th>
+                    {!hideLinePricing && (
+                      <>
+                        <th className="px-3 pb-1 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Unit Price</th>
+                        <th className="px-3 pb-1 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">HSN</th>
+                        <th className="px-3 pb-1 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">GST %</th>
+                        <th className="px-3 pb-1 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Amount (incl. GST)</th>
+                      </>
+                    )}
+                    <th className="px-3 pb-1 text-right text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lineItems.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={hideLinePricing ? 5 : 9}
+                        className="rounded-2xl border border-transparent bg-white px-4 py-6 text-center shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] sm:rounded-[18px]"
+                      >
+                        <p className="text-sm font-medium text-slate-600">No line items yet</p>
+                        <p className="mt-1 text-xs text-slate-400">Click Add Line Item to enter the first item</p>
+                        {!lineEditor && (
+                          <button
+                            type="button"
+                            onClick={openAddLineItem}
+                            className="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-xl bg-[#1E88E5] px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#1565C0]"
+                          >
+                            <i className="ri-add-line"></i>
+                            Add Line Item
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ) : (
+                    lineItems.map((item, index) => {
+                      const isEditing = lineEditor?.mode === 'edit' && lineEditor.item.id === item.id;
+                      const rowBorder = isEditing
+                        ? 'border-[#90CAF9]'
+                        : 'border-transparent group-hover:border-[#90CAF9]';
+                      const rowShadow = isEditing
+                        ? 'shadow-[0_14px_32px_-14px_rgba(15,23,42,0.18)]'
+                        : 'shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] group-hover:shadow-[0_14px_32px_-14px_rgba(15,23,42,0.16)]';
+                      return (
+                        <tr key={`line-row-${item.id}-${index}`} className="group">
+                          <td
+                            className={`whitespace-nowrap rounded-l-2xl border border-r-0 bg-white px-3 py-4 text-sm font-bold text-[#1E88E5] transition-[border-color,box-shadow] sm:rounded-l-[18px] sm:py-5 ${rowBorder} ${rowShadow}`}
+                          >
+                            {index + 1}
+                          </td>
+                          <td className={`max-w-[240px] border border-x-0 bg-white px-3 py-4 transition-[border-color] sm:py-5 ${rowBorder}`}>
+                            <p className="font-semibold text-[#2C3E50]">
+                              {item.itemName || item.description || `Item ${index + 1}`}
+                            </p>
+                            {item.description && item.description !== item.itemName && (
+                              <p className="mt-0.5 line-clamp-1 text-xs text-slate-400" title={item.description}>
+                                {item.description}
+                              </p>
+                            )}
+                          </td>
+                          <td className={`whitespace-nowrap border border-x-0 bg-white px-3 py-4 text-[#2C3E50] transition-[border-color] sm:py-5 ${rowBorder}`}>
+                            {item.category || '—'}
+                          </td>
+                          <td className={`whitespace-nowrap border border-x-0 bg-white px-3 py-4 tabular-nums text-[#2C3E50] transition-[border-color] sm:py-5 ${rowBorder}`}>
+                            {item.quantity}{' '}
+                            <span className="text-xs text-slate-400">{item.unit || 'Nos'}</span>
+                          </td>
+                          {!hideLinePricing && (
+                            <>
+                              <td className={`whitespace-nowrap border border-x-0 bg-white px-3 py-4 tabular-nums text-[#2C3E50] transition-[border-color] sm:py-5 ${rowBorder}`}>
+                                {formatMoney(item.estimatedCost, currency, {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}
+                              </td>
+                              <td className={`whitespace-nowrap border border-x-0 bg-white px-3 py-4 text-slate-600 transition-[border-color] sm:py-5 ${rowBorder}`}>
+                                {item.hsnCode || '—'}
+                              </td>
+                              <td className={`whitespace-nowrap border border-x-0 bg-white px-3 py-4 tabular-nums text-[#2C3E50] transition-[border-color] sm:py-5 ${rowBorder}`}>
+                                {item.gstPercentage != null ? `${item.gstPercentage}%` : '—'}
+                              </td>
+                              <td className={`whitespace-nowrap border border-x-0 bg-white px-3 py-4 text-sm font-bold tabular-nums text-[#1E88E5] transition-[border-color] sm:py-5 ${rowBorder}`}>
+                                {formatMoney(
+                                  lineInclusiveAmount(item.quantity, item.estimatedCost, item.gstPercentage),
+                                  currency,
+                                  { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+                                )}
+                              </td>
+                            </>
+                          )}
+                          <td
+                            className={`whitespace-nowrap rounded-r-2xl border border-l-0 bg-white px-3 py-4 transition-[border-color,box-shadow] sm:rounded-r-[18px] sm:py-5 ${rowBorder} ${rowShadow}`}
+                          >
+                            <div className="flex items-center justify-end gap-1">
+                              <button
+                                type="button"
+                                onClick={() => openEditLineItem(item)}
+                                className="cursor-pointer rounded-xl p-1.5 text-slate-500 transition-colors hover:bg-[#E3F2FD] hover:text-[#1E88E5]"
+                                title="Edit"
+                                aria-label={`Edit ${item.itemName || item.description || 'line item'}`}
+                              >
+                                <i className="ri-pencil-line text-sm"></i>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setDeleteLineItemId(item.id)}
+                                className="cursor-pointer rounded-xl p-1.5 text-[#F43F5E] transition-colors hover:bg-[#FFE4E6]"
+                                title="Delete"
+                                aria-label={`Delete ${item.itemName || item.description || 'line item'}`}
+                              >
+                                <i className="ri-delete-bin-line text-sm"></i>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Soft primary dashboard summary card */}
+          <div className="relative mx-4 mb-5 overflow-hidden rounded-2xl border border-transparent bg-white shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] sm:mx-6 sm:mb-6 sm:rounded-[18px]">
+            <div
+              className="pointer-events-none absolute inset-0"
+              style={{
+                background:
+                  'radial-gradient(120% 90% at 100% 0%, rgba(30, 136, 229, 0.12) 0%, rgba(255,255,255,0) 55%)',
+              }}
+            />
+            <div className="relative z-[1] flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+              <div className="flex flex-wrap items-center gap-5 sm:gap-6">
+                <div className="text-center sm:text-left">
+                  <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Total Items</p>
+                  <p className="text-lg font-bold tabular-nums text-[#2C3E50]">{lineItems.length}</p>
+                </div>
+                <div className="hidden h-8 w-px bg-[#BBDEFB] sm:block"></div>
+                <div className="text-center sm:text-left">
+                  <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Total Quantity</p>
+                  <p className="text-lg font-bold tabular-nums text-[#2C3E50]">{lineItems.reduce((s, i) => s + i.quantity, 0)}</p>
+                </div>
+                {!hideLinePricing && (
+                  <>
+                    <div className="hidden h-8 w-px bg-[#BBDEFB] sm:block"></div>
+                    <div className="text-center sm:text-left">
+                      <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Average Unit Price</p>
+                      <p className="text-lg font-bold tabular-nums text-[#2C3E50]">
+                        {formatMoney(lineItems.length > 0 ? lineItems.reduce((s, i) => s + i.estimatedCost, 0) / lineItems.length : 0, currency, { maximumFractionDigits: 0 })}
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+              {!hideLinePricing ? (
+                <div className="flex items-center gap-3">
+                  <div className="text-right">
+                    <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Estimated Total (incl. GST)</p>
+                    <p className="text-2xl font-extrabold tabular-nums text-[#1E88E5]">
+                      {formatMoney(getTotalAmount(), currency, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#E3F2FD] text-[#1E88E5]">
+                    <i className="ri-money-dollar-circle-line text-xl"></i>
+                  </div>
+                </div>
+              ) : (
+                <p className="max-w-xs text-right text-xs text-slate-500">
+                  Own Vendor — unit price, GST and totals are collected during RFQ quotation.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+
+          </div>
+        )}
+
+        {activeTab === 'vendors' && showInlineVendorQuotes && (
+          <div className="space-y-4">
+          <div data-field="rfqVendors">
+          <FunctionalOwnRfqSection
+            vendors={vendorMaster}
+            rows={rfqVendors}
+            maxRounds={rfqMaxRounds}
+            currency={currency}
+            error={errors.rfqVendors}
+            prNumber={prNumber}
+            recommendedKey={rfqRecommendedKey}
+            recommendationJustification={rfqRecommendationJustification}
+            existingQuoteNote={
+              existingRfqHasQuotes
+                ? 'Quotes already saved on this PR. Re-upload only if you need to replace them.'
+                : undefined
+            }
+            onMaxRoundsChange={setRfqMaxRounds}
+            onChange={setRfqVendors}
+            onRecommendedChange={({ key, vendorId, vendorName, vendorEmail, justification }) => {
+              setRfqRecommendedKey(key);
+              setRfqRecommendedMeta({
+                vendorId,
+                vendorName,
+                vendorEmail,
+              });
+              setRfqRecommendationJustification(justification);
+            }}
+            onVendorsRefresh={(vendor) => {
+              if (vendor) {
+                setVendorMaster((prev) =>
+                  prev.some((v) => v.id === vendor.id) ? prev : [vendor, ...prev]
+                );
+              }
+            }}
+          />
+          </div>
+          </div>
+        )}
+
+        {activeTab === 'scm' && (
+          <div className="space-y-4">
+            <div className="relative overflow-hidden rounded-2xl border border-transparent bg-white/95 px-4 py-3 shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] sm:rounded-[18px] sm:px-5">
+              <div
+                className="pointer-events-none absolute inset-0"
+                style={{
+                  background:
+                    'radial-gradient(120% 90% at 100% 0%, rgba(30, 136, 229, 0.10) 0%, rgba(255,255,255,0) 55%)',
+                }}
+              />
+              <div className="relative z-[1] flex items-start gap-3">
+                <div className={PM_ICON_CHIP_SOLID}>
+                  <i className="ri-team-line text-sm"></i>
+                </div>
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-800">SCM Team — Mandatory Fields</h2>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    Billing, delivery, scope of work, and payment terms needed for SCM / PO
+                  </p>
+                </div>
+              </div>
+            </div>
+
+        {askBillingOnCreatePr ? (
+          <PrBillingDeliverySection
+            value={{
+              billingLocationId,
+              billingLocation,
+              billingGstNo,
+              billingAddress,
+              deliveryPoc,
+              deliveryPocEmail,
+              deliveryPocPhone,
+              projectManagerHo,
+              projectManagerContact,
+              projectManagerEmail,
+              placeOfDelivery,
+              expectedDeliveryTimeline,
+              paymentTerms,
+            }}
+            selectedEntity={selectedEntity}
+            billingLocations={billingLocations}
+            errors={errors}
+            requireBillingCore
+            hidePaymentTerms={showScopeAndPaymentTerms}
+            onChange={(patch) => {
+              if (patch.billingLocationId !== undefined) setBillingLocationId(patch.billingLocationId);
+              if (patch.billingLocation !== undefined) setBillingLocation(patch.billingLocation);
+              if (patch.billingGstNo !== undefined) setBillingGstNo(patch.billingGstNo);
+              if (patch.billingAddress !== undefined) setBillingAddress(patch.billingAddress);
+              if (patch.deliveryPoc !== undefined) setDeliveryPoc(patch.deliveryPoc);
+              if (patch.deliveryPocEmail !== undefined) setDeliveryPocEmail(patch.deliveryPocEmail);
+              if (patch.deliveryPocPhone !== undefined) setDeliveryPocPhone(patch.deliveryPocPhone);
+              if (patch.projectManagerHo !== undefined) setProjectManagerHo(patch.projectManagerHo);
+              if (patch.projectManagerContact !== undefined) setProjectManagerContact(patch.projectManagerContact);
+              if (patch.projectManagerEmail !== undefined) setProjectManagerEmail(patch.projectManagerEmail);
+              if (patch.placeOfDelivery !== undefined) setPlaceOfDelivery(patch.placeOfDelivery);
+              if (patch.expectedDeliveryTimeline !== undefined) {
+                setExpectedDeliveryTimeline(patch.expectedDeliveryTimeline);
+              }
+              if (patch.paymentTerms !== undefined) setPaymentTerms(patch.paymentTerms);
+            }}
+            onClearError={(key) => {
+              if (!errors[key]) return;
+              setErrors((prev) => {
+                const next = { ...prev };
+                delete next[key];
+                return next;
+              });
+            }}
+          />
+        ) : (
+          <div className="rounded-2xl border border-transparent bg-white px-5 py-4 shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] sm:rounded-[18px]">
+            <p className="text-sm font-semibold text-slate-800">Billing &amp; delivery on RFQ Entry</p>
+            <p className="mt-1 text-xs text-slate-500">
+              For Standard + Own vendor, billing region, GSTIN, address, POC, place of delivery, and timeline
+              are asked on RFQ Entry after L1 approval — not on this page.
+            </p>
+          </div>
+        )}
+
+        {showScopeAndPaymentTerms && (
+          <div className={PM_CARD} data-field="scopeOfWork">
+            <div className="cpr-sec-head relative z-[1] flex items-center gap-3 border-b border-slate-100/80 bg-gradient-to-r from-white to-[#E3F2FD]/40 px-4 py-2.5 sm:px-4 sm:py-3">
+              <div className={PM_ICON_CHIP_SOLID}>
+                <i className="ri-file-list-3-line text-sm"></i>
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-[#0F172A]">Scope of Work &amp; Payment Terms</h2>
+                <p className="text-xs text-[#64748B]">
+                  SCM mandatory fields — required for Functional + Own Vendor when creating the PO
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-3 p-3 sm:p-4">
+              <div>
+                <label className="block text-xs font-semibold text-[#7F8C8D] uppercase tracking-wider mb-2">
+                  Scope of Work <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={scopeOfWork}
+                  onChange={(e) => {
+                    setScopeOfWork(e.target.value);
+                    if (errors.scopeOfWork) {
+                      setErrors((prev) => {
+                        const next = { ...prev };
+                        delete next.scopeOfWork;
+                        return next;
+                      });
+                    }
+                  }}
+                  rows={5}
+                  placeholder="Describe the full scope of work, deliverables, and any technical requirements..."
+                  className={`w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]/30 focus:border-[#1E88E5] resize-none bg-white ${
+                    errors.scopeOfWork ? 'border-red-400 bg-red-50' : 'border-gray-200'
+                  }`}
+                />
+                {errors.scopeOfWork ? (
+                  <p className="text-xs text-red-500 mt-1.5 flex items-center gap-1">
+                    <i className="ri-error-warning-line"></i>
+                    {errors.scopeOfWork}
+                  </p>
+                ) : (
+                  <p className="text-xs text-gray-400 mt-1.5">{scopeOfWork.length} chars</p>
+                )}
+              </div>
+              <div data-field="paymentTerms">
+                <label className="block text-xs font-semibold text-[#7F8C8D] uppercase tracking-wider mb-2">
+                  Payment Terms <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={paymentTerms}
+                  onChange={(e) => {
+                    setPaymentTerms(e.target.value);
+                    if (errors.paymentTerms) {
+                      setErrors((prev) => {
+                        const next = { ...prev };
+                        delete next.paymentTerms;
+                        return next;
+                      });
+                    }
+                  }}
+                  rows={4}
+                  placeholder={"e.g. Net 30 Days\nAdvance 30%, balance on delivery\nInclude milestones if needed..."}
+                  className={`w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]/30 focus:border-[#1E88E5] resize-none bg-white ${
+                    errors.paymentTerms ? 'border-red-400 bg-red-50' : 'border-gray-200'
+                  }`}
+                />
+                {errors.paymentTerms ? (
+                  <p className="text-xs text-red-500 mt-1.5 flex items-center gap-1">
+                    <i className="ri-error-warning-line"></i>
+                    {errors.paymentTerms}
+                  </p>
+                ) : (
+                  <p className="text-xs text-gray-400 mt-1.5">
+                    Suggestions: {PR_PAYMENT_TERM_OPTIONS.slice(0, 4).join(' · ')}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+          </div>
+        )}
+
+        {/* Tab navigation */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <button
+            type="button"
+            disabled={activeTab === createPrTabs[0]?.id}
+            onClick={() => {
+              const idx = createPrTabs.findIndex((t) => t.id === activeTab);
+              if (idx > 0) setActiveTab(createPrTabs[idx - 1].id);
+            }}
+            className={`${PM_BTN_SECONDARY} disabled:opacity-40`}
+          >
+            <i className="ri-arrow-left-line"></i>
+            Previous
+          </button>
+          <button
+            type="button"
+            disabled={activeTab === createPrTabs[createPrTabs.length - 1]?.id}
+            onClick={() => {
+              const idx = createPrTabs.findIndex((t) => t.id === activeTab);
+              if (idx >= 0 && idx < createPrTabs.length - 1) setActiveTab(createPrTabs[idx + 1].id);
+            }}
+            className={`${PM_BTN_PRIMARY} disabled:opacity-40`}
+          >
+            Next
+            <i className="ri-arrow-right-line"></i>
+          </button>
+        </div>
+
+        {/* ── Action Buttons ── */}
+        {submitError && (
+          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{submitError}</div>
+        )}
+        <div className={`${PM_CARD} flex flex-col gap-3 px-4 py-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-4 sm:px-6`}>
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{
+              background:
+                'radial-gradient(120% 90% at 100% 0%, rgba(30, 136, 229, 0.10) 0%, rgba(255,255,255,0) 55%)',
+            }}
+          />
+          <div className="relative z-[1] flex items-center justify-center gap-2 text-sm text-slate-500 sm:justify-start">
+            <i className="ri-shield-check-line text-emerald-500"></i>
+            <span>Autosave keeps the same PR# (incl. quotation files). Create New PR starts blank.</span>
+          </div>
+          <div className="relative z-[1] flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-3">
+            <Link to={backTo} className={`${PM_BTN_SECONDARY} w-full whitespace-nowrap sm:w-auto`}>
+              Cancel
+            </Link>
+            {isAdminEditFlow || isPendingEditFlow ? (
+              <button
+                onClick={() => {
+                  if (!validateForm()) return;
+                  setSubmitAction('draft');
+                  void savePR(false);
+                }}
+                disabled={isSubmitting}
+                className={`${PM_BTN_PRIMARY} w-full whitespace-nowrap sm:w-auto`}
+              >
+                <i className="ri-save-line"></i>
+                {isSubmitting ? 'Saving…' : 'Save Changes'}
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={handleSaveDraft}
+                  disabled={isSubmitting}
+                  className={`${PM_BTN_SECONDARY} w-full whitespace-nowrap sm:w-auto`}
+                >
+                  <i className="ri-save-line"></i>
+                  {isSubmitting && submitAction === 'draft' ? 'Saving…' : 'Save Draft'}
+                </button>
+                <button
+                  onClick={handleSubmitPR}
+                  disabled={isSubmitting}
+                  className={`${PM_BTN_PRIMARY} w-full whitespace-nowrap sm:w-auto`}
+                >
+                  <i className={isResubmitFlow ? 'ri-refresh-line' : 'ri-send-plane-fill'}></i>
+                  {isResubmitFlow ? 'Resubmit PR' : 'Submit PR'}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Delete Line Item Confirm ── */}
+      {deleteLineItemId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+            <div className="flex items-center gap-4 mb-4">
+              <div className="w-12 h-12 flex items-center justify-center bg-red-50 rounded-xl">
+                <i className="ri-delete-bin-line text-2xl text-red-600"></i>
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-gray-900">Delete Line Item</h3>
+                <p className="text-xs text-gray-500">This cannot be undone</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-600 mb-5">
+              Remove{' '}
+              <span className="font-semibold text-gray-800">
+                {lineItems.find((item) => item.id === deleteLineItemId)?.itemName
+                  || lineItems.find((item) => item.id === deleteLineItemId)?.description
+                  || 'this line item'}
+              </span>{' '}
+              from the requisition?
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setDeleteLineItemId(null)}
+                className="flex-1 py-2.5 border border-gray-200 text-gray-600 rounded-xl hover:bg-gray-50 text-sm font-medium cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmRemoveLineItem}
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-semibold cursor-pointer"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Confirm Modal ── */}
+      {showConfirmModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 animate-fade-in">
+            <div className="flex items-center gap-4 mb-4">
+              <div className="w-12 h-12 flex items-center justify-center bg-slate-100 rounded-xl">
+                <i className="ri-send-plane-fill text-2xl text-slate-700"></i>
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-gray-900">
+                  {isResubmitFlow ? 'Resubmit Purchase Requisition' : 'Submit Purchase Requisition'}
+                </h3>
+                <p className="text-xs text-gray-500">{displayPrNumber}</p>
+              </div>
+            </div>
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-5 space-y-2">
+              <p className="text-sm text-amber-800">
+                <i className="ri-information-line mr-1"></i>
+                {isResubmitFlow
+                  ? prFlow === 'functional'
+                    ? selectedApprovalUsers.length > 1
+                      ? 'Your updated PR will go back to person 1, then each selected user in order.'
+                      : 'Your updated PR will be sent to the selected user for approval again.'
+                    : 'Your updated PR will be sent to L1 Manager for approval again.'
+                  : prFlow === 'functional'
+                    ? selectedApprovalUsers.length > 1
+                      ? <>Once submitted, person 1 approves first, then person 2, then the rest in order. After all selected users approve: SCM Final RFQ / RFQ Entry → Buyer Final Verify → Create PO → SCM Manager approval. This PR <strong>cannot be edited</strong>.</>
+                      : <>Once submitted, this PR will be sent for User Approval, then SCM Final RFQ / RFQ Entry → Buyer Final Verify → Create PO → SCM Manager approval, and <strong>cannot be edited</strong>.</>
+                    : <>Once submitted, this PR will be sent for L1 Manager approval and <strong>cannot be edited</strong>.</>}
+              </p>
+              <div className="flex justify-between text-sm gap-3 pt-2 border-t border-amber-200">
+                <span className="text-amber-700/80 shrink-0">Next Step</span>
+                <span className="font-semibold text-amber-900 text-right">{nextStepLabel || 'L1 Manager Approval'}</span>
+              </div>
+              <div className="flex justify-between text-sm gap-3">
+                <span className="text-amber-700/80 shrink-0">{prFlow === 'functional' ? (selectedApprovalUsers.length > 1 ? 'Approvers' : 'Approver') : 'L1 Manager'}</span>
+                <span className="font-semibold text-amber-900 text-right">
+                  {isLoadingL1 ? (
+                    <span className="font-normal text-amber-700">Looking up…</span>
+                  ) : prFlow === 'functional' && selectedApprovalUsers.length > 0 ? (
+                    <span className="block space-y-1">
+                      {selectedApprovalUsers.map((u, i) => (
+                        <span key={u.id} className="block">
+                          {i + 1}. {u.name}
+                          {u.email ? (
+                            <span className="block text-xs font-normal text-amber-700/80">{u.email}</span>
+                          ) : null}
+                        </span>
+                      ))}
+                    </span>
+                  ) : l1Manager?.name || l1Manager?.email ? (
+                    <>
+                      {l1Manager.name || '—'}
+                      {l1Manager.email ? (
+                        <span className="block text-xs font-normal text-amber-700/80 mt-0.5">{l1Manager.email}</span>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span className="font-normal">Will be assigned on submit</span>
+                  )}
+                </span>
+              </div>
+              {prFlow === 'functional' && (
+                <p className="text-[11px] text-amber-800/80 pt-1 border-t border-amber-200">
+                  Then: {vendorSelection === 'own' ? 'SCM Final RFQ' : 'SCM RFQ Entry'} → Buyer Final Verify → Create PO → SCM Manager approval.
+                </p>
+              )}
+            </div>
+            {isResubmitFlow && (
+              <div className="mb-5">
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Resubmit Remarks (optional)</label>
+                <textarea
+                  value={resubmitRemarks}
+                  onChange={(e) => setResubmitRemarks(e.target.value)}
+                  placeholder="Describe changes made after rework..."
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-gray-400 resize-none"
+                />
+              </div>
+            )}
+            <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl mb-5">
+              <span className="text-sm text-gray-600">Total Amount</span>
+              <span className="text-base font-bold text-emerald-700">
+                {formatMoney(getTotalAmount(), currency, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  if (isSubmitting) return;
+                  submitClickLockRef.current = false;
+                  setShowConfirmModal(false);
+                }}
+                disabled={isSubmitting}
+                className="flex-1 py-2.5 border border-gray-200 text-gray-600 rounded-xl hover:bg-gray-50 text-sm font-medium cursor-pointer whitespace-nowrap disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmSubmit()}
+                disabled={isSubmitting}
+                className={`flex-1 py-2.5 text-white rounded-xl text-sm font-semibold cursor-pointer whitespace-nowrap disabled:opacity-50 ${isResubmitFlow ? 'bg-orange-600 hover:bg-orange-700' : 'bg-[#1E88E5] hover:bg-[#1565C0]'}`}
+              >
+                {isSubmitting ? 'Submitting...' : isResubmitFlow ? 'Yes, Resubmit' : 'Yes, Submit'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Success Modal ── */}
+      {showSuccessModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+            <div className="text-center mb-5">
+              <div className="w-16 h-16 flex items-center justify-center bg-emerald-100 rounded-2xl mx-auto mb-3">
+                <i className={`text-3xl ${submitAction === 'draft' ? 'ri-save-line text-gray-600' : 'ri-check-line text-emerald-600'}`}></i>
+              </div>
+              <h3 className="text-lg font-bold text-gray-900">
+                {isAdminEditFlow
+                  ? 'PR Updated Successfully!'
+                  : submitAction === 'draft'
+                  ? 'Changes Saved!'
+                  : isResubmitFlow
+                  ? 'PR Resubmitted Successfully!'
+                  : 'PR Submitted Successfully!'}
+              </h3>
+              <p className="text-sm text-gray-500 mt-1">
+                {isAdminEditFlow
+                  ? `${createdPrNumber || prNumber} details have been updated.`
+                  : submitAction === 'draft'
+                  ? `${createdPrNumber || prNumber} saved. You can continue editing later.`
+                    : `${createdPrNumber || prNumber} has been ${isResubmitFlow ? 'resubmitted' : 'submitted'} and is pending ${prFlow === 'functional' ? (selectedApprovalUsers.length > 1 ? `User Approval 1 of ${selectedApprovalUsers.length}` : 'User Approval') : 'L1 Manager approval'}.`}
+              </p>
+            </div>
+            {submitAction === 'submit' && (
+              <div className="bg-gray-50 rounded-xl p-4 mb-5 space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">PR Number</span>
+                  <span className="font-semibold text-gray-800">{createdPrNumber || prNumber}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">Total Amount</span>
+                  <span className="font-bold text-emerald-700">{formatMoney(getTotalAmount(), currency, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between text-sm gap-3">
+                  <span className="text-gray-500 shrink-0">Next Step</span>
+                  <span className="font-medium text-amber-600 text-right">{nextStepLabel || 'L1 Manager Approval'}</span>
+                </div>
+                <div className="flex justify-between text-sm gap-3 pt-1 border-t border-gray-200">
+                  <span className="text-gray-500 shrink-0">{prFlow === 'functional' ? (selectedApprovalUsers.length > 1 ? 'Approvers' : 'Approver') : 'L1 Manager'}</span>
+                  <span className="font-semibold text-gray-900 text-right">
+                    {prFlow === 'functional' && selectedApprovalUsers.length > 0 ? (
+                      <span className="block space-y-1">
+                        {selectedApprovalUsers.map((u, i) => (
+                          <span key={u.id} className="block">
+                            {i + 1}. {u.name}
+                          </span>
+                        ))}
+                      </span>
+                    ) : l1Manager?.name || l1Manager?.email ? (
+                      <>
+                        {l1Manager.name || '—'}
+                        {l1Manager.email ? (
+                          <span className="block text-xs font-normal text-gray-500 mt-0.5">{l1Manager.email}</span>
+                        ) : null}
+                      </>
+                    ) : (
+                      'Will be assigned shortly'
+                    )}
+                  </span>
+                </div>
+                {prFlow === 'functional' && (
+                  <p className="text-[11px] text-gray-500 pt-1">
+                    After all selected users approve: {vendorSelection === 'own' ? 'SCM Final RFQ' : 'SCM RFQ Entry'} → Buyer Final Verify → Create PO → SCM Manager approval.
+                  </p>
+                )}
+              </div>
+            )}
+            <button
+              onClick={() => {
+                setShowSuccessModal(false);
+                window.REACT_APP_NAVIGATE(backTo);
+              }}
+              className="w-full py-2.5 bg-[#1E88E5] text-white rounded-xl hover:bg-[#1565C0] text-sm font-semibold cursor-pointer whitespace-nowrap"
+            >
+              {isAdminEditFlow || isEditMode ? 'Back to Track PR' : 'Go to Dashboard'}
+            </button>
+          </div>
+        </div>
+      )}
+      </div>
+      )}
+
+      {sassSubscriptionModalOpen && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border border-gray-200 overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100 bg-[#E3F2FD]">
+              <h3 className="text-base font-bold text-[#0D47A1]">Cloud Subscription</h3>
+              <p className="text-xs text-[#1565C0] mt-1">
+                {sassSubscriptionModalStep === 'mode'
+                  ? 'What type of subscription is this?'
+                  : 'Select Subscription Frequency'}
+              </p>
+            </div>
+            <div className="p-5 space-y-3">
+              {sassSubscriptionModalStep === 'mode' ? (
+                <>
+                  {(
+                    [
+                      {
+                        id: 'one_time' as const,
+                        label: 'One-Time',
+                        hint: 'Existing Purchase Request flow — no renewals',
+                      },
+                      {
+                        id: 'recurring' as const,
+                        label: 'Recurring',
+                        hint: 'Monthly / Quarterly / Yearly with reminders & renewals',
+                      },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => {
+                        if (opt.id === 'one_time') {
+                          setPurchaseType('sass');
+                          setSassSubscriptionMode('one_time');
+                          setSassBillingFrequency(null);
+                          setSassSubscriptionStartDate('');
+                          setPrFlow('standard');
+                          setVendorSelection('own');
+                          setApprovalUserIds((prev) => prev.slice(0, 1));
+                          setWorkStartDate('');
+                          setWorkEndDate('');
+                          setSassSubscriptionModalOpen(false);
+                          return;
+                        }
+                        setSassSubscriptionMode('recurring');
+                        setSassSubscriptionModalStep('frequency');
+                      }}
+                      className="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:border-[#64B5F6] hover:bg-[#E3F2FD]/50 transition-colors"
+                    >
+                      <span className="block text-sm font-semibold text-gray-900">{opt.label}</span>
+                      <span className="block text-xs text-gray-500 mt-0.5">{opt.hint}</span>
+                    </button>
+                  ))}
+                </>
+              ) : (
+                <>
+                  {(
+                    [
+                      { id: 'monthly' as const, label: 'Monthly' },
+                      { id: 'quarterly' as const, label: 'Quarterly' },
+                      { id: 'yearly' as const, label: 'Yearly' },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setSassBillingFrequency(opt.id)}
+                      className={`w-full text-left px-4 py-3 rounded-xl border transition-colors ${
+                        sassBillingFrequency === opt.id
+                          ? 'border-[#1E88E5] bg-[#E3F2FD]'
+                          : 'border-gray-200 hover:border-[#90CAF9]'
+                      }`}
+                    >
+                      <span className="text-sm font-semibold text-gray-900">{opt.label}</span>
+                    </button>
+                  ))}
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-1.5">
+                      Subscription Start Date
+                    </label>
+                    <input
+                      type="date"
+                      value={sassSubscriptionStartDate}
+                      onChange={(e) => setSassSubscriptionStartDate(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={!sassBillingFrequency || !sassSubscriptionStartDate}
+                    onClick={() => {
+                      setPurchaseType('sass');
+                      setSassSubscriptionMode('recurring');
+                      setPrFlow('standard');
+                      setVendorSelection('own');
+                      setApprovalUserIds((prev) => prev.slice(0, 1));
+                      setWorkStartDate('');
+                      setWorkEndDate('');
+                      setSassSubscriptionModalOpen(false);
+                    }}
+                    className="w-full py-2.5 rounded-xl bg-[#1E88E5] text-white text-sm font-semibold disabled:opacity-40"
+                  >
+                    Continue
+                  </button>
+                </>
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-gray-100 flex justify-between gap-2">
+              {sassSubscriptionModalStep === 'frequency' ? (
+                <button
+                  type="button"
+                  className="text-sm text-gray-600 font-medium"
+                  onClick={() => setSassSubscriptionModalStep('mode')}
+                >
+                  Back
+                </button>
+              ) : (
+                <span />
+              )}
+              <button
+                type="button"
+                className="text-sm text-gray-600 font-medium"
+                onClick={() => {
+                  setSassSubscriptionModalOpen(false);
+                  if (purchaseType !== 'sass') {
+                    setPurchaseType(previousPurchaseType === 'sass' ? 'purchase_order' : previousPurchaseType);
+                  }
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </DashboardLayout>
+  );
+}

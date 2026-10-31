@@ -1,0 +1,248 @@
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+
+export type SearchCreateOption = {
+  id: number | string;
+  label: string;
+  subLabel?: string;
+};
+
+interface Props {
+  options: SearchCreateOption[];
+  displayValue: string;
+  selectedId?: number | string | null;
+  placeholder: string;
+  hasError?: boolean;
+  addNoun?: string;
+  compact?: boolean;
+  resetKey?: string;
+  emptyHint?: string;
+  onSelect: (option: SearchCreateOption) => void;
+  onClear: () => void;
+  onCreate?: (name: string) => Promise<void>;
+  onOpen?: () => void;
+}
+
+export default function SearchCreateField({
+  options,
+  displayValue,
+  selectedId,
+  placeholder,
+  hasError,
+  addNoun,
+  compact,
+  resetKey,
+  emptyHint,
+  onSelect,
+  onClear,
+  onCreate,
+  onOpen,
+}: Props) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number; maxH: number } | null>(
+    null
+  );
+
+  useEffect(() => {
+    if (!open) setQuery(displayValue);
+  }, [displayValue, open]);
+
+  useEffect(() => {
+    if (resetKey == null) return;
+    setQuery(displayValue);
+    setOpen(false);
+    setError('');
+  }, [resetKey]);
+
+  const placeMenu = () => {
+    const el = boxRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const gap = 4;
+    const spaceBelow = window.innerHeight - rect.bottom - 12;
+    const spaceAbove = rect.top - 12;
+    const openUp = spaceBelow < 180 && spaceAbove > spaceBelow;
+    const maxH = Math.max(140, Math.min(224, openUp ? spaceAbove - gap : spaceBelow - gap));
+    const width = rect.width;
+    const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - width - 8));
+    setMenuPos({
+      top: openUp ? Math.max(8, rect.top - gap - maxH) : rect.bottom + gap,
+      left,
+      width,
+      maxH,
+    });
+  };
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setMenuPos(null);
+      return;
+    }
+    placeMenu();
+    const onMove = () => placeMenu();
+    window.addEventListener('resize', onMove);
+    window.addEventListener('scroll', onMove, true);
+    return () => {
+      window.removeEventListener('resize', onMove);
+      window.removeEventListener('scroll', onMove, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (boxRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options.slice(0, 50);
+    return options
+      .filter((opt) => `${opt.label} ${opt.subLabel || ''}`.toLowerCase().includes(q))
+      .slice(0, 50);
+  }, [options, query]);
+
+  const typed = query.trim();
+  const exactMatch = options.find((opt) => opt.label.trim().toLowerCase() === typed.toLowerCase());
+  const canAdd = Boolean(onCreate && typed && !exactMatch);
+
+  const apply = (opt: SearchCreateOption) => {
+    onSelect(opt);
+    setQuery(opt.label);
+    setOpen(false);
+    setError('');
+  };
+
+  const handleAdd = async () => {
+    if (!onCreate || !typed || saving) return;
+    if (exactMatch) {
+      apply(exactMatch);
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await onCreate(typed);
+      setOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Could not save ${addNoun || 'value'}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputPad = compact ? 'h-10 pl-9 pr-9 rounded-lg' : 'h-11 pl-9 pr-9 rounded-xl';
+
+  return (
+    <div ref={boxRef} className="relative w-full min-w-0">
+      <div className="relative w-full min-w-0">
+        <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none" />
+        <input
+          type="text"
+          value={open ? query : displayValue}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+            setError('');
+            if (!e.target.value.trim()) onClear();
+          }}
+          onFocus={() => {
+            setQuery(displayValue);
+            setOpen(true);
+            onOpen?.();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              setOpen(false);
+              return;
+            }
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            if (exactMatch) apply(exactMatch);
+            else if (canAdd) void handleAdd();
+            else if (filtered[0]) apply(filtered[0]);
+          }}
+          placeholder={placeholder}
+          className={`w-full min-w-0 max-w-full box-border ${inputPad} border text-sm focus:outline-none focus:ring-2 focus:ring-[#1E88E5]/30 focus:border-[#1E88E5] bg-white ${
+            hasError ? 'border-red-400 bg-red-50' : 'border-gray-200'
+          }`}
+          autoComplete="off"
+        />
+        {(displayValue || query) && (
+          <button
+            type="button"
+            onClick={() => {
+              setQuery('');
+              onClear();
+              setOpen(true);
+              setError('');
+            }}
+            className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center text-gray-400 hover:text-gray-600 cursor-pointer"
+            title="Clear"
+          >
+            <i className="ri-close-line text-base" />
+          </button>
+        )}
+      </div>
+      {open &&
+        menuPos &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            ref={menuRef}
+            style={{ top: menuPos.top, left: menuPos.left, width: menuPos.width, maxHeight: menuPos.maxH }}
+            className="fixed z-[70] overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg"
+          >
+            {filtered.length === 0 && !canAdd && (
+              <p className="px-3 py-2.5 text-sm text-gray-500">
+                {typed
+                  ? `No ${addNoun || 'matches'} for “${typed}”`
+                  : emptyHint ||
+                    (options.length === 0
+                      ? `No ${addNoun || 'options'} available`
+                      : 'Start typing to search')}
+              </p>
+            )}
+            {filtered.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => apply(opt)}
+                className={`w-full cursor-pointer px-3 py-2.5 text-left text-sm hover:bg-slate-50 ${
+                  selectedId === opt.id ? 'bg-slate-100 font-semibold text-slate-900' : 'text-gray-800'
+                }`}
+              >
+                <span className="block truncate">{opt.label}</span>
+                {opt.subLabel ? <span className="block text-[11px] text-gray-400">{opt.subLabel}</span> : null}
+              </button>
+            ))}
+            {canAdd && (
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => void handleAdd()}
+                disabled={saving}
+                className="w-full cursor-pointer border-t border-[#BBDEFB] bg-[#E3F2FD] px-3 py-2.5 text-left text-sm font-semibold text-[#1565C0] hover:bg-[#BBDEFB]"
+              >
+                <i className="ri-add-line mr-1"></i>
+                {saving ? 'Saving…' : `Save “${typed}” as new ${addNoun || 'entry'}`}
+              </button>
+            )}
+          </div>,
+          document.body
+        )}
+      {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
+    </div>
+  );
+}

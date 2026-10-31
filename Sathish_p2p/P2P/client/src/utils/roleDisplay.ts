@@ -1,0 +1,147 @@
+/** Friendly role labels for UI (keep system role codes unchanged for auth/API). */
+const ROLE_DISPLAY_NAMES: Record<string, string> = {
+  'HOD Approver': 'L1 Manager',
+  'PR Manager': 'L2 Manager',
+  CFO: 'Group CEO',
+};
+
+const MUGESH_EMAIL = 'mugesh.m@refex.co.in';
+const SRIVATHS_EMAIL = 'srivaths.varadharajan@refex.co.in';
+const SRIVATHS_DESIGNATION = 'Group CTO';
+const DINESH_EMAIL = 'dinesh@refex.co.in';
+const MEET_EMAIL = 'meet.g@refex.co.in';
+export const DINESH_DISPLAY_NAME = 'Dinesh Agarwal';
+export const DINESH_DESIGNATION = 'Group Chief Executive Officer';
+export const MEET_DESIGNATION = 'COO-RGML';
+
+function personEmail(userOrEmail?: { email?: string | null; name?: string | null } | string | null): string {
+  if (!userOrEmail) return '';
+  return typeof userOrEmail === 'string'
+    ? userOrEmail.trim().toLowerCase()
+    : String(userOrEmail.email || '')
+        .trim()
+        .toLowerCase();
+}
+
+function personName(userOrEmail?: { email?: string | null; name?: string | null } | string | null): string {
+  if (!userOrEmail || typeof userOrEmail === 'string') return '';
+  return String(userOrEmail.name || '')
+    .trim()
+    .toLowerCase();
+}
+
+/** True when this user is Mugesh (Cloud Subscription actor — no designation in UI). */
+export function isMugeshUser(userOrEmail?: { email?: string | null; name?: string | null } | string | null): boolean {
+  if (!userOrEmail) return false;
+  const email = personEmail(userOrEmail);
+  if (email && (email === MUGESH_EMAIL || email.includes('mugesh.m@'))) return true;
+  if (typeof userOrEmail === 'string') {
+    const s = userOrEmail.trim().toLowerCase();
+    return s === 'mugesh' || s.startsWith('mugesh ') || s.startsWith('mugesh.');
+  }
+  const name = personName(userOrEmail);
+  if (!email && name && (name === 'mugesh' || name.startsWith('mugesh '))) return true;
+  return false;
+}
+
+/** True when this login is Meet — designation is COO-RGML. */
+export function isMeetUser(
+  userOrEmail?: { email?: string | null; name?: string | null } | string | null
+): boolean {
+  if (personEmail(userOrEmail) === MEET_EMAIL) return true;
+  const name =
+    typeof userOrEmail === 'string' ? userOrEmail.trim().toLowerCase() : personName(userOrEmail);
+  return name === 'meet' || name.startsWith('meet.') || name.startsWith('meet ');
+}
+
+/** True when this login is Dinesh — show Dinesh Agarwal, Group Chief Executive Officer. */
+export function isDineshUser(
+  userOrEmail?: { email?: string | null; name?: string | null } | string | null
+): boolean {
+  return personEmail(userOrEmail) === DINESH_EMAIL;
+}
+
+/** Name shown for the signed-in user. Dinesh’s login always reads Dinesh Agarwal. */
+export function getUserDisplayName(
+  user?: { email?: string | null; name?: string | null } | null
+): string {
+  if (isDineshUser(user)) return DINESH_DISPLAY_NAME;
+  return String(user?.name || '').trim();
+}
+
+/** True when this user is Srivaths (L2) — show Group CTO, never CFO / Group CEO. */
+export function isSrivathsUser(
+  userOrEmail?: { email?: string | null; name?: string | null } | string | null
+): boolean {
+  if (!userOrEmail) return false;
+  const email = personEmail(userOrEmail);
+  if (
+    email &&
+    (email === SRIVATHS_EMAIL ||
+      email.includes('srivaths.varadharajan@') ||
+      email.includes('srivath'))
+  ) {
+    return true;
+  }
+  const raw =
+    typeof userOrEmail === 'string'
+      ? userOrEmail.trim().toLowerCase()
+      : personName(userOrEmail);
+  if (
+    raw &&
+    (raw === 'srivaths' ||
+      raw.startsWith('srivaths ') ||
+      raw.startsWith('srivaths.') ||
+      raw.includes('srivath') ||
+      raw.includes('srivats'))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Designation shown in header/sidebar — prefers API displayRole when present. */
+export function getUserDesignation(
+  user?: { role?: string | null; email?: string | null; name?: string | null; displayRole?: string | null } | null
+): string {
+  if (!user) return '';
+  if (isDineshUser(user)) return DINESH_DESIGNATION;
+  if (isMeetUser(user)) return MEET_DESIGNATION;
+  if (isSrivathsUser(user)) return SRIVATHS_DESIGNATION;
+  if (user.displayRole != null && user.displayRole !== undefined) {
+    return user.displayRole;
+  }
+  return formatRoleDisplayName(user.role, user);
+}
+
+/**
+ * Display label for a system role.
+ * Mugesh: no designation. Srivaths: Group CTO (system role may still be CFO).
+ */
+export function formatRoleDisplayName(
+  role?: string | null,
+  userOrEmail?: { email?: string | null; name?: string | null } | string | null
+): string {
+  if (isMugeshUser(userOrEmail)) return '';
+  if (isDineshUser(userOrEmail)) return DINESH_DESIGNATION;
+  if (isMeetUser(userOrEmail)) return MEET_DESIGNATION;
+  if (isSrivathsUser(userOrEmail)) return SRIVATHS_DESIGNATION;
+  if (!role) return '';
+  return ROLE_DISPLAY_NAMES[role] || role;
+}
+
+/** Role beside a person in history/timeline — hides Mugesh designations. */
+export function formatPersonRoleSuffix(
+  role?: string | null,
+  personNameOrEmail?: string | null,
+  separator = ' · '
+): string {
+  if (isMugeshUser(personNameOrEmail) || isMugeshUser({ name: personNameOrEmail })) return '';
+  const label = formatRoleDisplayName(role, personNameOrEmail ? { name: personNameOrEmail, email: personNameOrEmail } : null);
+  return label ? `${separator}${label}` : '';
+}
+
+/** L1 (HOD Approver) or L2 (PR Manager) — used for manager RFQ quote summary layout. */
+export function isL1OrL2Manager(role?: string | null): boolean {
+  return role === 'HOD Approver' || role === 'PR Manager';
+}
