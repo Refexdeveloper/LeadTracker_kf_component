@@ -46,9 +46,9 @@ function App() {
             {/* <LeadsManagementHubPage /> */}
             {/* <VenwindLeadDashboardPage /> */}
             {/* <VWLeadDashboardPage /> */}
-            {/* <LeadsManagementPage /> */}
+            <LeadsManagementPage />
             {/* <LeadDashboardPage /> */}
-            <LeadCEOPage />
+            {/* <LeadCEOPage /> */}
             {/* <LeadSalesOpportunityPage /> */}
             {/* <OppSalesActivity /> */}
             {/* <LeadDashboardPage2_0 /> */}

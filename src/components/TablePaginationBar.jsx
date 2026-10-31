@@ -70,7 +70,7 @@ export default function TablePaginationBar({
               onClick={() => onPageChange(n)}
               className={`flex h-7 min-w-[1.6rem] items-center justify-center rounded-md border px-1.5 text-[10px] font-semibold shadow-sm transition sm:h-8 sm:min-w-[2rem] sm:rounded-lg sm:px-2 sm:text-xs ${
                 n === safePage
-                  ? 'border-[#1E88E5] bg-[#1E88E5] text-white'
+                  ? 'border-[#0f6b7a] bg-[#0f6b7a] text-white'
                   : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
               }`}
             >

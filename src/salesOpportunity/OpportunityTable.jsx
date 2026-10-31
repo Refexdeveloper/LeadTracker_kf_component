@@ -13,7 +13,7 @@ function stageChipClass(stageId) {
   if (stageId === 'IV') return 'bg-green-50 text-[#43A047]'
   if (stageId === 'III') return 'bg-[#0084AD]/10 text-[#0084AD]'
   if (stageId === 'II') return 'bg-[#2B5AED]/10 text-[#2B5AED]'
-  if (stageId === 'I') return 'bg-blue-50 text-[#1E88E5]'
+  if (stageId === 'I') return 'bg-[#e6f6f8] text-[#0f6b7a]'
   if (stageId === 'Lost') return 'bg-red-50 text-[#E53935]'
   return 'bg-orange-50 text-[#FB8C00]'
 }
@@ -21,7 +21,7 @@ function stageChipClass(stageId) {
 function statusChipClass(row) {
   if (row?.won) return 'bg-green-50 text-[#43A047]'
   if (row?.lost) return 'bg-red-50 text-[#E53935]'
-  return 'bg-blue-50 text-[#1E88E5]'
+  return 'bg-[#e6f6f8] text-[#0f6b7a]'
 }
 
 function displayValue(value) {
@@ -186,7 +186,7 @@ export default function OpportunityTable({ rows, loading, headerRight = null, ti
     <section className="min-w-0">
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-5">
         <div className="flex items-center gap-3 min-w-0 flex-1">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#1E88E5]/10 text-[#1E88E5] ring-1 ring-[#1E88E5]/20 sm:h-12 sm:w-12">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#0f6b7a]/10 text-[#0f6b7a] ring-1 ring-[#0f6b7a]/20 sm:h-12 sm:w-12">
             <i className="ri-table-line text-lg sm:text-xl" />
           </div>
           <div className="min-w-0">

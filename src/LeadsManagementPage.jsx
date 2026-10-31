@@ -9,12 +9,14 @@ import { useMediaQuery } from './hooks/useMediaQuery.js'
 import MobileLeadCards from './MobileLeadCards.jsx'
 import MobileTaskCards from './MobileTaskCards.jsx'
 import { enrichLeadRowFromKpi, resolveLeadRowView } from './leadRowEnrich.js'
+import { extractRecordingUrl } from './leadAccordionApi.js'
 import LeadAccordionPanel from './LeadAccordionPanel.jsx'
 import { hydrateAccordionLead } from './leadAccordionHydration.js'
 import { parseFollowUpDetailsFromItem } from './leadWorkflowUi.js'
 import { fetchParticipatedActivitySteps, fetchParticipatedLeadsForActivity } from './participatedLeads.js'
 import { PT_AVATAR, PT_CARD, PT_PAGE_SHELL } from './leadPtTheme.js'
 import { LEAD_TABLE_PULSE_CLASS, useLeadTableHighlight } from './leadTableHighlight.js'
+import { previewLeads, previewLeadsForStatus, previewParticipated, previewStatusCounts, previewTasks } from './leadMockPreview.js'
 
 const STATUS_TO_SEGMENT = {
   'Draft': 'draft',
@@ -179,11 +181,11 @@ function formatStatusForDisplay(raw) {
 function getStatusBadgeClass(status) {
   const s = String(formatStatusForDisplay(status) || '').toLowerCase()
   if (s.includes('completed')) return 'bg-green-50 text-[#43A047]'
-  if (s.includes('in progress')) return 'bg-blue-50 text-[#1E88E5]'
-  if (s.includes('rejected')) return 'bg-red-50 text-[#E53935]'
-  if (s.includes('withdrawn')) return 'bg-orange-50 text-[#FB8C00]'
-  if (s.includes('draft')) return 'bg-gray-100 text-[#7F8C8D]'
-  return 'bg-blue-50 text-[#1E88E5]'
+  if (s.includes('in progress')) return 'bg-[#e6f6f8] text-[#0f6b7a]'
+  if (s.includes('rejected')) return 'bg-[#fff0f2] text-[#e5304a]'
+  if (s.includes('withdrawn')) return 'bg-[#fff4e6] text-[#c2410c]'
+  if (s.includes('draft')) return 'bg-[#f0eeeb] text-[#6b7684]'
+  return 'bg-[#e6f6f8] text-[#0f6b7a]'
 }
 
 /**
@@ -388,7 +390,7 @@ function mapKfItemToLead(item, listUrlSegment) {
     followUpDetails: parseFollowUpDetailsFromItem(item),
     deadline: stringifyKfFieldValue(getVal(item, ['Deadline', 'Dead_Line', 'Deadline_Date_Time', 'Deadline_Date', 'SLA_Deadline', 'sla_deadline', 'deadline'], '')),
     botsSummary: stringifyKfFieldValue(getVal(item, ['Bots_Summary', 'Bot_Summary', 'BotsSummary', 'bots_summary'], '')),
-    recordingUrl: stringifyKfFieldValue(getVal(item, ['Recording_URL', 'Recording_Url', 'RecordingURL', 'recording_url'], '')),
+    recordingUrl: extractRecordingUrl(item),
     conversationId: stringifyKfFieldValue(getVal(item, ['conversation_id', 'Conversation_ID', 'ConversationId'], '')),
     website,
     createdDate: stringifyKfFieldValue(getVal(item, ['Created_at', '_created_at', '_modified_at', 'Modified_at'], '')),
@@ -435,7 +437,7 @@ function InlineAudioPlayer({ url }) {
       <button
         type="button"
         onClick={togglePlay}
-        className="inline-flex min-h-[36px] items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
+        className="inline-flex min-h-[36px] items-center gap-2 rounded-lg border border-[#a9dbe2] bg-[#e6f6f8] px-3 py-1.5 text-sm font-semibold text-[#0f6b7a] hover:bg-[#d7f1f4] transition-colors"
       >
         <i className={`text-base ${playing ? 'ri-pause-circle-line' : 'ri-play-circle-line'}`} />
         {playing ? 'Pause' : 'Play'}
@@ -1371,18 +1373,25 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
     }
   }, [user, kfInstance])
 
-  const itemList = useMemo(
-    () => scopeCreatedByCurrentUser(items !== null ? items : [], scopeUser),
-    [items, scopeUser],
-  )
-  const taskList = useMemo(
-    () => scopeAssignedOrCreatedByCurrentUser(tasksFromApi ?? [], scopeUser),
-    [tasksFromApi, scopeUser],
-  )
-  const participatedList = useMemo(
-    () => scopeAssignedOrCreatedByCurrentUser(participatedFromApi !== null ? participatedFromApi : [], scopeUser),
-    [participatedFromApi, scopeUser],
-  )
+  const itemList = useMemo(() => {
+    const liveMissing = !itemsLoading && (leadPaths == null ? items == null : Array.isArray(items) && items.length === 0)
+    const source = import.meta.env.DEV && liveMissing ? previewLeadsForStatus(statusFilter) : (items != null ? items : [])
+    return scopeCreatedByCurrentUser(source, scopeUser)
+  }, [items, itemsLoading, leadPaths, statusFilter, scopeUser])
+  const taskList = useMemo(() => {
+    const liveMissing = !tasksLoading && (leadPaths == null ? tasksFromApi == null : Array.isArray(tasksFromApi) && tasksFromApi.length === 0)
+    const source = import.meta.env.DEV && liveMissing ? previewTasks : (tasksFromApi ?? [])
+    return scopeAssignedOrCreatedByCurrentUser(source, scopeUser)
+  }, [tasksFromApi, tasksLoading, leadPaths, scopeUser])
+  const participatedList = useMemo(() => {
+    const liveMissing =
+      !participatedLoading &&
+      (leadPaths == null || !kfInstance
+        ? participatedFromApi == null
+        : Array.isArray(participatedFromApi) && participatedFromApi.length === 0)
+    const source = import.meta.env.DEV && liveMissing ? previewParticipated : (participatedFromApi != null ? participatedFromApi : [])
+    return scopeAssignedOrCreatedByCurrentUser(source, scopeUser)
+  }, [participatedFromApi, participatedLoading, leadPaths, kfInstance, scopeUser])
   const myScopedLeadIds = useMemo(() => {
     const ids = new Set()
     ;[itemList, taskList, participatedList].forEach((list) => {
@@ -1489,7 +1498,8 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
 
   /** Full-process lead set for KPI cards: current user + role website + toolbar date/search. */
   const kpiDisplayLeads = useMemo(() => {
-    const base = Array.isArray(kpiLeads) ? kpiLeads : []
+    const liveKpiMissing = !kpiLeadsLoading && (leadPaths == null ? kpiLeads == null : Array.isArray(kpiLeads) && kpiLeads.length === 0)
+    const base = import.meta.env.DEV && liveKpiMissing ? previewLeads : (Array.isArray(kpiLeads) ? kpiLeads : [])
     let list = base
     if (scopeUser) {
       list = list.filter((l) => {
@@ -1516,7 +1526,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
       )
     }
     return list
-  }, [kpiLeads, scopeUser, myScopedLeadIds, lockedWebsiteKpi, filterFromDate, filterToDate, search])
+  }, [kpiLeads, kpiLeadsLoading, leadPaths, scopeUser, myScopedLeadIds, lockedWebsiteKpi, filterFromDate, filterToDate, search])
 
   const filteredItems = useMemo(() => {
     // Rows are already loaded from myitems/{segment} for the active status tab — do not re-filter by row status.
@@ -1551,6 +1561,8 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
   }, [taskList, search, filterFromDate, filterToDate])
 
   const statusCounts = useMemo(() => {
+    const liveMissing = !itemsLoading && (leadPaths == null ? items == null : Array.isArray(items) && items.length === 0)
+    if (import.meta.env.DEV && liveMissing) return previewStatusCounts()
     if (statusCountsFromApi) return statusCountsFromApi
     const counts = { Draft: 0, 'In progress': 0, Completed: 0, Withdrawn: 0, Rejected: 0 }
     itemList.forEach((item) => {
@@ -1559,7 +1571,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
       else counts.Draft++
     })
     return counts
-  }, [statusCountsFromApi, itemList])
+  }, [statusCountsFromApi, itemList, items, itemsLoading, leadPaths])
 
   const filteredItemsAfterKpi = useMemo(() => {
     if (activeTab !== 'items') return filteredItems
@@ -1640,7 +1652,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
     if (hasItemsToolbarFilters && !hasColumnFilters) return filteredItemsAfterKpi.length
     if (!hasItemsToolbarFilters) {
       const apiCount = statusCountsFromApi?.[statusFilter]
-      if (apiCount != null && apiCount >= 0) return apiCount
+      if (apiCount != null && apiCount > 0) return apiCount
     }
     return filteredItemsAfterKpi.length
   }, [hasItemsToolbarFilters, hasColumnFilters, filteredItemsAfterKpi.length, statusCountsFromApi, statusFilter])
@@ -2026,30 +2038,26 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
     'User'
 
   return (
-    <div ref={pageRootRef} className={hideGreeting ? 'min-w-0' : `h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain ${PT_PAGE_SHELL} p-3 md:p-4`}>
-      <div className={hideGreeting ? 'min-w-0' : 'mx-auto max-w-[1500px] min-w-0'}>
-          <div className={hideGreeting ? 'space-y-5 sm:space-y-6 transition-smooth' : 'p-2 sm:p-3 md:p-4 space-y-5 sm:space-y-6 transition-smooth'}>
-            {!hideGreeting && (
-            <section className="mb-3 sm:mb-4">
-              <div className="flex items-center gap-3 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden whitespace-nowrap">
-                <div className="flex items-center gap-3 min-w-0 shrink-0">
-                  <div className={PT_AVATAR}>
-                    {(firstName || 'U').charAt(0)}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-base sm:text-lg font-semibold tracking-tight text-[#0F172A] truncate">{greeting}, {firstName}</p>
-                    <p className="text-xs sm:text-sm text-[#64748B] truncate">Logged in as {displayRole}</p>
-                  </div>
-                </div>
-                {(lockedWebsiteKpi || kpiLeadsLoading) && (
-                  <div className="ml-auto text-xs sm:text-sm text-slate-600 font-medium">
-                    {lockedWebsiteKpi ? <span className="text-brand-blue font-semibold">{lockedWebsiteKpi}</span> : <span>All properties</span>}
-                    {kpiLeadsLoading ? <span className="text-slate-400"> · Loading metrics…</span> : null}
-                  </div>
-                )}
-              </div>
-            </section>
-            )}
+    <div ref={pageRootRef} className={hideGreeting ? 'min-w-0' : `h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain ${PT_PAGE_SHELL}`}>
+      {!hideGreeting && (
+        <section className="lead-hero" aria-label="Welcome">
+          <div className="lead-hero-bubbles" aria-hidden="true">
+            <i /><i /><i /><i /><i /><i /><i />
+          </div>
+          <div className="lead-hero-copy flex items-center gap-3 px-1">
+            <div className={PT_AVATAR}>
+              {(firstName || 'U').charAt(0)}
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-[#3a4656]">{greeting}</p>
+              <h1 className="truncate text-2xl font-bold tracking-tight text-[#0e1726] sm:text-[34px] sm:leading-none">{firstName}</h1>
+              <p className="mt-1 text-sm text-[#3a4656]">Logged in as {displayRole}</p>
+            </div>
+          </div>
+        </section>
+      )}
+      <div className={hideGreeting ? 'min-w-0' : 'mx-auto max-w-[1500px] min-w-0 px-3 pb-4 md:px-4'}>
+          <div className={hideGreeting ? 'space-y-5 sm:space-y-6 transition-smooth' : 'space-y-5 sm:space-y-6 transition-smooth'}>
             {/* Role website chip (e.g. 3iMedtech) — hidden for now; uncomment to show above KPI cards */}
             {/* {hideGreeting && (lockedWebsiteKpi || kpiLeadsLoading) && (
               <div className="flex justify-end text-xs sm:text-sm text-slate-600 font-medium -mt-2 mb-1">
@@ -2058,7 +2066,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
               </div>
             )} */}
 
-            <div className="space-y-1 min-w-0">
+            <div className={hideGreeting ? 'space-y-1 min-w-0' : 'lead-kpis-overlap space-y-1 min-w-0'}>
               <KPICards
                 leads={kpiDisplayLeads}
                 allLeads={kpiDisplayLeads}
@@ -2071,8 +2079,8 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
             </div>
 
             {/* Tabs + actions toolbar (ContractsMyItemsPro-style single row on sm+) */}
-            <div className={`${PT_CARD} overflow-visible`}>
-              <div className="relative z-[100] flex flex-col gap-3 border-b border-slate-200/80 bg-[#EEF4FF]/50 px-2.5 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-3 sm:py-3">
+            <div className={`${PT_CARD} lead-work-panel`}>
+              <div className="relative z-[100] flex flex-col gap-3 bg-gradient-to-r from-white to-[#e6f6f8]/80 px-2.5 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-3 sm:py-3">
                 <div
                   className="grid grid-cols-3 w-full min-w-0 gap-1 p-1 rounded-2xl border border-slate-300/70 bg-white/70 shadow-sm sm:w-auto sm:min-w-[420px]"
                   role="tablist"
@@ -2165,7 +2173,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                   type="button"
                   onClick={handleNewItem}
                   disabled={creatingNewItem}
-                  className="min-h-[44px] md:min-h-[40px] px-4 py-2.5 md:px-4 md:py-2 rounded-xl text-sm font-semibold transition-all duration-300 touch-manipulation inline-flex items-center justify-center gap-2 bg-gradient-to-br from-brand-blue to-indigo-600 text-white shadow-md shadow-indigo-500/25 hover:shadow-lg hover:scale-[1.01] whitespace-nowrap shrink-0 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
+                  className="lead-pt-btn min-h-[44px] md:min-h-[40px] px-4 py-2.5 md:px-4 md:py-2 rounded-xl text-sm font-semibold touch-manipulation inline-flex items-center justify-center gap-2 whitespace-nowrap shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   <i className={`text-base ${creatingNewItem ? 'ri-loader-4-line animate-spin' : 'ri-add-line'}`}></i>
                   {creatingNewItem ? 'Creating…' : 'New item'}
@@ -2186,7 +2194,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                   createPortal(
                     <div
                       ref={filterDropdownRef}
-                      className="rounded-2xl bg-white/95 backdrop-blur-xl border border-slate-300/80 shadow-2xl p-4"
+                      className="lead-pt rounded-2xl bg-white/95 backdrop-blur-xl border border-[#d7e8ee] shadow-2xl p-4"
                       style={{
                         position: 'fixed',
                         top: filterAnchorRect.top,
@@ -2235,7 +2243,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                   !isMdUp &&
                   createPortal(
                     <div
-                      className="fixed inset-0 z-[10050] flex flex-col justify-end bg-black/45 backdrop-blur-[2px]"
+                      className="lead-pt fixed inset-0 z-[10050] flex flex-col justify-end bg-black/45 backdrop-blur-[2px]"
                       role="dialog"
                       aria-modal="true"
                       aria-labelledby="date-filter-sheet-title-ad"
@@ -2304,7 +2312,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                   {columnsPopoverOpen && isMdUp && columnsAnchorRect && createPortal(
                     <div
                       ref={columnsDropdownRef}
-                      className="rounded-2xl bg-white/95 backdrop-blur-xl border border-slate-300/80 shadow-2xl p-4"
+                      className="lead-pt rounded-2xl bg-white/95 backdrop-blur-xl border border-[#d7e8ee] shadow-2xl p-4"
                       style={{
                         position: 'fixed',
                         top: columnsAnchorRect.top,
@@ -2357,7 +2365,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
 
                   {columnsPopoverOpen && !isMdUp && createPortal(
                     <div
-                      className="fixed inset-0 z-[10050] flex flex-col justify-end bg-black/45 backdrop-blur-[2px]"
+                      className="lead-pt fixed inset-0 z-[10050] flex flex-col justify-end bg-black/45 backdrop-blur-[2px]"
                       role="dialog"
                       aria-modal="true"
                       aria-labelledby="columns-sheet-title"
@@ -2548,7 +2556,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
             {/* Table - z-0 so toolbar dropdowns (z-[100]) render on top */}
             <div
               ref={tableSectionRef}
-              className={`relative z-0 scroll-mt-24 overflow-visible rounded-none border border-slate-200/80 bg-white shadow-[0_12px_30px_rgba(76,98,168,0.10)] transition-[box-shadow,ring] duration-500 md:overflow-hidden md:rounded-3xl ${
+              className={`lead-sheet relative z-0 scroll-mt-24 overflow-hidden rounded-[18px] border border-[#b7dde6] bg-[#f4fbfd] transition-[box-shadow,ring] duration-500 ${
                 insightPulse ? LEAD_TABLE_PULSE_CLASS : ''
               }`}
             >
@@ -2621,9 +2629,9 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                             <tr
                               className={`cursor-pointer transition-[background-color,box-shadow] duration-500 [&>td]:border-b [&>td]:border-slate-200/80 ${
                                 insightPulse
-                                  ? 'bg-blue-50 shadow-[inset_4px_0_0_#1E88E5]'
+                                  ? 'bg-[#e6f6f8] shadow-[inset_3px_0_0_#0f6b7a]'
                                   : expandedItemId === item.id
-                                    ? 'bg-indigo-50/60'
+                                    ? 'bg-[#f4fbfd]'
                                     : 'hover:bg-white/60'
                               }`}
                               onClick={() => setExpandedItemId((prev) => (prev === item.id ? null : item.id))}
@@ -2702,90 +2710,18 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                               )}
                             </tr>
                             {expandedItemId === item.id && (
-                              <tr>
-                                <td
-                                  colSpan={itemsTableLeadingCols + ITEMS_COLUMNS.length}
-                                  className="p-0 align-top bg-gray-50/80 border-b border-gray-200"
-                                >
-                                  <div className="px-3 sm:px-4 py-3 sm:py-4">
-                                      <div className="space-y-4">
-                                          <div className="bg-white border border-gray-200 rounded-xl p-4 sm:p-5 min-w-0">
-                                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4 min-w-0">
-                                              <div className="flex items-start gap-3 min-w-0 flex-1">
-                                                <div className="w-10 h-10 shrink-0 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center font-semibold">
-                                                  {(itemView.fullName || '?').charAt(0)}
-                                                </div>
-                                                <div className="min-w-0 flex-1">
-                                                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Name</p>
-                                                  <p
-                                                    className="text-base font-semibold text-gray-900 break-words whitespace-normal [overflow-wrap:anywhere] leading-snug"
-                                                    title={itemView.fullName ? String(itemView.fullName) : undefined}
-                                                  >
-                                                    {itemView.fullName || '—'}
-                                                  </p>
-                                                  {itemView.name && String(itemView.name) !== String(itemView.fullName || '') ? (
-                                                    <p className="mt-1 text-xs text-gray-500 break-words [overflow-wrap:anywhere] leading-snug" title={String(itemView.name)}>
-                                                      {itemView.name}
-                                                    </p>
-                                                  ) : null}
-                                                </div>
-                                              </div>
-                                              <span className={`self-start shrink-0 px-2.5 py-1 text-xs font-medium rounded-full ${getStatusBadgeClass(itemView.status)}`}>
-                                                {formatStatusForDisplay(itemView.status) || '—'}
-                                              </span>
-                                            </div>
-                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4 min-w-0">
-                                              <div className="min-w-0">
-                                                <p className="text-xs text-gray-500 mb-1">Website</p>
-                                                <p className="text-sm font-semibold text-gray-900 break-words [overflow-wrap:anywhere]" title={itemView.website ? String(itemView.website) : undefined}>
-                                                  {itemView.website || '—'}
-                                                </p>
-                                              </div>
-                                              <div className="min-w-0">
-                                                <p className="text-xs text-gray-500 mb-1">Created Date</p>
-                                                <p className="text-sm font-semibold text-gray-900 break-words">{formatDateTime(itemView.createdDate)}</p>
-                                              </div>
-                                              <div className="min-w-0">
-                                                <p className="text-xs text-gray-500 mb-1">Phone</p>
-                                                <p className="text-sm font-semibold text-gray-900 break-words [overflow-wrap:anywhere]">{itemView.phoneNumber || '—'}</p>
-                                              </div>
-                                              <div className="min-w-0">
-                                                <p className="text-xs text-gray-500 mb-1">Email</p>
-                                                <p className="text-sm font-semibold text-gray-900 break-words whitespace-normal [overflow-wrap:anywhere]">{itemView.emailId || '—'}</p>
-                                              </div>
-                                            </div>
-                                          </div>
-                                          <div className="bg-white border border-gray-200 rounded-xl p-4 sm:p-5 min-w-0">
-                                            <p className="text-sm font-semibold text-gray-800 mb-2">Message</p>
-                                            <p className="text-sm text-gray-700 leading-relaxed break-words whitespace-normal [overflow-wrap:anywhere]">{itemView.message || '—'}</p>
-                                          </div>
-                                          <div className="bg-white border border-gray-200 rounded-xl p-4 sm:p-5 min-w-0">
-                                            <p className="text-sm font-semibold text-gray-800 mb-2">Bot Summary</p>
-                                            <p className="text-sm text-gray-700 leading-relaxed break-words [overflow-wrap:anywhere]">{itemView.botsSummary || 'No summary'}</p>
-                                            <div className="mt-3">
-                                              <p className="text-xs text-gray-500 mb-1">Recording</p>
-                                              <InlineAudioPlayer url={itemView.recordingUrl} />
-                                            </div>
-                                          </div>
-                                          <div className="flex flex-wrap items-center gap-2 pt-1">
-                                            <button
-                                              type="button"
-                                              onClick={() => openLeadPopup(itemView)}
-                                              className="min-h-[40px] px-4 py-2 rounded-xl bg-blue-600 text-white font-semibold text-sm hover:bg-blue-700 transition-all flex items-center gap-2"
-                                            >
-                                              <i className="ri-external-link-line"></i>
-                                              View Details
-                                            </button>
-                                            <button
-                                              type="button"
-                                              onClick={() => setExpandedItemId(null)}
-                                              className="min-h-[40px] px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-medium text-sm hover:bg-slate-200 transition-colors"
-                                            >
-                                              Close
-                                            </button>
-                                          </div>
-                                      </div>
-                                  </div>
+                              <tr className="lead-acc-row">
+                                <td colSpan={itemsTableLeadingCols + ITEMS_COLUMNS.length} className="lead-acc-cell">
+                                  <LeadAccordionPanel
+                                    itemView={itemView}
+                                    progressData={itemView?.workflowProgress || null}
+                                    progressLoading={Boolean(itemView?.progressLoading)}
+                                    formatDateTime={formatDateTime}
+                                    getStatusBadgeClass={getStatusBadgeClass}
+                                    formatStatusForDisplay={formatStatusForDisplay}
+                                    onViewDetails={openLeadPopup}
+                                    onCloseExpand={() => setExpandedItemId(null)}
+                                  />
                                 </td>
                               </tr>
                             )}
@@ -2862,7 +2798,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                           return (
                           <React.Fragment key={row.id}>
                             <tr
-                              className={`transition-colors cursor-pointer [&>td]:border-b [&>td]:border-slate-200/80 ${expandedParticipatedId === row.id ? 'bg-indigo-50/60' : 'hover:bg-white/60'}`}
+                              className={`transition-colors cursor-pointer [&>td]:border-b [&>td]:border-slate-200/80 ${expandedParticipatedId === row.id ? 'bg-[#f4fbfd]' : 'hover:bg-white/60'}`}
                               onClick={() => setExpandedParticipatedId((prev) => (prev === row.id ? null : row.id))}
                             >
                               <td className="px-2 sm:px-3 py-3 sm:py-4 text-slate-500" onClick={(e) => e.stopPropagation()}>
@@ -2928,8 +2864,8 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                               )}
                             </tr>
                             {expandedParticipatedId === row.id && (
-                              <tr>
-                                <td colSpan={tasksTableLeadingCols + TASKS_COLUMNS.length} className="p-0 align-top bg-gray-50/80 border-b border-gray-200">
+                              <tr className="lead-acc-row">
+                                <td colSpan={tasksTableLeadingCols + TASKS_COLUMNS.length} className="lead-acc-cell">
                                   <div className="px-3 sm:px-4 py-3 sm:py-4">
                                     <LeadAccordionPanel
                                       itemView={rowView}
@@ -3018,7 +2954,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                           return (
                           <React.Fragment key={task.id}>
                             <tr
-                              className={`transition-colors cursor-pointer [&>td]:border-b [&>td]:border-slate-200/80 ${expandedTaskId === task.id ? 'bg-indigo-50/60' : 'hover:bg-white/60'}`}
+                              className={`transition-colors cursor-pointer [&>td]:border-b [&>td]:border-slate-200/80 ${expandedTaskId === task.id ? 'bg-[#f4fbfd]' : 'hover:bg-white/60'}`}
                               onClick={() => setExpandedTaskId((prev) => (prev === task.id ? null : task.id))}
                             >
                               <td className="px-2 sm:px-3 py-3 sm:py-4 text-slate-500" onClick={(e) => e.stopPropagation()}>
@@ -3084,87 +3020,18 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                               )}
                             </tr>
                             {expandedTaskId === task.id && (
-                              <tr>
-                                <td colSpan={tasksTableLeadingCols + TASKS_COLUMNS.length} className="p-0 align-top bg-gray-50/80 border-b border-gray-200">
-                                  <div className="px-3 sm:px-4 py-3 sm:py-4">
-                                      <div className="space-y-4">
-                                        <div className="bg-white border border-gray-200 rounded-xl p-4 sm:p-5 min-w-0">
-                                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4 min-w-0">
-                                            <div className="flex items-start gap-3 min-w-0 flex-1">
-                                              <div className="w-10 h-10 shrink-0 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center font-semibold">
-                                                {(taskView.fullName || '?').charAt(0)}
-                                              </div>
-                                              <div className="min-w-0 flex-1">
-                                                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Name</p>
-                                                <p
-                                                  className="text-base font-semibold text-gray-900 break-words whitespace-normal [overflow-wrap:anywhere] leading-snug"
-                                                  title={taskView.fullName ? String(taskView.fullName) : undefined}
-                                                >
-                                                  {taskView.fullName || '—'}
-                                                </p>
-                                                {taskView.name && String(taskView.name) !== String(taskView.fullName || '') ? (
-                                                  <p className="mt-1 text-xs text-gray-500 break-words [overflow-wrap:anywhere] leading-snug" title={String(taskView.name)}>
-                                                    {taskView.name}
-                                                  </p>
-                                                ) : null}
-                                              </div>
-                                            </div>
-                                            <span className={`self-start shrink-0 px-2.5 py-1 text-xs font-medium rounded-full ${getStatusBadgeClass(taskView.status)}`}>
-                                              {formatStatusForDisplay(taskView.status) || '—'}
-                                            </span>
-                                          </div>
-                                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4 min-w-0">
-                                            <div className="min-w-0">
-                                              <p className="text-xs text-gray-500 mb-1">Website</p>
-                                              <p className="text-sm font-semibold text-gray-900 break-words [overflow-wrap:anywhere]" title={taskView.website ? String(taskView.website) : undefined}>
-                                                {taskView.website || '—'}
-                                              </p>
-                                            </div>
-                                            <div className="min-w-0">
-                                              <p className="text-xs text-gray-500 mb-1">Created Date</p>
-                                              <p className="text-sm font-semibold text-gray-900 break-words">{formatDateTime(taskView.createdDate)}</p>
-                                            </div>
-                                            <div className="min-w-0">
-                                              <p className="text-xs text-gray-500 mb-1">Phone</p>
-                                              <p className="text-sm font-semibold text-gray-900 break-words [overflow-wrap:anywhere]">{taskView.phoneNumber || '—'}</p>
-                                            </div>
-                                            <div className="min-w-0">
-                                              <p className="text-xs text-gray-500 mb-1">Email</p>
-                                              <p className="text-sm font-semibold text-gray-900 break-words whitespace-normal [overflow-wrap:anywhere]">{taskView.emailId || '—'}</p>
-                                            </div>
-                                          </div>
-                                        </div>
-                                        <div className="bg-white border border-gray-200 rounded-xl p-4 sm:p-5 min-w-0">
-                                          <p className="text-sm font-semibold text-gray-800 mb-2">Message</p>
-                                          <p className="text-sm text-gray-700 leading-relaxed break-words whitespace-normal [overflow-wrap:anywhere]">{taskView.message || '—'}</p>
-                                        </div>
-                                        <div className="bg-white border border-gray-200 rounded-xl p-4 sm:p-5 min-w-0">
-                                          <p className="text-sm font-semibold text-gray-800 mb-2">Bot Summary</p>
-                                          <p className="text-sm text-gray-700 leading-relaxed break-words [overflow-wrap:anywhere]">{taskView.botsSummary || 'No summary'}</p>
-                                          <div className="mt-3">
-                                            <p className="text-xs text-gray-500 mb-1">Recording</p>
-                                            <InlineAudioPlayer url={taskView.recordingUrl} />
-                                          </div>
-                                        </div>
-                                        <div className="flex flex-wrap items-center gap-2 pt-1">
-                                          <button
-                                            type="button"
-                                            onClick={() => openLeadPopup(task)}
-                                            className="min-h-[40px] px-4 py-2 rounded-xl bg-blue-600 text-white font-semibold text-sm hover:bg-blue-700 transition-all flex items-center gap-2"
-                                          >
-                                            <i className="ri-external-link-line"></i>
-                                            View Details
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={() => setExpandedTaskId(null)}
-                                            className="min-h-[40px] px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-medium text-sm hover:bg-slate-200 transition-colors"
-                                          >
-                                            Close
-                                          </button>
-                                        </div>
-                                      </div>
-                                  </div>
+                              <tr className="lead-acc-row">
+                                <td colSpan={tasksTableLeadingCols + TASKS_COLUMNS.length} className="lead-acc-cell">
+                                  <LeadAccordionPanel
+                                    itemView={taskView}
+                                    progressData={taskView?.workflowProgress || null}
+                                    progressLoading={Boolean(taskView?.progressLoading)}
+                                    formatDateTime={formatDateTime}
+                                    getStatusBadgeClass={getStatusBadgeClass}
+                                    formatStatusForDisplay={formatStatusForDisplay}
+                                    onViewDetails={openLeadPopup}
+                                    onCloseExpand={() => setExpandedTaskId(null)}
+                                  />
                                 </td>
                               </tr>
                             )}
@@ -3193,7 +3060,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
 
               {/* Pagination */}
               {activeTab !== 'participated' ? (
-              <div className="flex flex-col items-center justify-between gap-4 border-t border-slate-100 bg-slate-50/60 px-4 py-3 sm:flex-row sm:px-6 sm:py-3">
+              <div className="lead-sheet-foot flex flex-col items-center justify-between gap-4 border-t border-[#d7e8ee] bg-[#f7fcfd] px-4 py-3 sm:flex-row sm:px-6 sm:py-3">
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <label htmlFor="rows-per-page-select" className="text-xs sm:text-sm text-slate-600 font-medium whitespace-nowrap">
                     Rows per page:
@@ -3271,7 +3138,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                               disabled={itemsLoading && entry.value > maxLoadedItemsPage}
                               className={`min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-sm font-bold transition-all touch-manipulation ${
                                 safeItemsPage === entry.value
-                                  ? 'bg-gradient-to-br from-brand-blue to-indigo-600 text-white shadow-lg'
+                                  ? 'lead-pt-page is-on'
                                   : 'bg-white/80 border border-slate-200/80 text-slate-700 hover:bg-white'
                               } disabled:opacity-40 disabled:cursor-not-allowed`}
                             >
@@ -3297,7 +3164,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                               disabled={tasksLoading && entry.value > maxLoadedTasksPage}
                               className={`min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-sm font-bold transition-all touch-manipulation ${
                                 safeTasksPage === entry.value
-                                  ? 'bg-gradient-to-br from-brand-blue to-indigo-600 text-white shadow-lg'
+                                  ? 'lead-pt-page is-on'
                                   : 'bg-white/80 border border-slate-200/80 text-slate-700 hover:bg-white'
                               } disabled:opacity-40 disabled:cursor-not-allowed`}
                             >
@@ -3323,7 +3190,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                               disabled={participatedLoading && entry.value > maxLoadedParticipatedPage}
                               className={`min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-sm font-bold transition-all touch-manipulation ${
                                 safeParticipatedPage === entry.value
-                                  ? 'bg-gradient-to-br from-brand-blue to-indigo-600 text-white shadow-lg'
+                                  ? 'lead-pt-page is-on'
                                   : 'bg-white/80 border border-slate-200/80 text-slate-700 hover:bg-white'
                               } disabled:opacity-40 disabled:cursor-not-allowed`}
                             >
@@ -3358,7 +3225,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                 </div>
               </div>
               ) : (
-                <div className="flex flex-col items-center justify-between gap-4 border-t border-slate-100 bg-slate-50/60 px-4 py-3 sm:flex-row sm:px-6 sm:py-3">
+                <div className="lead-sheet-foot flex flex-col items-center justify-between gap-4 border-t border-[#d7e8ee] bg-[#f7fcfd] px-4 py-3 sm:flex-row sm:px-6 sm:py-3">
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <label htmlFor="rows-per-page-select" className="text-xs sm:text-sm text-slate-600 font-medium whitespace-nowrap">
                       Rows per page:
@@ -3418,7 +3285,7 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                               disabled={participatedLoading && entry.value > maxLoadedParticipatedPage}
                               className={`min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-sm font-bold transition-all touch-manipulation ${
                                 safeParticipatedPage === entry.value
-                                  ? 'bg-gradient-to-br from-brand-blue to-indigo-600 text-white shadow-lg'
+                                  ? 'lead-pt-page is-on'
                                   : 'bg-white/80 border border-slate-200/80 text-slate-700 hover:bg-white'
                               } disabled:opacity-40 disabled:cursor-not-allowed`}
                             >
@@ -3450,62 +3317,63 @@ export default function LeadsManagementPage({ hideGreeting = false } = {}) {
                 onClick={() => setSelectedLead(null)}
               >
                 <div
-                  className="backdrop-blur-xl bg-white/95 border border-white/40 rounded-t-2xl sm:rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] sm:max-h-[85vh] overflow-y-auto p-6 sm:p-8 animate-scale-in"
+                  className="relative bg-white border border-[#d7e8ee] rounded-t-[18px] sm:rounded-[18px] shadow-[0_14px_40px_-18px_rgba(20,90,120,0.28)] max-w-2xl w-full max-h-[90vh] sm:max-h-[85vh] overflow-y-auto p-6 sm:p-8"
                   onClick={(e) => e.stopPropagation()}
                 >
+                  <div className="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-[linear-gradient(90deg,#5fe0e6,#17a2b4_42%,#0f6b7a)]" />
                   <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-2xl font-bold bg-gradient-to-r from-slate-900 via-indigo-900 to-purple-900 bg-clip-text text-transparent">Lead Details</h3>
+                    <h3 className="text-xl font-semibold tracking-tight text-[#0f1b2d]">Lead details</h3>
                     <button
                       type="button"
                       onClick={() => setSelectedLead(null)}
-                      className="w-10 h-10 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
+                      className="w-10 h-10 flex items-center justify-center bg-[#f4fbfd] hover:bg-[#efedea] rounded-xl transition-colors active:scale-[0.98]"
                     >
-                      <i className="ri-close-line text-xl text-slate-700"></i>
+                      <i className="ri-close-line text-xl text-[#0f1b2d]"></i>
                     </button>
                   </div>
-                  <div className="space-y-4 min-w-0">
-                    <div className="p-4 bg-gradient-to-r from-blue-50/80 to-indigo-50/80 rounded-xl border border-blue-200/50 min-w-0">
-                      <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Full Name</p>
-                      <p className="text-lg font-bold text-slate-900 break-words whitespace-normal [overflow-wrap:anywhere]" title={selectedLead.fullName ? String(selectedLead.fullName) : undefined}>
+                  <dl className="min-w-0 divide-y divide-[#e3eef2] border-y border-[#e3eef2]">
+                    <div className="py-3 min-w-0">
+                      <dt className="text-xs font-medium text-[#6b7684] mb-1">Full name</dt>
+                      <dd className="text-lg font-semibold text-[#0f1b2d] break-words whitespace-normal [overflow-wrap:anywhere]" title={selectedLead.fullName ? String(selectedLead.fullName) : undefined}>
                         {selectedLead.fullName || '—'}
-                      </p>
+                      </dd>
                       {selectedLead.name && String(selectedLead.name) !== String(selectedLead.fullName || '') ? (
-                        <p className="mt-2 text-xs text-slate-600 break-words [overflow-wrap:anywhere]" title={String(selectedLead.name)}>
+                        <p className="mt-1 text-xs text-[#6b7684] break-words [overflow-wrap:anywhere]" title={String(selectedLead.name)}>
                           {selectedLead.name}
                         </p>
                       ) : null}
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="p-4 bg-gradient-to-r from-teal-50/80 to-cyan-50/80 rounded-xl border border-teal-200/50 min-w-0">
-                        <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Phone</p>
-                        <p className="text-sm font-bold text-slate-900 break-words [overflow-wrap:anywhere]">{selectedLead.phoneNumber || '—'}</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2">
+                      <div className="py-3 sm:pr-4 min-w-0">
+                        <dt className="text-xs font-medium text-[#6b7684] mb-1">Phone</dt>
+                        <dd className="text-sm font-semibold text-[#0f1b2d] break-words [overflow-wrap:anywhere]">{selectedLead.phoneNumber || '—'}</dd>
                       </div>
-                      <div className="p-4 bg-gradient-to-r from-purple-50/80 to-pink-50/80 rounded-xl border border-purple-200/50 min-w-0">
-                        <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Website</p>
-                        <p className="text-sm font-bold text-slate-900 break-words [overflow-wrap:anywhere]" title={selectedLead.website ? String(selectedLead.website) : undefined}>
+                      <div className="py-3 sm:pl-4 sm:border-l sm:border-[#e3eef2] min-w-0">
+                        <dt className="text-xs font-medium text-[#6b7684] mb-1">Website</dt>
+                        <dd className="text-sm font-semibold text-[#0f1b2d] break-words [overflow-wrap:anywhere]" title={selectedLead.website ? String(selectedLead.website) : undefined}>
                           {selectedLead.website || '—'}
-                        </p>
+                        </dd>
                       </div>
                     </div>
-                    <div className="p-4 bg-gradient-to-r from-amber-50/80 to-orange-50/80 rounded-xl border border-amber-200/50 min-w-0">
-                      <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Email</p>
-                      <p className="text-sm font-bold text-slate-900 break-words whitespace-normal [overflow-wrap:anywhere]">{selectedLead.emailId || '—'}</p>
+                    <div className="py-3 min-w-0">
+                      <dt className="text-xs font-medium text-[#6b7684] mb-1">Email</dt>
+                      <dd className="text-sm font-semibold text-[#0f1b2d] break-words whitespace-normal [overflow-wrap:anywhere]">{selectedLead.emailId || '—'}</dd>
                     </div>
-                    <div className="p-4 bg-gradient-to-r from-slate-50/80 to-gray-50/80 rounded-xl border border-slate-200/50 min-w-0">
-                      <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Message</p>
-                      <p className="text-sm text-slate-700 leading-relaxed break-words whitespace-normal [overflow-wrap:anywhere]">{selectedLead.message || '—'}</p>
+                    <div className="py-3 min-w-0">
+                      <dt className="text-xs font-medium text-[#6b7684] mb-1">Message</dt>
+                      <dd className="text-sm text-[#44403c] leading-relaxed break-words whitespace-normal [overflow-wrap:anywhere]">{selectedLead.message || '—'}</dd>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="p-4 bg-gradient-to-r from-indigo-50/80 to-blue-50/80 rounded-xl border border-indigo-200/50 min-w-0">
-                        <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Created Date</p>
-                        <p className="text-sm font-bold text-slate-900 break-words">{formatDateTime(selectedLead.createdDate)}</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2">
+                      <div className="py-3 sm:pr-4 min-w-0">
+                        <dt className="text-xs font-medium text-[#6b7684] mb-1">Created</dt>
+                        <dd className="text-sm font-semibold text-[#0f1b2d] break-words tabular-nums">{formatDateTime(selectedLead.createdDate)}</dd>
                       </div>
-                      <div className="p-4 bg-gradient-to-r from-emerald-50/80 to-teal-50/80 rounded-xl border border-emerald-200/50 min-w-0">
-                        <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Status</p>
-                        <p className="text-sm font-bold text-slate-900 break-words">{selectedLead.status || '—'}</p>
+                      <div className="py-3 sm:pl-4 sm:border-l sm:border-[#e3eef2] min-w-0">
+                        <dt className="text-xs font-medium text-[#6b7684] mb-1">Status</dt>
+                        <dd className="text-sm font-semibold text-[#0f1b2d] break-words">{selectedLead.status || '—'}</dd>
                       </div>
                     </div>
-                  </div>
+                  </dl>
                 </div>
               </div>
             )}

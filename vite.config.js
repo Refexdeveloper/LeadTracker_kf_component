@@ -2,7 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'node:path'
-import { writeFileSync } from 'fs'
+import { existsSync, writeFileSync } from 'fs'
 import { resolve } from 'path'
 
 // https://vitejs.dev/config/
@@ -31,10 +31,14 @@ export default defineConfig({
         target: 'es2022',
     },
     server: {
-        https: {
-            cert: path.resolve('./cert/localhost.crt'),
-            key: path.resolve('./cert/localhost.key'),
-        },
         host: '0.0.0.0',
+        ...(existsSync(path.resolve('./cert/localhost.crt')) && existsSync(path.resolve('./cert/localhost.key'))
+            ? {
+                https: {
+                    cert: path.resolve('./cert/localhost.crt'),
+                    key: path.resolve('./cert/localhost.key'),
+                },
+            }
+            : {}),
     },
 })

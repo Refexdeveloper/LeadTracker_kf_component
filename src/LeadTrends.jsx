@@ -34,7 +34,7 @@ export default function LeadTrends({ leads, variant = 'default' }) {
       <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-5">
         <div className={`w-12 h-12 flex items-center justify-center rounded-2xl shrink-0 ${
           variant === 'pt'
-            ? 'bg-[#1E88E5]/10 text-[#1E88E5] ring-1 ring-[#1E88E5]/20'
+            ? 'bg-[#0f6b7a]/10 text-[#0f6b7a] ring-1 ring-[#0f6b7a]/20'
             : variant === 'pro'
               ? 'bg-gradient-to-br from-slate-900 to-slate-800 shadow-[0_12px_26px_rgba(15,23,42,0.18)]'
               : 'bg-gradient-to-br from-teal-500 via-cyan-500 to-blue-600 shadow-xl shadow-teal-500/25'
@@ -42,7 +42,7 @@ export default function LeadTrends({ leads, variant = 'default' }) {
           <i className={`ri-line-chart-line text-xl ${variant === 'pt' ? '' : 'text-white'}`}></i>
         </div>
         <h2 className={`text-lg sm:text-xl md:text-2xl font-bold ${
-          variant === 'pt' ? 'text-[#0F172A]' : variant === 'pro' ? 'text-slate-900' : 'bg-gradient-to-r from-slate-900 via-teal-900 to-cyan-900 bg-clip-text text-transparent'
+          variant === 'pt' || variant === 'pro' ? 'text-[#0f1b2d] font-semibold tracking-tight' : 'bg-gradient-to-r from-slate-900 via-teal-900 to-cyan-900 bg-clip-text text-transparent'
         }`}>Lead Growth Over Time</h2>
       </div>
 
@@ -50,7 +50,7 @@ export default function LeadTrends({ leads, variant = 'default' }) {
         <div className="mb-5 sm:mb-6">
           <h3 className="text-base sm:text-lg font-bold text-slate-900 mb-2 flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${
-              variant === 'pt' ? 'bg-[#1E88E5]' : variant === 'pro' ? 'bg-blue-600' : 'bg-gradient-to-r from-teal-500 to-cyan-600 animate-pulse'
+              variant === 'pt' ? 'bg-[#0f6b7a]' : variant === 'pro' ? 'bg-blue-600' : 'bg-gradient-to-r from-teal-500 to-cyan-600 animate-pulse'
             }`}></span>
             Daily Lead Trends
           </h3>
@@ -63,8 +63,8 @@ export default function LeadTrends({ leads, variant = 'default' }) {
           <AreaChart data={trendData} margin={{ top: 8, right: isMobile ? 16 : 28, left: isMobile ? 4 : 8, bottom: isMobile ? 20 : 6 }}>
             <defs>
               <linearGradient id="colorLeads" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#14b8a6" stopOpacity={0.3}/>
-                <stop offset="95%" stopColor="#06b6d4" stopOpacity={0.05}/>
+                <stop offset="5%" stopColor="#0f6b7a" stopOpacity={0.22}/>
+                <stop offset="95%" stopColor="#0f6b7a" stopOpacity={0.02}/>
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" opacity={0.5} />
@@ -99,12 +99,12 @@ export default function LeadTrends({ leads, variant = 'default' }) {
             <Area
               type="monotone"
               dataKey="leads"
-              stroke="#14b8a6"
+              stroke="#0f6b7a"
               strokeWidth={isMobile ? 2 : 3}
               fill="url(#colorLeads)"
               animationDuration={1500}
-              dot={{ fill: '#14b8a6', strokeWidth: 2, r: isMobile ? 3 : 5, stroke: '#fff' }}
-              activeDot={{ r: isMobile ? 5 : 7, fill: '#14b8a6', stroke: '#fff', strokeWidth: 3 }}
+              dot={{ fill: '#0f6b7a', strokeWidth: 2, r: isMobile ? 3 : 5, stroke: '#fff' }}
+              activeDot={{ r: isMobile ? 5 : 7, fill: '#0f6b7a', stroke: '#fff', strokeWidth: 3 }}
             />
           </AreaChart>
         </ResponsiveContainer>

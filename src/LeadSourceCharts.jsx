@@ -130,20 +130,20 @@ export default function LeadSourceCharts({ leads, theme = 'classic' }) {
       <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-5">
         <div className={`w-12 h-12 flex items-center justify-center rounded-2xl shrink-0 ${
           theme === 'pt'
-            ? 'bg-[#1E88E5]/10 text-[#1E88E5] ring-1 ring-[#1E88E5]/20'
+            ? 'bg-[#0f6b7a]/10 text-[#0f6b7a] ring-1 ring-[#0f6b7a]/20'
             : 'bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-600 shadow-xl shadow-indigo-500/25'
         }`}>
           <i className={`ri-pie-chart-line text-xl ${theme === 'pt' ? '' : 'text-white'}`}></i>
         </div>
         <h2 className={`text-lg sm:text-xl md:text-2xl font-bold ${
-          theme === 'pt' ? 'text-[#0F172A]' : 'bg-gradient-to-r from-slate-900 via-indigo-900 to-purple-900 bg-clip-text text-transparent'
+          theme === 'pt' ? 'text-[#0f1b2d] font-semibold tracking-tight' : 'bg-gradient-to-r from-slate-900 via-indigo-900 to-purple-900 bg-clip-text text-transparent'
         }`}>Lead Source Analytics</h2>
       </div>
 
       <div className="grid grid-cols-1 gap-4 w-full max-w-full overflow-visible min-w-0">
         <div className={`p-0 min-w-0 w-full max-w-full ${theme === 'pt' ? 'overflow-visible' : 'overflow-x-hidden'}`}>
           <h3 className="text-base sm:text-lg font-bold text-slate-900 mb-4 sm:mb-6 flex items-center gap-2">
-            <span className="w-2 h-2 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full"></span>
+            <span className={`h-2 w-2 rounded-full ${theme === 'pt' ? 'bg-[#0f6b7a]' : 'bg-gradient-to-r from-blue-500 to-purple-600'}`}></span>
             Leads by Website
           </h3>
           <div className="flex items-center justify-center mb-4 w-full max-w-full min-w-0 overflow-visible">

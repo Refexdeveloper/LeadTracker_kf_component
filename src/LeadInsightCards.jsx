@@ -46,11 +46,11 @@ export default function LeadInsightCards({ leads, onCardClick, activeCardId, the
     <section className="mb-0 min-w-0 w-full max-w-full">
       <div className="flex items-center gap-3 sm:gap-4 mb-5 sm:mb-6">
         <div className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-2xl shrink-0 ${
-          isPt ? 'bg-[#1E88E5]/10 text-[#1E88E5] ring-1 ring-[#1E88E5]/20' : 'bg-gradient-to-br from-amber-500 to-orange-500 shadow-xl shadow-amber-500/25 text-white'
+          isPt ? 'bg-[#0f6b7a]/10 text-[#0f6b7a] ring-1 ring-[#0f6b7a]/20' : 'bg-gradient-to-br from-amber-500 to-orange-500 shadow-xl shadow-amber-500/25 text-white'
         }`}>
           <i className="ri-lightbulb-flash-line text-xl" />
         </div>
-        <h2 className={isPt ? 'text-xl sm:text-2xl font-bold text-[#0F172A]' : 'text-2xl font-bold bg-gradient-to-r from-slate-900 via-amber-900 to-orange-900 bg-clip-text text-transparent'}>
+        <h2 className={isPt ? 'text-xl sm:text-2xl font-semibold tracking-tight text-[#0f1b2d]' : 'text-2xl font-bold bg-gradient-to-r from-slate-900 via-amber-900 to-orange-900 bg-clip-text text-transparent'}>
           Quick Insights
         </h2>
       </div>

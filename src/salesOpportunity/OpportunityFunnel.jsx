@@ -32,7 +32,7 @@ export default function OpportunityFunnel({ rows, activeStageId, onStageClick })
   return (
     <section className="min-w-0">
       <div className="flex items-center gap-3 mb-5">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#1E88E5]/10 text-[#1E88E5] ring-1 ring-[#1E88E5]/20 sm:h-12 sm:w-12">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#0f6b7a]/10 text-[#0f6b7a] ring-1 ring-[#0f6b7a]/20 sm:h-12 sm:w-12">
           <i className="ri-filter-3-line text-lg sm:text-xl" />
         </div>
         <div className="min-w-0">
@@ -52,7 +52,7 @@ export default function OpportunityFunnel({ rows, activeStageId, onStageClick })
               type="button"
               onClick={() => onStageClick?.(stage.id)}
               className={`w-full min-w-0 text-left rounded-2xl border px-3 py-3 sm:px-4 sm:py-3.5 transition-colors touch-manipulation min-h-[60px] ${
-                active ? 'border-[#1E88E5] bg-[#EEF4FF] ring-2 ring-[#1E88E5]/30' : 'border-slate-200/80 bg-white'
+                active ? 'border-[#0f6b7a] bg-[#e6f6f8] ring-2 ring-[#0f6b7a]/30' : 'border-slate-200/80 bg-white'
               }`}
             >
               <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 mb-2">

@@ -1125,10 +1125,10 @@ export default function LeadCEOPage() {
             <section className="mb-1 sm:mb-2 min-w-0">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="min-w-0 flex-1">
-                  <p className="break-words text-base font-semibold tracking-tight text-[#0F172A] sm:text-lg">
+                  <p className="break-words text-base font-semibold tracking-tight text-[#0f1b2d] sm:text-lg">
                     {greeting}, {displayName}
                   </p>
-                  <p className="break-words text-xs text-[#64748B] sm:text-sm">
+                  <p className="break-words text-xs text-[#6b7684] sm:text-sm">
                     Logged in as {displayRole}
                   </p>
                 </div>

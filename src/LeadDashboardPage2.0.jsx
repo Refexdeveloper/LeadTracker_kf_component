@@ -6,6 +6,7 @@ import LeadTrends from './LeadTrends.jsx'
 import LeadByDayOfWeek from './LeadByDayOfWeek.jsx'
 import LeadInsightCards from './LeadInsightCards.jsx'
 import { filterLeadsByInsightCard, LEAD_TABLE_PULSE_CLASS, useLeadTableHighlight } from './leadTableHighlight.js'
+import { PT_AVATAR, PT_PAGE_SHELL, PT_SECTION } from './leadPtTheme.js'
 import RecentLeadsCard from './RecentLeadsCard.jsx'
 import LeadsTable from './LeadsTable.jsx'
 import DatePicker from './DatePicker.jsx'
@@ -953,18 +954,18 @@ export default function LeadDashboardPage() {
   }
 
   return (
-    <div ref={pageRootRef} className="min-h-screen overflow-y-auto overflow-x-hidden bg-gradient-to-br from-slate-100 via-slate-50 to-slate-100 px-3 pb-4 pt-1 md:px-4 md:pb-6 md:pt-2">
+    <div ref={pageRootRef} className={`h-full min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain ${PT_PAGE_SHELL} px-3 pb-4 pt-1 md:px-4 md:pb-6 md:pt-2`}>
       <div className="mx-auto max-w-[1500px] min-w-0">
           <div className="p-1 sm:p-2 md:p-3 max-md:space-y-4 space-y-5 sm:space-y-6 transition-smooth">
             <section className="mb-3 sm:mb-4 relative z-[120]" data-aos="fade-down">
               <div className="flex min-w-0 w-full flex-col md:flex-row md:items-center gap-3 md:gap-4">
                   <div className="flex min-w-0 w-full items-center gap-3">
-                    <div className="h-10 w-10 shrink-0 rounded-xl bg-gradient-to-br from-indigo-500 via-brand-blue to-brand-green flex items-center justify-center text-white text-sm font-bold shadow-sm">
+                    <div className={PT_AVATAR}>
                       {(firstName || 'U').charAt(0)}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-base sm:text-lg font-semibold tracking-tight text-gray-900 break-words">{greeting}, {firstName}</p>
-                      <p className="text-xs sm:text-sm text-gray-600 break-words">Logged in as {displayRole}</p>
+                      <p className="text-base sm:text-lg font-semibold tracking-tight text-[#0f1b2d] break-words">{greeting}, {firstName}</p>
+                      <p className="text-xs sm:text-sm text-[#6b7684] break-words">Logged in as {displayRole}</p>
                     </div>
                   </div>
 
@@ -1082,13 +1083,12 @@ export default function LeadDashboardPage() {
                   dateRange={dateRange}
                   onCardClick={handleCardClick}
                   activeCardId={activeKpiCardId}
-                  variant="pro"
                 />
               </div>
 
               <section
                 ref={tableSectionRef}
-                className={`scroll-mt-24 rounded-2xl border border-slate-200 bg-white shadow-xl p-3 sm:p-4 md:p-5 transition-[box-shadow,ring] duration-500 ${
+                className={`scroll-mt-24 ${PT_SECTION} transition-[box-shadow,ring] duration-500 ${
                   insightPulse ? LEAD_TABLE_PULSE_CLASS : ''
                 }`}
               >
@@ -1104,20 +1104,20 @@ export default function LeadDashboardPage() {
               </section>
 
               {entityFilter === 'All' && (
-                <section className="rounded-2xl border border-slate-200 bg-white shadow-xl p-3 sm:p-4 md:p-5">
-                  <LeadSourceCharts leads={displayLeads} />
+                <section className={PT_SECTION}>
+                  <LeadSourceCharts theme="pt" leads={displayLeads} />
                 </section>
               )}
 
-              <section className="rounded-2xl border border-slate-200 bg-white shadow-xl p-3 sm:p-4 md:p-5">
-                <LeadTrends leads={displayLeads} variant="pro" />
+              <section className={PT_SECTION}>
+                <LeadTrends leads={displayLeads} variant="pt" />
               </section>
 
-              <section className="rounded-2xl border border-slate-200 bg-white shadow-xl p-3 sm:p-4 md:p-5">
-                <LeadByDayOfWeek leads={displayLeads} />
+              <section className={PT_SECTION}>
+                <LeadByDayOfWeek theme="pt" leads={displayLeads} />
               </section>
 
-              <LeadInsightCards leads={displayLeads} onCardClick={handleCardClick} activeCardId={activeKpiCardId} />
+              <LeadInsightCards theme="pt" leads={displayLeads} onCardClick={handleCardClick} activeCardId={activeKpiCardId} />
 
               {/* <RecentLeadsCard leads={displayLeads} onViewDetails={openLeadPopup} /> */}
             </div>

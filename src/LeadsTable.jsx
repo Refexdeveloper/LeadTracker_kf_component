@@ -1278,7 +1278,7 @@ export default function LeadsTable({
 
                                     <div className="flex items-center justify-center py-1 sm:py-0">
                                       <div className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm">
-                                        <i className="ri-arrow-right-s-line text-base text-indigo-600" />
+                                        <i className="ri-arrow-right-s-line text-base text-[#0f6b7a]" />
                                       </div>
                                     </div>
 
@@ -1374,7 +1374,7 @@ export default function LeadsTable({
                     value={headerSearch}
                     onChange={(e) => setHeaderSearch(e.target.value)}
                     placeholder={searchPlaceholder}
-                    className="min-h-[40px] w-full rounded-xl border border-slate-200 bg-white py-2 pl-8 pr-8 text-xs shadow-sm outline-none focus:border-[#1E88E5] focus:ring-2 focus:ring-[#1E88E5]/20 lg:rounded-2xl"
+                    className="min-h-[40px] w-full rounded-xl border border-slate-200 bg-white py-2 pl-8 pr-8 text-xs shadow-sm outline-none focus:border-[#0f6b7a] focus:ring-2 focus:ring-[#0f6b7a]/20 lg:rounded-2xl"
                   />
                 </div>
               ) : null}
@@ -1572,7 +1572,7 @@ export default function LeadsTable({
                   })}
                 </tr>
               ) : (
-              <tr className="bg-gradient-to-r from-slate-200/80 via-slate-100/80 to-indigo-100/60 backdrop-blur-xl border-b border-slate-300/70">
+              <tr className="bg-[#f7f6f4] border-b border-[#ebe8e4]">
                 <th
                   className="px-3 sm:px-6 py-3 sm:py-4 text-left text-[11px] font-semibold text-slate-600 uppercase tracking-[0.14em] cursor-pointer hover:text-blue-700 transition-colors whitespace-nowrap touch-manipulation"
                   onClick={() => handleSort('fullName')}
@@ -1659,7 +1659,7 @@ export default function LeadsTable({
                             }}
                             className={`flex items-center justify-center shrink-0 transition-colors ${
                               isPt
-                                ? 'h-6 w-6 rounded-md text-slate-400 hover:bg-slate-100 hover:text-[#1E88E5]'
+                                ? 'h-6 w-6 rounded-md text-slate-400 hover:bg-slate-100 hover:text-[#0f6b7a]'
                                 : variant === 'pro'
                                 ? 'w-8 h-8 sm:w-9 sm:h-9 rounded-xl border bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
                                 : 'w-9 h-9 sm:w-10 sm:h-10 rounded-xl border bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
@@ -1721,7 +1721,7 @@ export default function LeadsTable({
                         <td className={`px-3 sm:px-6 whitespace-nowrap ${variant === 'pro' ? 'py-2.5 sm:py-3' : 'py-3 sm:py-4'}`}>
                           <span className={`px-2 sm:px-3 py-1 sm:py-1.5 text-xs font-semibold rounded-lg border ${
                             isPt
-                              ? 'bg-[#EEF4FF] text-[#1565C0] border-[#1E88E5]/20'
+                              ? 'bg-[#e6f6f8] text-[#0b5361] border-[#0f6b7a]/20'
                               : (websiteColors[lead.website] || 'bg-gray-50 text-gray-700 border-gray-200')
                           }`}>
                             {lead.website}
@@ -1795,7 +1795,7 @@ export default function LeadsTable({
             pageSize={itemsPerPage}
           />
         ) : (
-        <div className="px-4 sm:px-6 py-4 sm:py-5 bg-gradient-to-r from-slate-200/70 via-slate-100/80 to-indigo-100/60 backdrop-blur-xl border-t border-slate-300/70 flex flex-col sm:flex-row items-center justify-between gap-4 w-full max-w-full min-w-0">
+        <div className="px-4 sm:px-6 py-4 sm:py-5 bg-[#f7f6f4] border-t border-[#ebe8e4] flex flex-col sm:flex-row items-center justify-between gap-4 w-full max-w-full min-w-0">
           <div className="text-xs sm:text-sm text-gray-600 text-center sm:text-left order-2 sm:order-1 w-full sm:w-auto">
             Showing <span className="font-bold text-gray-900">{(currentPage - 1) * itemsPerPage + 1}</span>–<span className="font-bold text-gray-900">{Math.min(currentPage * itemsPerPage, filteredLeads.length)}</span> of <span className="font-bold text-gray-900">{filteredLeads.length}</span>
           </div>

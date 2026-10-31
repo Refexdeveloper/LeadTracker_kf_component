@@ -1,4 +1,4 @@
-import { fetchLeadInstanceDetailRaw, fetchLeadWorkflowProgress } from './leadAccordionApi.js'
+import { extractRecordingUrl, fetchLeadInstanceDetailRaw, fetchLeadWorkflowProgress, fetchRecordingUrlFallback } from './leadAccordionApi.js'
 import { enrichLeadFromDetailRaw } from './leadWorkflowUi.js'
 
 /**
@@ -38,6 +38,11 @@ export async function hydrateAccordionLead({
   let merged = mapped ? { ...baseRow, ...mapped } : { ...baseRow }
   if (detailRaw) merged = enrichLeadFromDetailRaw(merged, detailRaw)
   if (enrichFromKpi) merged = enrichFromKpi(merged, kpiLeads)
+  if (!String(merged.recordingUrl || '').trim()) {
+    const fromDetail = extractRecordingUrl(detailRaw)
+    const recordingUrl = fromDetail || (await fetchRecordingUrlFallback(kf, leadPaths, instanceId))
+    if (recordingUrl) merged = { ...merged, recordingUrl }
+  }
 
   return {
     ...merged,

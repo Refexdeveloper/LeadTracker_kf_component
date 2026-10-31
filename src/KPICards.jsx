@@ -1,6 +1,6 @@
 import { useMemo, useEffect, useState } from 'react';
 import VenwindKPICardsView from './venwind/components/VenwindKPICardsView.jsx';
-import { PT_KPI_THEME, ptKpiCardClass } from './leadPtTheme.js';
+import { playLeadCardFx } from './leadCardFx.js';
 
 /** Normalize status for comparisons */
 function statusNorm(lead) {
@@ -235,49 +235,65 @@ export default function KPICards({
   }
 
   if (variant !== 'pro') {
+    const tmsAccent = {
+      total: { c1: '#2cc4d4', color: '#0f6b7a', soft: '#e6f6f8' },
+      today: { c1: '#34d9a0', color: '#0c9f68', soft: '#e7f9f1' },
+      week: { c1: '#6f9bff', color: '#2f5bea', soft: '#eef3ff' },
+      sources: { c1: '#fb923c', color: '#c2410c', soft: '#fff4e6' },
+      pending: { c1: '#ff7b8a', color: '#e5304a', soft: '#fff0f2' },
+      closed: { c1: '#5fe0e6', color: '#0b5361', soft: '#e6f6f8' },
+    }
     return (
       <section className="mb-0 w-full max-w-full min-w-0">
-        <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-3 xl:grid-cols-6 min-w-0 w-full max-w-full">
-          {cards.map((card) => {
-            const theme = PT_KPI_THEME[card.id] || PT_KPI_THEME.total
+        <div className={`grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 min-w-0 w-full max-w-full ${cards.length > 5 ? 'xl:grid-cols-6' : 'xl:grid-cols-5'}`}>
+          {cards.map((card, index) => {
+            const tone = tmsAccent[card.id] || tmsAccent.total
             const active = activeCardId === card.id
+            const share = stats.total > 0 ? Math.min(100, Math.round((card.value / stats.total) * 100)) : 0
+            const bars = [28, 42, 36, 58, 48, 72, 100]
             return (
-              <div
+              <button
                 key={card.id}
-                role={onCardClick ? 'button' : undefined}
-                tabIndex={onCardClick ? 0 : undefined}
-                onClick={onCardClick ? () => onCardClick(card.id) : undefined}
-                onKeyDown={
-                  onCardClick
-                    ? (e) => {
-                        if (e.key === 'Enter' || e.key === ' ') onCardClick(card.id)
-                      }
-                    : undefined
-                }
-                className={ptKpiCardClass(theme, { active, clickable: Boolean(onCardClick) })}
+                type="button"
+                disabled={!onCardClick}
+                onClick={onCardClick ? (event) => {
+                  const wait = playLeadCardFx(card.id, event.currentTarget)
+                  window.setTimeout(() => onCardClick(card.id), wait)
+                } : undefined}
+                className={`lead-tms-kpi kpi-card text-left ${active ? 'is-active' : ''} ${onCardClick ? '' : 'cursor-default'}`}
+                style={{
+                  '--kpi-c1': tone.c1,
+                  '--kpi-accent': tone.color,
+                  '--kpi-soft': tone.soft,
+                  '--i': index,
+                }}
               >
-                <div className="relative flex flex-1 items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-400 sm:text-[11px] sm:tracking-[0.14em]">
-                      {card.title}
-                    </p>
-                    <p className={`mt-1 text-[22px] font-bold tabular-nums leading-none tracking-tight sm:mt-2 sm:text-3xl ${theme.valueClass}`}>
-                      {card.value.toLocaleString()}
-                    </p>
-                    {card.subtitle ? (
-                      <p className="mt-1 line-clamp-2 text-[10px] font-medium text-slate-400 sm:text-xs">{card.subtitle}</p>
-                    ) : null}
-                  </div>
-                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl sm:h-9 sm:w-9 ${theme.iconWrap}`}>
-                    <i className={`${card.icon} text-base sm:text-lg`} />
-                  </div>
-                </div>
-                {onCardClick ? (
-                  <p className="mt-2 hidden text-[10px] font-semibold text-[#1E88E5] opacity-0 transition-opacity group-hover:opacity-100 lg:block">
-                    Click to view →
-                  </p>
-                ) : null}
-              </div>
+                <span className="lead-tms-kpi-shine" aria-hidden="true" />
+                <span className="lead-tms-kpi-head">
+                  <span className="lead-tms-kpi-icon" aria-hidden="true">
+                    <i className={card.icon} />
+                  </span>
+                  <span className="lead-tms-kpi-copy">
+                    <span className="lead-tms-kpi-title">{card.title}</span>
+                    {card.subtitle ? <span className="lead-tms-kpi-sub">{card.subtitle}</span> : null}
+                  </span>
+                </span>
+                <span className="lead-tms-kpi-body">
+                  <span>
+                    <span className="lead-tms-kpi-value">{card.value.toLocaleString()}</span>
+                    <span className="lead-tms-kpi-foot"><b>{share}%</b> of {stats.total.toLocaleString()}</span>
+                  </span>
+                  <span className="lead-tms-kpi-bars" aria-hidden="true">
+                    {bars.map((h, n) => (
+                      <i key={n} style={{ '--h': `${h}%`, '--n': n }} />
+                    ))}
+                  </span>
+                </span>
+                <span className="lead-tms-kpi-progress">
+                  <span className="track"><span className="fill" style={{ '--p': `${Math.max(share, 4)}%` }} /></span>
+                  <em>{share}%</em>
+                </span>
+              </button>
             )
           })}
         </div>

@@ -27,6 +27,5 @@ export function enrichLeadRowFromKpi(row, kpiLeads) {
 export function resolveLeadRowView(row, detailsById, kpiLeads) {
   if (!row) return row
   const cached = detailsById?.[row.id]
-  if (cached) return cached
-  return enrichLeadRowFromKpi(row, kpiLeads)
+  return enrichLeadRowFromKpi(cached || row, kpiLeads)
 }

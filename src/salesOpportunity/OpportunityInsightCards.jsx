@@ -40,7 +40,7 @@ export default function OpportunityInsightCards({ rows }) {
   return (
     <section className="min-w-0">
       <div className="flex items-center gap-3 mb-5">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#1E88E5]/10 text-[#1E88E5] ring-1 ring-[#1E88E5]/20 sm:h-12 sm:w-12">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#0f6b7a]/10 text-[#0f6b7a] ring-1 ring-[#0f6b7a]/20 sm:h-12 sm:w-12">
           <i className="ri-lightbulb-flash-line text-lg sm:text-xl" />
         </div>
         <div className="min-w-0">

@@ -138,10 +138,10 @@ export default function MobileLeadCards({
         return (
           <article
             key={item.id}
-            className={`rounded-2xl border bg-white/90 p-4 shadow-sm backdrop-blur-sm transition-[background-color,border-color,box-shadow] duration-500 ${
+            className={`rounded-[16px] border bg-white p-4 transition-[background-color,border-color,box-shadow] duration-500 ${
               highlightRows
-                ? 'border-[#1E88E5] bg-blue-50/80 shadow-[0_0_0_4px_rgba(30,136,229,0.14)]'
-                : 'border-white/60'
+                ? 'border-[#0f6b7a] bg-[#e6f6f8] shadow-[0_10px_24px_-16px_rgba(15,107,122,0.22)]'
+                : 'border-[#b7dde6] shadow-[0_10px_24px_-16px_rgba(15,107,122,0.22)]'
             }`}
           >
             {/* Full-width name block; status on next row (mobile layout). */}

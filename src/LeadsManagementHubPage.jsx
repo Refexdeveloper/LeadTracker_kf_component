@@ -216,10 +216,10 @@ export default function LeadsManagementHubPage() {
                   {(firstName || 'U').charAt(0)}
                 </div>
                 <div className="min-w-0">
-                  <p className="text-base sm:text-lg font-semibold tracking-tight text-[#0F172A] truncate">
+                  <p className="text-base sm:text-lg font-semibold tracking-tight text-[#0f1b2d] truncate">
                     {greeting}, {firstName}
                   </p>
-                  <p className="text-xs sm:text-sm text-[#64748B] truncate">Logged in as {displayRole}</p>
+                  <p className="text-xs sm:text-sm text-[#6b7684] truncate">Logged in as {displayRole}</p>
                 </div>
               </div>
               {canViewMyTeam ? <ScopeToggle scope={scope} setScope={setScope} /> : null}

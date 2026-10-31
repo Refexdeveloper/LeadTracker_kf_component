@@ -3,7 +3,7 @@ import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis
 import { useMediaQuery } from '../hooks/useMediaQuery.js'
 import { formatInrCr, uniqueSorted } from './salesOpportunityMap.js'
 
-const COLORS = ['#2B5AED', '#0084AD', '#22C55E', '#F97316', '#8B5CF6', '#0F766E', '#EF4444', '#D946EF', '#1E88E5']
+const COLORS = ['#0f6b7a', '#2f5bea', '#0c9f68', '#c2410c', '#78716c', '#0b5361', '#e5304a', '#a8a29e', '#1c1917']
 const MOBILE_CHART_MAX = 767
 
 function countBy(list, key) {

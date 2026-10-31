@@ -19,20 +19,20 @@ export function SortHeader({ label, colKey, sortKey, sortDir, onSort, className 
           onSort?.(colKey);
         }}
         className={`group inline-flex min-h-10 items-center gap-1 text-xs font-semibold uppercase tracking-wider transition-colors ${
-          active ? 'text-[#1E88E5]' : 'text-[#7F8C8D] hover:text-slate-900'
+          active ? 'text-[#0f6b7a]' : 'text-[#7F8C8D] hover:text-slate-900'
         }`}
       >
         {label}
         <span className="flex flex-col leading-none opacity-70">
           <i
             className={`ri-arrow-up-s-fill text-[10px] ${
-              active && sortDir === 'asc' ? 'text-[#1E88E5] opacity-100' : 'text-slate-300 group-hover:text-slate-400'
+              active && sortDir === 'asc' ? 'text-[#0f6b7a] opacity-100' : 'text-slate-300 group-hover:text-slate-400'
             }`}
             aria-hidden
           />
           <i
             className={`-mt-1 ri-arrow-down-s-fill text-[10px] ${
-              active && sortDir === 'desc' ? 'text-[#1E88E5] opacity-100' : 'text-slate-300 group-hover:text-slate-400'
+              active && sortDir === 'desc' ? 'text-[#0f6b7a] opacity-100' : 'text-slate-300 group-hover:text-slate-400'
             }`}
             aria-hidden
           />
@@ -149,7 +149,7 @@ export function FilterHeader({
             onPointerLeave={() => {
               pointerInsideMenuRef.current = false;
             }}
-            className="overflow-y-auto overscroll-contain rounded-xl border border-slate-200/90 bg-white py-1 shadow-lg shadow-slate-200/50"
+            className="lead-pt overflow-y-auto overscroll-contain rounded-xl border border-[#d7e8ee] bg-white py-1 shadow-lg shadow-[0_12px_30px_-18px_rgba(15,107,122,0.35)]"
           >
             {filterOptions.map((opt) => {
               const selected = String(filterValue) === String(opt.value);
@@ -165,12 +165,12 @@ export function FilterHeader({
                   }}
                   className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition ${
                     selected
-                      ? 'bg-blue-50 font-semibold text-[#1E88E5]'
+                      ? 'bg-[#e6f6f8] font-semibold text-[#0f6b7a]'
                       : 'font-medium text-slate-700 hover:bg-slate-50'
                   }`}
                 >
                   <span className="min-w-0 flex-1 truncate">{opt.label}</span>
-                  {selected ? <i className="ri-check-line shrink-0 text-sm text-[#1E88E5]" aria-hidden /> : null}
+                  {selected ? <i className="ri-check-line shrink-0 text-sm text-[#0f6b7a]" aria-hidden /> : null}
                 </button>
               );
             })}
@@ -214,15 +214,15 @@ export function FilterHeader({
           else openMenu();
         }}
         className={`group inline-flex min-h-10 items-center gap-1 text-xs font-semibold uppercase tracking-wider transition-colors ${
-          active || filtered || open ? 'text-[#1E88E5]' : 'text-[#7F8C8D] hover:text-slate-900'
+          active || filtered || open ? 'text-[#0f6b7a]' : 'text-[#7F8C8D] hover:text-slate-900'
         }`}
       >
         {label}
         <span className="flex items-center gap-0.5 opacity-70">
-          {filtered ? <span className="h-1.5 w-1.5 rounded-full bg-[#1E88E5]" aria-hidden /> : null}
+          {filtered ? <span className="h-1.5 w-1.5 rounded-full bg-[#0f6b7a]" aria-hidden /> : null}
           <i
             className={`ri-arrow-down-s-line text-sm transition-transform ${
-              open ? 'rotate-180 text-[#1E88E5]' : 'text-slate-300 group-hover:text-slate-400'
+              open ? 'rotate-180 text-[#0f6b7a]' : 'text-slate-300 group-hover:text-slate-400'
             }`}
             aria-hidden
           />

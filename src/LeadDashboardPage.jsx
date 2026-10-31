@@ -1047,8 +1047,8 @@ export default function LeadDashboardPage() {
                       {(firstName || 'U').charAt(0)}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-base sm:text-lg font-semibold tracking-tight text-[#0F172A] break-words">{greeting}, {firstName}</p>
-                      <p className="text-xs sm:text-sm text-[#64748B] break-words">Logged in as {displayRole}</p>
+                      <p className="text-base sm:text-lg font-semibold tracking-tight text-[#0f1b2d] break-words">{greeting}, {firstName}</p>
+                      <p className="text-xs sm:text-sm text-[#6b7684] break-words">Logged in as {displayRole}</p>
                     </div>
                   </div>
 

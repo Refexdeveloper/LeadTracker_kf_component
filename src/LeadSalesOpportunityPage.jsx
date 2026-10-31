@@ -320,12 +320,12 @@ export default function LeadSalesOpportunityPage() {
                 aria-label="3i"
               >
                 3i
-              </div>
+                  </div>
               <div className="min-w-0 flex-1">
-                <p className="text-[11px] uppercase tracking-wide font-semibold text-[#64748B]">3i Medical Technologies</p>
-                <h1 className="text-lg sm:text-2xl font-bold text-[#0F172A] leading-tight">Sales Opportunity Funnel</h1>
-              </div>
-            </div>
+                <p className="text-xs font-medium text-[#6b7684]">3i Medical Technologies</p>
+                <h1 className="text-lg sm:text-2xl font-semibold tracking-tight text-[#0f1b2d] leading-tight">Sales opportunity funnel</h1>
+                    </div>
+                    </div>
             <div className="w-full sm:w-auto sm:shrink-0">
               <MobileFiltersButton
                 label="All filters"
@@ -334,7 +334,7 @@ export default function LeadSalesOpportunityPage() {
                 className="sm:min-w-[10.75rem]"
               />
             </div>
-          </div>
+                  </div>
 
           {activeFilterCount > 0 ? (
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -345,7 +345,7 @@ export default function LeadSalesOpportunityPage() {
               ))}
               <button type="button" onClick={clearFilters} className="text-[11px] font-semibold text-brand-blue touch-manipulation min-h-[32px] px-1">
                 Clear
-              </button>
+                      </button>
             </div>
           ) : null}
         </section>
@@ -449,14 +449,14 @@ export default function LeadSalesOpportunityPage() {
           <FilterField label="Search" wide>
             <div className="relative w-full min-w-0">
               <i className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
+                    <input
+                      type="text"
                 value={draftFilters.searchQuery}
                 onChange={(e) => setDraftField('searchQuery')(e.target.value)}
                 placeholder="Customer, city, product"
                 className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-brand-blue/30 focus:border-brand-blue touch-manipulation"
-              />
-            </div>
+                    />
+                  </div>
           </FilterField>
         </OpportunityFilterSheet>
 
@@ -465,9 +465,9 @@ export default function LeadSalesOpportunityPage() {
             <OpportunityKpiCards
               rows={displayRows}
               onCardClick={setActiveKpiCardId}
-              activeCardId={activeKpiCardId}
-            />
-          </div>
+                  activeCardId={activeKpiCardId}
+                />
+              </div>
 
           <div className={`min-w-0 ${PT_SECTION} sm:p-5 md:p-6`}>
             <OpportunityFunnel
@@ -488,22 +488,22 @@ export default function LeadSalesOpportunityPage() {
             <OpportunityTable
               rows={tableRows}
               loading={apiLoading}
-              headerRight={
+                  headerRight={
                 <div className="w-full sm:w-[260px] relative min-w-0">
                   <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                  <input
-                    type="text"
+                        <input
+                          type="text"
                     value={tableQuery}
                     onChange={(e) => setTableQuery(e.target.value)}
                     placeholder="Filter table"
                     className="w-full min-h-[44px] sm:min-h-[40px] pl-10 pr-3 py-2.5 text-sm bg-white border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-sky-400/50 placeholder:text-slate-400 touch-manipulation"
                   />
-                </div>
-              }
-            />
-          </section>
-        </div>
-        </div>
+                    </div>
+                  }
+                />
+              </section>
+            </div>
+          </div>
       </div>
     </div>
   )

@@ -10,12 +10,12 @@ export function ptStatusTone(status) {
     return { wrap: 'bg-orange-50 text-[#FB8C00]', dot: 'bg-[#FB8C00]' }
   }
   if (s.includes('progress') || s.includes('review') || s.includes('open') || s.includes('active')) {
-    return { wrap: 'bg-blue-50 text-[#1E88E5]', dot: 'bg-[#1E88E5]' }
+    return { wrap: 'bg-[#e6f6f8] text-[#0f6b7a]', dot: 'bg-[#0f6b7a]' }
   }
   if (s.includes('draft') || s.includes('not started') || s.includes('notstarted')) {
     return { wrap: 'bg-gray-100 text-[#7F8C8D]', dot: 'bg-gray-400' }
   }
-  return { wrap: 'bg-blue-50 text-[#1E88E5]', dot: 'bg-[#1E88E5]' }
+  return { wrap: 'bg-[#e6f6f8] text-[#0f6b7a]', dot: 'bg-[#0f6b7a]' }
 }
 
 export default function PtStatusBadge({ status, label, className = '' }) {
